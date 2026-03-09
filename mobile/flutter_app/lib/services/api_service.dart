@@ -7,8 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 // Add/remove entries here as needed. The first one is the default.
 // ────────────────────────────────────────────────────────────────────────────
 const List<Map<String, String>> kServerPresets = [
+  {'label': '🌐 Servidor Zyma', 'url': 'https://zyma.lat'},
   {'label': '🏠 Local (Dev)',     'url': 'http://192.168.0.102:3000'},
-  {'label': '🌐 Servidor (Prod)', 'url': 'https://tu-dominio.com'},
 ];
 
 const String _kServerUrlKey = 'server_url';
