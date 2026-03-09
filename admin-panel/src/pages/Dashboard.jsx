@@ -10,6 +10,8 @@ const Dashboard = ({ user, onLogout }) => {
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [activeLocations, setActiveLocations] = useState({});
     const [view, setView] = useState('live'); // 'live' | 'history' | 'vendors'
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
     useEffect(() => {
         connectSocket();
@@ -30,9 +32,15 @@ const Dashboard = ({ user, onLogout }) => {
         };
 
         fetchEmployees();
+
+        // Detectar cambios de tamaño de pantalla
+        const handleResize = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', handleResize);
+
         return () => {
             socket.off('location_update');
             disconnectSocket();
+            window.removeEventListener('resize', handleResize);
         };
     }, []);
 
@@ -40,7 +48,12 @@ const Dashboard = ({ user, onLogout }) => {
 
     return (
         <div className="dashboard-layout">
-            <aside className="sidebar">
+            {/* Overlay para cerrar sidebar en mobile */}
+            {isMobile && sidebarOpen && (
+                <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
+            )}
+
+            <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
                 <header className="sidebar-header">
                     <div className="sidebar-logo">📍</div>
                     <div>
@@ -50,16 +63,25 @@ const Dashboard = ({ user, onLogout }) => {
                 </header>
 
                 <nav className="sidebar-nav">
-                    <button onClick={() => setView('live')} className={view === 'live' ? 'active' : ''}>
+                    <button 
+                        onClick={() => { setView('live'); if (isMobile) setSidebarOpen(false); }} 
+                        className={view === 'live' ? 'active' : ''}
+                    >
                         <Activity size={20} />
                         <span>En Vivo</span>
                         {activeCount > 0 && <span className="badge-count">{activeCount}</span>}
                     </button>
-                    <button onClick={() => setView('history')} className={view === 'history' ? 'active' : ''}>
+                    <button 
+                        onClick={() => { setView('history'); if (isMobile) setSidebarOpen(false); }} 
+                        className={view === 'history' ? 'active' : ''}
+                    >
                         <History size={20} />
                         <span>Historial</span>
                     </button>
-                    <button onClick={() => setView('vendors')} className={view === 'vendors' ? 'active' : ''}>
+                    <button 
+                        onClick={() => { setView('vendors'); if (isMobile) setSidebarOpen(false); }} 
+                        className={view === 'vendors' ? 'active' : ''}
+                    >
                         <UserCog size={20} />
                         <span>Vendedores</span>
                     </button>
@@ -72,7 +94,7 @@ const Dashboard = ({ user, onLogout }) => {
                             <div
                                 key={e.id}
                                 className={`employee-item ${selectedEmployee?.id === e.id ? 'selected' : ''}`}
-                                onClick={() => setSelectedEmployee(e)}
+                                onClick={() => { setSelectedEmployee(e); if (isMobile) setSidebarOpen(false); }}
                             >
                                 <span className={`dot ${activeLocations[e.id] ? 'dot-active' : ''}`} />
                                 {e.name}
@@ -90,6 +112,15 @@ const Dashboard = ({ user, onLogout }) => {
             </aside>
 
             <main className="main-content">
+                {isMobile && (
+                    <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <line x1="3" y1="12" x2="21" y2="12"></line>
+                            <line x1="3" y1="18" x2="21" y2="18"></line>
+                        </svg>
+                    </button>
+                )}
                 {view === 'vendors' ? (
                     <Vendors />
                 ) : (
@@ -105,7 +136,7 @@ const Dashboard = ({ user, onLogout }) => {
         .dashboard-layout { display: flex; height: 100vh; overflow: hidden; font-family: 'Inter', system-ui, sans-serif; }
 
         /* Sidebar */
-        .sidebar { width: 260px; background: #0f172a; color: white; display: flex; flex-direction: column; flex-shrink: 0; }
+        .sidebar { width: 260px; background: #0f172a; color: white; display: flex; flex-direction: column; flex-shrink: 0; transition: all .3s ease; }
         .sidebar-header { padding: 20px 16px; border-bottom: 1px solid #1e293b; display: flex; align-items: center; gap: 12px; }
         .sidebar-logo { font-size: 28px; }
         .sidebar-header h2 { margin: 0; font-size: 17px; font-weight: 700; color: #f1f5f9; }
@@ -140,6 +171,41 @@ const Dashboard = ({ user, onLogout }) => {
 
         /* Main content */
         .main-content { flex: 1; overflow: hidden; position: relative; }
+
+        /* Mobile menu button */
+        .mobile-menu-btn { display: none; position: absolute; top: 12px; left: 12px; z-index: 999; background: #0f172a; border: none; color: white; padding: 8px; border-radius: 8px; cursor: pointer; }
+        .mobile-menu-btn:hover { background: #1e293b; }
+
+        /* Sidebar Overlay */
+        .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.5); z-index: 998; }
+
+        /* Mobile Responsive */
+        @media (max-width: 767px) {
+          .dashboard-layout { flex-direction: column; }
+          .sidebar { 
+            position: fixed; left: 0; top: 0; bottom: 0; width: 260px; 
+            z-index: 999; transform: translateX(-100%); 
+          }
+          .sidebar.open { transform: translateX(0); box-shadow: 2px 0 8px rgba(0,0,0,.3); }
+          .mobile-menu-btn { display: flex; }
+          .sidebar-overlay { display: block; }
+          .main-content { padding-top: 44px; }
+          .sidebar-header span { display: none; }
+          .sidebar-header h2 { font-size: 16px; }
+          .sidebar-logo { font-size: 24px; }
+          .sidebar-nav button span:last-of-type { font-size: 13px; }
+          .employee-item { font-size: 13px; padding: 8px 10px; }
+          .employee-list h3 { font-size: 10px; }
+        }
+
+        @media (max-width: 480px) {
+          .sidebar { width: calc(100% - 40px); max-width: 260px; }
+          .sidebar-header { padding: 16px 12px; }
+          .sidebar-nav { padding: 8px 8px; gap: 2px; }
+          .sidebar-nav button { padding: 9px 10px; font-size: 13px; gap: 10px; }
+          .sidebar-nav svg { width: 18px; height: 18px; }
+          .mobile-menu-btn { width: 40px; height: 40px; padding: 8px; }
+        }
       `}</style>
         </div>
     );

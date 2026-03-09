@@ -20,3 +20,18 @@ body {
     min-width: 320px;
     min-height: 100vh;
 }
+
+/* Mobile viewport */
+@media (max-width: 768px) {
+    body {
+        min-height: 100dvh;
+    }
+}
+
+/* Touch device optimizations */
+@media (hover: none) and (pointer: coarse) {
+    button, a {
+        min-height: 44px;
+        min-width: 44px;
+    }
+}

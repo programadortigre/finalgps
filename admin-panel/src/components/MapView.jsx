@@ -363,6 +363,67 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
         }
         .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
         .active-dot { background: #2563eb; }
+
+        /* Mobile Responsive */
+        @media (max-width: 1024px) {
+          .history-sidepanel { 
+            width: 280px; 
+            left: 12px;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .history-sidepanel { 
+            position: fixed; 
+            top: 50px; 
+            left: 0; 
+            right: 0; 
+            width: 100%; 
+            max-height: calc(100vh - 50px);
+            border-radius: 0;
+            z-index: 950;
+            max-width: 100%;
+            padding: 16px;
+          }
+          .hs-title { font-size: 14px; }
+          .hs-employee { font-size: 13px; }
+          .trip-pill { font-size: 12px; padding: 10px; }
+          .trip-time { font-size: 12px; }
+          .trip-dist { font-size: 11px; }
+          .back-btn { font-size: 12px; margin-bottom: 12px; }
+          .timeline-title { font-size: 12px; }
+          .tl-content strong { font-size: 13px; }
+          .tl-content span { font-size: 11px; }
+          .stat-box { padding: 10px; }
+          .stat-box strong { font-size: 14px; }
+          .stat-box span { font-size: 10px; }
+        }
+
+        @media (max-width: 480px) {
+          .history-sidepanel { 
+            padding: 12px; 
+            top: 44px;
+            max-height: calc(100vh - 44px);
+          }
+          .hs-title { font-size: 13px; }
+          .hs-employee { font-size: 12px; margin-bottom: 12px; }
+          .hs-date-picker { font-size: 13px; padding: 8px 10px; margin-bottom: 12px; }
+          .trip-pill { padding: 8px; gap: 2px; }
+          .trip-time { font-size: 11px; }
+          .trip-dist { font-size: 10px; }
+          .trip-stats-row { gap: 8px; margin-bottom: 12px; }
+          .stat-box { padding: 8px; border-radius: 8px; }
+          .stat-box strong { font-size: 13px; }
+          .map-action-btn { padding: 10px; font-size: 12px; border-radius: 8px; }
+          .timeline { margin-left: 8px; }
+          .timeline-item { gap: 12px; padding-bottom: 20px; }
+          .tl-icon { width: 24px; height: 24px; font-size: 11px; }
+          .tl-line { left: 11px; }
+          .tl-content strong { font-size: 12px; }
+          .tl-content span { font-size: 10px; }
+          .timeline-title { font-size: 11px; margin-bottom: 10px; }
+          .map-legend { top: 60px; right: 8px; padding: 6px 10px; font-size: 12px; }
+        }
       `}</style>
         </div>
     );

@@ -69,6 +69,7 @@ const Login = ({ onLogin }) => {
         .login-bg {
           min-height: 100vh; display: flex; align-items: center; justify-content: center;
           background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%);
+          padding: 16px;
         }
         .login-card {
           background: white; border-radius: 20px; padding: 48px 40px; width: 100%; max-width: 420px;
@@ -98,6 +99,42 @@ const Login = ({ onLogin }) => {
         }
         .login-btn:hover:not(:disabled) { opacity: .9; }
         .login-btn:disabled { opacity: .6; cursor: default; }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+          .login-bg {
+            min-height: 100dvh;
+            padding: 12px;
+          }
+          .login-card {
+            padding: 40px 28px;
+            border-radius: 16px;
+          }
+          .login-icon { font-size: 40px; margin-bottom: 10px; }
+          h1 { font-size: 22px; }
+          .login-sub { font-size: 13px; margin: 2px 0 24px; }
+          form label { gap: 4px; margin-bottom: 14px; font-size: 12px; }
+          form input { padding: 11px 12px; font-size: 16px; border-radius: 8px; }
+          .login-btn { padding: 12px; margin-top: 6px; font-size: 14px; }
+        }
+
+        @media (max-width: 480px) {
+          .login-bg {
+            min-height: 100dvh;
+            padding: 8px;
+          }
+          .login-card {
+            padding: 32px 20px;
+            border-radius: 14px;
+          }
+          .login-icon { font-size: 36px; margin-bottom: 8px; }
+          h1 { font-size: 20px; }
+          .login-sub { font-size: 12px; margin: 2px 0 20px; }
+          form label { gap: 4px; margin-bottom: 12px; font-size: 11px; }
+          form input { padding: 11px 12px; font-size: 16px; border-radius: 8px; }
+          .eye-btn { font-size: 16px; }
+          .login-btn { padding: 11px; margin-top: 4px; font-size: 13px; }
+        }
       `}</style>
         </div>
     );

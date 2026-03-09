@@ -128,11 +128,42 @@ const Playback = ({ points }) => {
         .pb-controls button { background: #f1f5f9; border: none; border-radius: 8px; padding: 7px; cursor: pointer; display: flex; align-items: center; }
         .pb-play { background: #2563eb !important; color: white; padding: 8px !important; border-radius: 50% !important; }
         .pb-counter { font-size: 13px; color: #64748b; margin-left: 4px; }
-        .pb-slider { flex: 1; accent-color: #2563eb; width: 100%; }
+        .pb-slider { flex: 1; accent-color: #2563eb; width: 100%; height: 6px; cursor: pointer; }
         .pb-speed { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #64748b; }
         .pb-speed button { background: #f1f5f9; border: none; border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 12px; font-weight: 600; }
         .pb-speed button.active { background: #2563eb; color: white; }
         .pb-info { font-size: 12px; color: #475569; text-align: center; }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+          .playback-bar {
+            bottom: 12px; padding: 10px 14px; gap: 6px; min-width: auto;
+            max-width: calc(100vw - 24px); border-radius: 12px;
+          }
+          .pb-controls button { padding: 6px; }
+          .pb-counter { font-size: 12px; }
+          .pb-speed { gap: 4px; font-size: 11px; }
+          .pb-speed button { padding: 2px 6px; font-size: 11px; }
+          .pb-info { font-size: 11px; }
+          .pb-info > div { font-size: 11px; }
+        }
+
+        @media (max-width: 480px) {
+          .playback-bar {
+            bottom: 8px; padding: 8px 12px; gap: 4px;
+          }
+          .pb-controls { gap: 8px; }
+          .pb-controls button { padding: 5px; }
+          .pb-controls svg { width: 16px; height: 16px; }
+          .pb-play svg { width: 18px; height: 18px; }
+          .pb-counter { font-size: 11px; margin-left: 3px; }
+          .pb-slider { height: 8px; }
+          .pb-speed { gap: 3px; font-size: 10px; }
+          .pb-speed button { padding: 2px 5px; font-size: 10px; }
+          .pb-speed svg { width: 12px; height: 12px; }
+          .pb-info { font-size: 10px; }
+          .pb-info > div { font-size: 10px; }
+        }
       `}</style>
         </>
     );
