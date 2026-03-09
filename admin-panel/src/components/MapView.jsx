@@ -44,12 +44,25 @@ const FitBounds = ({ positions }) => {
     return null;
 };
 
+// Reverse geocoding - obtener dirección desde coordenadas
+const getAddress = async (lat, lng) => {
+    try {
+        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
+        const data = await response.json();
+        return data.address?.road || data.address?.street || data.display_name?.split(',')[0] || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    } catch (e) {
+        console.error('Geocoding error:', e);
+        return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    }
+};
+
 const MapView = ({ view, selectedEmployee, activeLocations }) => {
     const [trips, setTrips] = useState([]);
     const [selectedTrip, setTrip] = useState(null);
     const [routeData, setRouteData] = useState(null);
     const [date, setDate] = useState(dayjs().format('YYYY-MM-DD'));
     const [playbackMode, setPlayback] = useState(false);
+    const [addresses, setAddresses] = useState({});
 
     // Fetch trips when employee/date changes
     useEffect(() => {
@@ -61,12 +74,44 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
         }
     }, [selectedEmployee, date, view]);
 
+    // Cargar direcciones para ubicaciones en vivo
+    useEffect(() => {
+        if (view === 'live') {
+            Object.values(activeLocations).forEach(loc => {
+                if (!addresses[`live-${loc.employeeId}`]) {
+                    getAddress(loc.lat, loc.lng).then(addr => {
+                        setAddresses(prev => ({
+                            ...prev,
+                            [`live-${loc.employeeId}`]: addr
+                        }));
+                    });
+                }
+            });
+        }
+    }, [view, activeLocations]);
+
     const fetchTripDetails = async (trip) => {
         setPlayback(false);
         try {
             const { data } = await api.get(`/api/trips/${trip.id}`);
             setRouteData(data);
             setTrip(trip);
+            
+            // Cargar direcciones para inicio, fin y paradas
+            const newAddresses = {};
+            if (data.points.length > 0) {
+                const startPoint = data.points[0];
+                newAddresses[`start-${trip.id}`] = await getAddress(startPoint.lat, startPoint.lng);
+                
+                const endPoint = data.points.at(-1);
+                newAddresses[`end-${trip.id}`] = await getAddress(endPoint.lat, endPoint.lng);
+                
+                for (let i = 0; i < data.stops.length; i++) {
+                    const stop = data.stops[i];
+                    newAddresses[`stop-${trip.id}-${i}`] = await getAddress(stop.lat, stop.lng);
+                }
+            }
+            setAddresses(newAddresses);
         } catch (e) { console.error(e); }
     };
 
@@ -128,6 +173,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                     <div className="tl-icon start-icon">🚀</div>
                                     <div className="tl-content">
                                         <strong>Inicio de jornada</strong>
+                                        <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`start-${selectedTrip?.id}`] || 'Cargando dirección...'}</span>
                                         <span>{dayjs(selectedTrip.start_time).format('hh:mm A')}</span>
                                     </div>
                                 </div>
@@ -138,7 +184,8 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                         <div className="tl-line"></div>
                                         <div className="tl-icon stop-icon">🛑</div>
                                         <div className="tl-content">
-                                            <strong>Parada detectada</strong>
+                                            <strong>Parada {i + 1}</strong>
+                                            <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`stop-${selectedTrip?.id}-${i}`] || 'Cargando...'}</span>
                                             <span style={{ color: '#f59e0b', fontWeight: 600 }}>
                                                 ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg
                                             </span>
@@ -153,7 +200,8 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                         <div className="tl-line"></div>
                                         <div className="tl-icon end-icon">🏁</div>
                                         <div className="tl-content">
-                                            <strong>Última ubicación</strong>
+                                            <strong>Fin de jornada</strong>
+                                            <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`end-${selectedTrip?.id}`] || 'Cargando dirección...'}</span>
                                             <span>
                                                 {routeData.points.at(-1)?.timestamp
                                                     ? dayjs(Number(routeData.points.at(-1).timestamp)).format('hh:mm A')
@@ -175,18 +223,25 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 </div>
             )}
 
-            <MapContainer center={[-12.0464, -77.0428]} zoom={13} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
+            <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={20} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
                 <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution="&copy; <a href='https://carto.com/'>carto.com</a>" subdomains={['a', 'b', 'c', 'd']} />
 
                 {/* ── LIVE MODE ── */}
-                {view === 'live' && livePositions.map(loc => (
-                    <Marker key={loc.employeeId} position={[loc.lat, loc.lng]} icon={activeIcon}>
-                        <Popup>
-                            <strong>{loc.name || `Vendedor ${loc.employeeId}`}</strong><br />
-                            🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}
-                        </Popup>
-                    </Marker>
-                ))}
+                {view === 'live' && livePositions.map(loc => {
+                    const addr = addresses[`live-${loc.employeeId}`] || 'Obteniendo dirección...';
+                    return (
+                        <Marker key={loc.employeeId} position={[loc.lat, loc.lng]} icon={activeIcon}>
+                            <Popup>
+                                <div style={{ fontSize: '12px', minWidth: '200px' }}>
+                                    <strong>{loc.name || `Vendedor ${loc.employeeId}`}</strong><br />
+                                    📍 <span style={{ fontSize: '11px', color: '#666' }}>{addr}</span><br />
+                                    🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}<br />
+                                    📈 {loc.speed ? (loc.speed.toFixed(1) + ' km/h') : 'Detenido'}
+                                </div>
+                            </Popup>
+                        </Marker>
+                    );
+                })}
 
                 {/* ── HISTORY MODE ── */}
                 {view === 'history' && routeData && !playbackMode && (
@@ -201,22 +256,37 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                         {/* Start marker */}
                         {routeData.points[0] && (
                             <Marker position={[routeData.points[0].lat, routeData.points[0].lng]}>
-                                <Popup>🚀 Inicio del viaje</Popup>
+                                <Popup>
+                                    <div style={{ fontSize: '12px', minWidth: '220px' }}>
+                                        <strong>🚀 Inicio del viaje</strong><br />
+                                        📍 {addresses[`start-${selectedTrip.id}`] || 'Cargando...'}<br />
+                                        🕐 {dayjs(selectedTrip.start_time).format('HH:mm:ss')}
+                                    </div>
+                                </Popup>
                             </Marker>
                         )}
                         {/* End marker */}
                         {routeData.points.length > 1 && (
                             <Marker position={[routeData.points.at(-1).lat, routeData.points.at(-1).lng]}>
-                                <Popup>🏁 Fin del viaje · {(selectedTrip?.distance_meters / 1000 || 0).toFixed(2)} km</Popup>
+                                <Popup>
+                                    <div style={{ fontSize: '12px', minWidth: '220px' }}>
+                                        <strong>🏁 Fin del viaje</strong><br />
+                                        📍 {addresses[`end-${selectedTrip.id}`] || 'Cargando...'}<br />
+                                        🛣️ {(selectedTrip?.distance_meters / 1000 || 0).toFixed(2)} km
+                                    </div>
+                                </Popup>
                             </Marker>
                         )}
                         {/* Stops */}
                         {routeData.stops.map((s, i) => (
                             <Marker key={i} position={[s.lat, s.lng]} icon={stopIcon}>
                                 <Popup>
-                                    🛑 <strong>Parada</strong><br />
-                                    ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg<br />
-                                    {dayjs(s.start_time).format('HH:mm')} – {dayjs(s.end_time).format('HH:mm')}
+                                    <div style={{ fontSize: '12px', minWidth: '220px' }}>
+                                        <strong>🛑 Parada {i + 1}</strong><br />
+                                        📍 {addresses[`stop-${selectedTrip.id}-${i}`] || 'Cargando...'}<br />
+                                        ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg<br />
+                                        🕐 {dayjs(s.start_time).format('HH:mm')} – {dayjs(s.end_time).format('HH:mm')}
+                                    </div>
                                 </Popup>
                             </Marker>
                         ))}

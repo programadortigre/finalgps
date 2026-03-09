@@ -13,15 +13,28 @@ const vendorIcon = L.divIcon({
 const FlyTo = ({ position }) => {
     const map = useMap();
     useEffect(() => {
-        if (position) map.setView(position, map.getZoom(), { animate: true });
+        if (position) map.setView(position, 18, { animate: true });
     }, [position]);
     return null;
+};
+
+// Obtener dirección desde coordenadas (reverse geocoding)
+const getAddress = async (lat, lng) => {
+    try {
+        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
+        const data = await response.json();
+        return data.address?.road || data.address?.street || data.display_name?.split(',')[0] || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    } catch (e) {
+        console.error('Geocoding error:', e);
+        return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    }
 };
 
 const Playback = ({ points }) => {
     const [idx, setIdx] = useState(0);
     const [playing, setPlaying] = useState(false);
     const [speed, setSpeed] = useState(1);   // multiplier
+    const [currentAddress, setCurrentAddress] = useState('Cargando dirección...');
     const intervalRef = useRef(null);
     const total = points.length;
 
@@ -35,6 +48,16 @@ const Playback = ({ points }) => {
         }, 500 / speed);
         return () => clearInterval(intervalRef.current);
     }, [playing, speed, total]);
+
+    // Cargar dirección cuando cambia el punto actual
+    useEffect(() => {
+        if (points[idx]) {
+            const point = points[idx];
+            getAddress(point.lat, point.lng).then(addr => {
+                setCurrentAddress(addr);
+            });
+        }
+    }, [idx, points]);
 
     const reset = () => { setPlaying(false); setIdx(0); };
 
@@ -87,8 +110,9 @@ const Playback = ({ points }) => {
                 </div>
                 {currentPoint && (
                     <div className="pb-info">
-                        {new Date(currentPoint.timestamp).toLocaleTimeString('es-PE')}
-                        {currentPoint.speed != null && ` · ${(currentPoint.speed).toFixed(1)} km/h`}
+                        <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>📍 {currentAddress}</div>
+                        <div>{new Date(currentPoint.timestamp).toLocaleTimeString('es-PE')}
+                        {currentPoint.speed != null && ` · ${(currentPoint.speed).toFixed(1)} km/h`}</div>
                     </div>
                 )}
             </div>
