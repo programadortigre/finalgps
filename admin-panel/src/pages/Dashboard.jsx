@@ -3,7 +3,7 @@ import { LogOut, Users, History, Activity, UserCog } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
 import api from '../services/api';
-import { socket, connectSocket, disconnectSocket } from '../services/socket';
+import socket, { connectSocket, disconnectSocket } from '../services/socket';
 
 const Dashboard = ({ user, onLogout }) => {
     const [employees, setEmployees] = useState([]);
