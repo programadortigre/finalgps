@@ -355,9 +355,6 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                 </Popup>
                             </Marker>
                         )}
-                                </Popup>
-                            </Marker>
-                        )}
                         {/* Stops */}
                         {routeData.stops.map((s, i) => (
                             <Marker key={i} position={[s.lat, s.lng]} icon={stopIcon}>
