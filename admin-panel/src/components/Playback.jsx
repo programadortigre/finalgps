@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, SkipBack, Gauge } from 'lucide-react';
 import { useMap, Marker, Polyline } from 'react-leaflet';
 import L from 'leaflet';
+import api from '../services/api';
 
 const vendorIcon = L.divIcon({
     className: '',
@@ -18,15 +19,14 @@ const FlyTo = ({ position }) => {
     return null;
 };
 
-// Obtener dirección desde coordenadas (reverse geocoding)
+// Obtener dirección desde coordenadas (reverse geocoding via backend)
 const getAddress = async (lat, lng) => {
     try {
-        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
-        const data = await response.json();
-        return data.address?.road || data.address?.street || data.display_name?.split(',')[0] || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+        const response = await api.get(`/api/geocoding/reverse?lat=${lat}&lng=${lng}`);
+        return response.data.address;
     } catch (e) {
         console.error('Geocoding error:', e);
-        return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+        return `${parseFloat(lat).toFixed(4)}, ${parseFloat(lng).toFixed(4)}`;
     }
 };
 

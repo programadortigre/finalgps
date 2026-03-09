@@ -17,6 +17,7 @@ const authRoutes = require('./routes/auth');
 const locationRoutes = require('./routes/locations');
 const tripRoutes = require('./routes/trips');
 const employeeRoutes = require('./routes/employees');
+const geocodingRoutes = require('./routes/geocoding');
 const { initSocket } = require('./socket/socket');
 
 const app = express();
@@ -35,6 +36,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/trips', tripRoutes);
 app.use('/api/employees', employeeRoutes);
+app.use('/api/geocoding', geocodingRoutes);
 
 // Basic health check
 app.get('/health', (req, res) => res.json({ status: 'OK', timestamp: new Date() }));
