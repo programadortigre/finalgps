@@ -263,7 +263,8 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 </div>
             )}
 
-            <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={22} zoomControl={false} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
+            <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={19} zoomControl={false} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
+                {/* Carto Dark - Oscuro y detallado (zoom 10-18) */}
                 <TileLayer 
                     url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" 
                     attribution="&copy; <a href='https://carto.com/'>carto.com</a>" 
@@ -272,21 +273,12 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                     minZoom={10}
                     maxZoom={18}
                 />
-                {/* OpenStreetMap (zoom 19) */}
+                {/* OpenStreetMap - Máxima precisión (zoom 19) */}
                 <TileLayer 
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution="&copy; <a href='https://osm.org/'>OpenStreetMap</a>"
                     minZoom={19}
                     maxZoom={19}
-                    maxNativeZoom={19}
-                />
-                {/* Esri World Imagery - Alta resolución (zoom 20-22) */}
-                <TileLayer 
-                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                    attribution="&copy; <a href='https://www.esri.com/'>Esri</a>"
-                    minZoom={20}
-                    maxZoom={22}
-                    maxNativeZoom={22}
                 />
 
                 {/* ── LIVE MODE ── */}
