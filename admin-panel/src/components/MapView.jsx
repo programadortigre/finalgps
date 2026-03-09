@@ -223,8 +223,21 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 </div>
             )}
 
-            <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={20} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
-                <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution="&copy; <a href='https://carto.com/'>carto.com</a>" subdomains={['a', 'b', 'c', 'd']} />
+            <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={19} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
+                <TileLayer 
+                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" 
+                    attribution="&copy; <a href='https://carto.com/'>carto.com</a>" 
+                    subdomains={['a', 'b', 'c', 'd']}
+                    maxNativeZoom={18}
+                    maxZoom={19}
+                />
+                {/* Fallback OSM tiles para zoom muy alto */}
+                <TileLayer 
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution="&copy; <a href='https://osm.org/'>OpenStreetMap</a>"
+                    minZoom={19}
+                    maxZoom={19}
+                />
 
                 {/* ── LIVE MODE ── */}
                 {view === 'live' && livePositions.map(loc => {
