@@ -56,6 +56,10 @@ const ZoomDetector = ({ onZoomChange }) => {
     }, [map, onZoomChange]);
     return null;
 };
+
+// Componente de controles de zoom personalizado
+const ZoomControls = () => {
+    const map = useMap();
     
     const handleZoomIn = () => {
         map.zoomIn();
@@ -484,14 +488,19 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
         /* Zoom Modal - Easter Egg */
         .zoom-modal {
           position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-          z-index: 2000; background: rgba(0,0,0,.5);
+          z-index: 2000; background: rgba(0,0,0,.3);
           display: flex; align-items: center; justify-content: center;
-          backdrop-filter: blur(4px);
+          animation: fadeIn 0.2s ease;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
         .zoom-modal-content {
           background: white; border-radius: 16px; padding: 24px;
-          box-shadow: 0 20px 60px rgba(0,0,0,.3);
+          box-shadow: 0 20px 60px rgba(0,0,0,.4);
           max-width: 320px; animation: slideIn 0.3s ease;
+          border: 2px solid #2563eb;
         }
         @keyframes slideIn {
           from { transform: scale(0.9) translateY(-20px); opacity: 0; }
