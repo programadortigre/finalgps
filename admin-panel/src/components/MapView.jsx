@@ -44,6 +44,46 @@ const FitBounds = ({ positions }) => {
     return null;
 };
 
+// Componente de controles de zoom personalizado
+const ZoomControls = () => {
+    const map = useMap();
+    
+    const handleZoomIn = () => {
+        map.zoomIn();
+    };
+    
+    const handleZoomOut = () => {
+        map.zoomOut();
+    };
+
+    return (
+        <div style={{
+            position: 'absolute',
+            bottom: '20px',
+            right: '20px',
+            zIndex: '999',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px'
+        }}>
+            <button 
+                className="zoom-btn zoom-in" 
+                title="Acercar (Zoom In)"
+                onClick={handleZoomIn}
+            >
+                +
+            </button>
+            <button 
+                className="zoom-btn zoom-out" 
+                title="Alejar (Zoom Out)"
+                onClick={handleZoomOut}
+            >
+                −
+            </button>
+        </div>
+    );
+};
+
 // Reverse geocoding - obtener dirección desde coordenadas
 const getAddress = async (lat, lng) => {
     try {
@@ -223,20 +263,30 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 </div>
             )}
 
-            <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={19} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
+            <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={22} zoomControl={false} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
                 <TileLayer 
                     url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" 
                     attribution="&copy; <a href='https://carto.com/'>carto.com</a>" 
                     subdomains={['a', 'b', 'c', 'd']}
                     maxNativeZoom={18}
-                    maxZoom={19}
+                    minZoom={10}
+                    maxZoom={18}
                 />
-                {/* Fallback OSM tiles para zoom muy alto */}
+                {/* OpenStreetMap (zoom 19) */}
                 <TileLayer 
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution="&copy; <a href='https://osm.org/'>OpenStreetMap</a>"
                     minZoom={19}
                     maxZoom={19}
+                    maxNativeZoom={19}
+                />
+                {/* Esri World Imagery - Alta resolución (zoom 20-22) */}
+                <TileLayer 
+                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                    attribution="&copy; <a href='https://www.esri.com/'>Esri</a>"
+                    minZoom={20}
+                    maxZoom={22}
+                    maxNativeZoom={22}
                 />
 
                 {/* ── LIVE MODE ── */}
@@ -310,6 +360,9 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 {view === 'history' && routeData && playbackMode && (
                     <Playback points={routeData.points} />
                 )}
+
+                {/* Controles de zoom personalizado */}
+                <ZoomControls />
             </MapContainer>
 
             <style>{`
@@ -376,6 +429,25 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
         }
         .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
         .active-dot { background: #2563eb; }
+
+        /* Zoom Controls */
+        .zoom-controls { position: fixed !important; }
+        .zoom-btn {
+          width: 44px; height: 44px; border: none; border-radius: 8px;
+          background: white; color: #0f172a; font-size: 20px; font-weight: bold;
+          cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2);
+          transition: all 0.2s; display: flex; align-items: center; justify-content: center;
+        }
+        .zoom-btn:hover { background: #f1f5f9; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+        .zoom-btn:active { transform: scale(0.95); }
+
+        @media (max-width: 768px) {
+          .zoom-btn { width: 40px; height: 40px; font-size: 18px; }
+        }
+
+        @media (max-width: 480px) {
+          .zoom-btn { width: 36px; height: 36px; font-size: 16px; }
+        }
 
         /* Mobile Responsive */
         @media (max-width: 1024px) {
