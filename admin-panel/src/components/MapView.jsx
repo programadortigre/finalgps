@@ -44,9 +44,18 @@ const FitBounds = ({ positions }) => {
     return null;
 };
 
-// Componente de controles de zoom personalizado
-const ZoomControls = () => {
+// Componente para detectar cambios de zoom
+const ZoomDetector = ({ onZoomChange }) => {
     const map = useMap();
+    useEffect(() => {
+        const handleZoom = () => {
+            onZoomChange(map.getZoom());
+        };
+        map.on('zoom', handleZoom);
+        return () => map.off('zoom', handleZoom);
+    }, [map, onZoomChange]);
+    return null;
+};
     
     const handleZoomIn = () => {
         map.zoomIn();
@@ -103,6 +112,8 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
     const [date, setDate] = useState(dayjs().format('YYYY-MM-DD'));
     const [playbackMode, setPlayback] = useState(false);
     const [addresses, setAddresses] = useState({});
+    const [currentZoom, setCurrentZoom] = useState(17);
+    const [showZoomModal, setShowZoomModal] = useState(false);
 
     // Fetch trips when employee/date changes
     useEffect(() => {
@@ -263,7 +274,44 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 </div>
             )}
 
-            <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={20} zoomControl={false} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
+            {/* ── ZOOM EXTREMO MODAL (Easter Egg) ── */}
+            {showZoomModal && livePositions.length > 0 && (
+                <div className="zoom-modal">
+                    <div className="zoom-modal-content">
+                        <div className="zoom-modal-header">
+                            🔍 ¡Zoom Extremo Activado!
+                            <button className="zoom-modal-close" onClick={() => setShowZoomModal(false)}>×</button>
+                        </div>
+                        <div className="zoom-modal-body">
+                            <p>Nivel de zoom: <strong>{currentZoom.toFixed(1)}</strong></p>
+                            <p className="zoom-modal-hint">Estás viendo detalles a nivel de calle</p>
+                            <button 
+                                className="google-maps-btn"
+                                onClick={() => {
+                                    const loc = livePositions[0];
+                                    window.open(
+                                        `https://www.google.com/maps/@${loc.lat},${loc.lng},${Math.floor(currentZoom * 1.5)}z`,
+                                        '_blank'
+                                    );
+                                    setShowZoomModal(false);
+                                }}
+                            >
+                                📍 Ver en Google Maps
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={21} zoomControl={false} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
+                {/* Detectar cambios de zoom */}
+                <ZoomDetector onZoomChange={(zoom) => {
+                    setCurrentZoom(zoom);
+                    if (zoom >= 18) {
+                        setShowZoomModal(true);
+                    }
+                }} />
+                
                 {/* Carto Dark - Oscuro y detallado (zoom 10-18) */}
                 <TileLayer 
                     url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" 
@@ -273,13 +321,12 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                     minZoom={10}
                     maxZoom={18}
                 />
-                {/* OpenStreetMap France - Optimizado para Perú (zoom 19-20) */}
+                {/* OpenStreetMap - Máxima precisión (zoom 19) */}
                 <TileLayer 
-                    url="https://tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png"
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution="&copy; <a href='https://osm.org/'>OpenStreetMap</a>"
                     minZoom={19}
-                    maxZoom={20}
-                    maxNativeZoom={20}
+                    maxZoom={19}
                 />
 
                 {/* ── LIVE MODE ── */}
@@ -434,12 +481,62 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
         .zoom-btn:hover { background: #f1f5f9; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
         .zoom-btn:active { transform: scale(0.95); }
 
+        /* Zoom Modal - Easter Egg */
+        .zoom-modal {
+          position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+          z-index: 2000; background: rgba(0,0,0,.5);
+          display: flex; align-items: center; justify-content: center;
+          backdrop-filter: blur(4px);
+        }
+        .zoom-modal-content {
+          background: white; border-radius: 16px; padding: 24px;
+          box-shadow: 0 20px 60px rgba(0,0,0,.3);
+          max-width: 320px; animation: slideIn 0.3s ease;
+        }
+        @keyframes slideIn {
+          from { transform: scale(0.9) translateY(-20px); opacity: 0; }
+          to { transform: scale(1) translateY(0); opacity: 1; }
+        }
+        .zoom-modal-header {
+          font-size: 18px; font-weight: 700; color: #0f172a;
+          margin-bottom: 16px; display: flex; justify-content: space-between;
+          align-items: center;
+        }
+        .zoom-modal-close {
+          background: none; border: none; font-size: 24px;
+          cursor: pointer; color: #94a3b8; transition: color 0.2s;
+        }
+        .zoom-modal-close:hover { color: #0f172a; }
+        .zoom-modal-body {
+          display: flex; flex-direction: column; gap: 12px;
+        }
+        .zoom-modal-body p {
+          margin: 0; font-size: 14px; color: #475569;
+        }
+        .zoom-modal-body p strong {
+          color: #2563eb; font-weight: 700;
+        }
+        .zoom-modal-hint {
+          font-size: 12px !important; color: #94a3b8 !important; font-style: italic;
+        }
+        .google-maps-btn {
+          background: linear-gradient(135deg, #2563eb, #1d4ed8);
+          color: white; border: none; padding: 12px 16px;
+          border-radius: 10px; font-size: 13px; font-weight: 700;
+          cursor: pointer; transition: all 0.2s; margin-top: 8px;
+        }
+        .google-maps-btn:hover { box-shadow: 0 4px 12px rgba(37,99,235,.4); transform: translateY(-2px); }
+        .google-maps-btn:active { transform: translateY(0); }
+
         @media (max-width: 768px) {
           .zoom-btn { width: 40px; height: 40px; font-size: 18px; }
+          .zoom-modal-content { max-width: 90%; }
         }
 
         @media (max-width: 480px) {
           .zoom-btn { width: 36px; height: 36px; font-size: 16px; }
+          .zoom-modal-content { margin: 16px; max-width: calc(100% - 32px); }
+          .zoom-modal-header { font-size: 16px; }
         }
 
         /* Mobile Responsive */
