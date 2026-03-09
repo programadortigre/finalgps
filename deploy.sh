@@ -71,6 +71,10 @@ sudo docker-compose up -d --build
 echo "⏳ Esperando 15s a que base de datos termine de iniciar..."
 sleep 15
 
+echo "🛠️ Forzando creación de tablas y datos iniciales (Por si el volumen ya existía)..."
+source .env
+sudo docker exec -i gps-postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < ./database/init.sql || echo "Advertencia: El volcado SQL pudo tener conflictos (normal si ya existía)."
+
 # 7. Verificar estado
 echo "✅ 7. Estado final de los contenedores:"
 sudo docker-compose ps
