@@ -42,6 +42,8 @@ const locationLimiter = rateLimit({
   message: 'Demasiadas solicitudes desde esta IP, por favor intente más tarde',
   standardHeaders: true, // Retorna info de rate limit en header RateLimit-*
   legacyHeaders: false, // Desactiva headers X-RateLimit-*
+  skip: (req) => req.user?.role === 'admin', // Admins no tienen rate limit
+  trustProxy: true, // Confiar en X-Forwarded-For header (para proxies como nginx)
 });
 
 const apiLimiter = rateLimit({
@@ -49,6 +51,7 @@ const apiLimiter = rateLimit({
   max: 500, // Máximo 500 requests por 15 minutos
   message: 'Demasiadas solicitudes, por favor intente más tarde',
   skip: (req) => req.user?.role === 'admin', // Admins no tienen rate limit
+  trustProxy: true, // Confiar en X-Forwarded-For header (para proxies como nginx)
 });
 
 // Middlewares

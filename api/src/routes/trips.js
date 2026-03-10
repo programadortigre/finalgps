@@ -60,14 +60,24 @@ router.get('/:id', auth, async (req, res) => {
         if (simplify) {
             // ✅ OPTIMIZADO: Usar ruta simplificada de trip_routes
             // (~120 puntos en lugar de 1920 = 88% reducción en tamaño)
-            pointsResult = await db.query(`
-                SELECT 
-                    ST_AsGeoJSON(geom_simplified)::json as geom,
-                    point_count_simplified as point_count,
-                    TRUE as is_simplified
-                FROM trip_routes
-                WHERE trip_id = $1
-            `, [tripId]);
+            try {
+                pointsResult = await db.query(`
+                    SELECT 
+                        ST_AsGeoJSON(geom_simplified)::json as geom,
+                        point_count_simplified as point_count,
+                        TRUE as is_simplified
+                    FROM trip_routes
+                    WHERE trip_id = $1
+                `, [tripId]);
+            } catch (tableError) {
+                // Si la tabla no existe, pasar al fallback directo
+                if (tableError.message.includes('trip_routes') || tableError.message.includes('does not exist')) {
+                    console.warn(`[WARNING] Trip ${tripId}: trip_routes table does not exist, using full route fallback`);
+                    pointsResult = { rows: [] };
+                } else {
+                    throw tableError; // Re-throw otros errores
+                }
+            }
 
             if (pointsResult.rows.length === 0) {
                 // Fallback: si no existe ruta compilada, retornar completa
