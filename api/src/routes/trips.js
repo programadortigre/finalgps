@@ -55,6 +55,8 @@ router.get('/:id', auth, async (req, res) => {
 
         // 2. Get route points (simplificados o completos según parámetro)
         let pointsResult;
+        let isSimplified = false;
+        
         if (simplify) {
             // ✅ OPTIMIZADO: Usar ruta simplificada de trip_routes
             // (~120 puntos en lugar de 1920 = 88% reducción en tamaño)
@@ -76,18 +78,46 @@ router.get('/:id', auth, async (req, res) => {
                     WHERE trip_id = $1 
                     ORDER BY timestamp ASC
                 `, [tripId]);
+                isSimplified = false;
             } else {
-                // Transformar el resultado para mantener compatibilidad con frontend
-                const row = pointsResult.rows[0];
-                // Extraer coordenadas de GeoJSON LineString
-                const coordinates = row.geom.coordinates;
-                pointsResult.rows = coordinates.map(coord => ({
-                    lat: coord[1],
-                    lng: coord[0],
-                    speed: null,
-                    accuracy: null,
-                    timestamp: null
-                }));
+                try {
+                    // Transformar el resultado para mantener compatibilidad con frontend
+                    const row = pointsResult.rows[0];
+                    
+                    // Validar que geom es un objeto válido con coordinates
+                    if (row.geom && row.geom.coordinates && Array.isArray(row.geom.coordinates)) {
+                        // Extraer coordenadas de GeoJSON LineString
+                        const coordinates = row.geom.coordinates;
+                        pointsResult.rows = coordinates.map(coord => ({
+                            lat: coord[1],
+                            lng: coord[0],
+                            speed: null,
+                            accuracy: null,
+                            timestamp: null
+                        }));
+                        isSimplified = true;
+                    } else {
+                        // Si el GeoJSON no es válido, hacer fallback a ruta completa
+                        console.warn(`[WARNING] Trip ${tripId}: Invalid GeoJSON structure in trip_routes, using full route`);
+                        pointsResult = await db.query(`
+                            SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp
+                            FROM locations 
+                            WHERE trip_id = $1 
+                            ORDER BY timestamp ASC
+                        `, [tripId]);
+                        isSimplified = false;
+                    }
+                } catch (geoJsonError) {
+                    // Si hay error procesando GeoJSON, hacer fallback
+                    console.warn(`[WARNING] Trip ${tripId}: Error processing GeoJSON - ${geoJsonError.message}, using full route`);
+                    pointsResult = await db.query(`
+                        SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp
+                        FROM locations 
+                        WHERE trip_id = $1 
+                        ORDER BY timestamp ASC
+                    `, [tripId]);
+                    isSimplified = false;
+                }
             }
         } else {
             // ❌ SIN OPTIMIZAR: Obtener todos los puntos crudos (~1920)
@@ -112,7 +142,7 @@ router.get('/:id', auth, async (req, res) => {
         const pointCount = Array.isArray(pointsResult.rows) ? pointsResult.rows.length : 0;
         console.log(
             `[API] Trip ${tripId}: returned ${pointCount} points ` +
-            `(${simplify ? 'simplified ✅' : 'full ❌'})`
+            `(${isSimplified ? 'simplified ✅' : 'full ❌'})`
         );
 
         res.json({
@@ -120,7 +150,7 @@ router.get('/:id', auth, async (req, res) => {
             points: pointsResult.rows,
             stops: stopsResult.rows,
             metadata: {
-                simplified: simplify,
+                simplified: isSimplified,
                 point_count: pointCount
             }
         });
