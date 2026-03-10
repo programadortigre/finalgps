@@ -15,9 +15,13 @@ const Dashboard = ({ user, onLogout }) => {
 
     useEffect(() => {
         connectSocket();
-        socket.emit('join', 'admins');
+        // ✅ Suscribirse a la sala de admins con join_admins event
+        socket.emit('join_admins', user.id);
+        console.log('[Dashboard] Admin subscribed to join_admins:', user.id);
 
+        // ✅ Escuchar actualizaciones de ubicación en tiempo real
         socket.on('location_update', (data) => {
+            console.log('[Dashboard] location_update received:', data);
             setActiveLocations(prev => ({
                 ...prev,
                 [data.employeeId]: { ...data, lastUpdate: new Date().toISOString() }
@@ -31,7 +35,19 @@ const Dashboard = ({ user, onLogout }) => {
             } catch (e) { console.error('Error fetching vendors', e); }
         };
 
+        const fetchLatestLocations = async () => {
+            try {
+                const { data } = await api.get('/api/locations');
+                const initialLocations = {};
+                data.forEach(loc => {
+                    initialLocations[loc.employeeId] = loc;
+                });
+                setActiveLocations(initialLocations);
+            } catch (e) { console.error('Error fetching latest locations', e); }
+        };
+
         fetchEmployees();
+        fetchLatestLocations();
 
         // Detectar cambios de tamaño de pantalla
         const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -63,23 +79,23 @@ const Dashboard = ({ user, onLogout }) => {
                 </header>
 
                 <nav className="sidebar-nav">
-                    <button 
-                        onClick={() => { setView('live'); if (isMobile) setSidebarOpen(false); }} 
+                    <button
+                        onClick={() => { setView('live'); if (isMobile) setSidebarOpen(false); }}
                         className={view === 'live' ? 'active' : ''}
                     >
                         <Activity size={20} />
                         <span>En Vivo</span>
                         {activeCount > 0 && <span className="badge-count">{activeCount}</span>}
                     </button>
-                    <button 
-                        onClick={() => { setView('history'); if (isMobile) setSidebarOpen(false); }} 
+                    <button
+                        onClick={() => { setView('history'); if (isMobile) setSidebarOpen(false); }}
                         className={view === 'history' ? 'active' : ''}
                     >
                         <History size={20} />
                         <span>Historial</span>
                     </button>
-                    <button 
-                        onClick={() => { setView('vendors'); if (isMobile) setSidebarOpen(false); }} 
+                    <button
+                        onClick={() => { setView('vendors'); if (isMobile) setSidebarOpen(false); }}
                         className={view === 'vendors' ? 'active' : ''}
                     >
                         <UserCog size={20} />
