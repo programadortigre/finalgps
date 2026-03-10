@@ -176,16 +176,30 @@ async function processBatch(employeeId, points) {
 
         await client.query('COMMIT');
 
-        // ✅ COMPILAR RUTA cuando viaje se cierra (30+ min sin puntos)
+        // ✅ COMPILAR RUTA cuando viaje se cierra (30+ min sin puntos o cierre manual)
         const lastPointTime = await client.query(
-            'SELECT EXTRACT(EPOCH FROM (NOW() - MAX(TO_TIMESTAMP(timestamp / 1000)))::interval) as seconds_since_last FROM locations WHERE trip_id = $1',
+            'SELECT MAX(timestamp) as last_timestamp FROM locations WHERE trip_id = $1',
             [tripId]
         );
 
-        if (lastPointTime.rows[0] && lastPointTime.rows[0].seconds_since_last > 1800) {  // 30 min
-            console.log(`[CLOSE] Trip ${tripId}: closing due to inactivity`);
-            await client.query('UPDATE trips SET is_active = FALSE, end_time = NOW() WHERE id = $1', [tripId]);
-            await updateTripRoute(client, tripId);
+        if (lastPointTime.rows[0] && lastPointTime.rows[0].last_timestamp) {
+            // Convertir timestamp (puede ser ms o segundos)
+            let lastTs = lastPointTime.rows[0].last_timestamp;
+            if (typeof lastTs === 'number' && lastTs > 9999999999) {
+                // Es en millisegundos, convertir a segundos
+                lastTs = Math.floor(lastTs / 1000);
+            }
+            
+            const secondsSinceLast = Math.floor(Date.now() / 1000) - lastTs;
+            
+            if (secondsSinceLast > 1800) {  // 30 minutos
+                console.log(`[CLOSE] Trip ${tripId}: closing due to ${secondsSinceLast}s inactivity (30min threshold)`);
+                await client.query(
+                    'UPDATE trips SET is_active = FALSE, end_time = NOW() WHERE id = $1',
+                    [tripId]
+                );
+                await updateTripRoute(client, tripId);
+            }
         }
 
     } catch (err) {

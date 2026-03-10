@@ -170,4 +170,46 @@ router.get('/:id', auth, async (req, res) => {
     }
 });
 
+// ✅ ENDPOINT: Cerrar viaje manualmente (cuando usuario detiene tracking)
+// PATCH /api/trips/:id/close
+router.patch('/:id/close', auth, async (req, res) => {
+    const tripId = req.params.id;
+
+    try {
+        // Verificar que el viaje pertenece al usuario o es admin
+        const tripResult = await db.query(
+            'SELECT * FROM trips WHERE id = $1',
+            [tripId]
+        );
+
+        if (tripResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Trip not found' });
+        }
+
+        const trip = tripResult.rows[0];
+
+        // Verificar autorización (admin o propietario del viaje)
+        if (req.user.role !== 'admin' && trip.employee_id !== req.user.id) {
+            return res.status(403).json({ error: 'Not authorized to close this trip' });
+        }
+
+        // Cerrar viaje
+        const closeResult = await db.query(
+            'UPDATE trips SET is_active = FALSE, end_time = NOW() WHERE id = $1 RETURNING *',
+            [tripId]
+        );
+
+        console.log(`[API] Trip ${tripId}: closed by ${req.user.name}`);
+
+        res.json({
+            success: true,
+            message: `Trip ${tripId} closed successfully`,
+            trip: closeResult.rows[0]
+        });
+    } catch (err) {
+        console.error(`[ERROR] Failed to close trip ${tripId}:`, err.message);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 module.exports = router;
