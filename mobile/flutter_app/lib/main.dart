@@ -371,6 +371,7 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   LatLng? _position;
   double  _speed = 0;
   double  _accuracy = 0;
+  String  _state = "SIN_MOVIMIENTO";
   double  _distanceToday = 0;
   final Distance _distCalc = const Distance();
 
@@ -457,13 +458,29 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
 
   void _startListening() {
     _locationSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 5),
+      locationSettings: const AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 5,
+        intervalDuration: Duration(seconds: 5),
+      ),
     ).listen((pos) {
       final ll = LatLng(pos.latitude, pos.longitude);
       if (mounted) {
         setState(() {
           _speed    = pos.speed * 3.6;
           _accuracy = pos.accuracy;
+          
+          // Detección simple para la UI (consistente con el background)
+          if (_speed < 0.8) {
+            _state = "SIN_MOVIMIENTO";
+          } else if (_speed < 4.0) {
+            _state = "CAMINANDO";
+          } else if (_speed < 12.0) {
+            _state = "MOVIMIENTO_LENTO";
+          } else {
+            _state = "VEHICULO";
+          }
+
           if (_position != null && _isOnline) {
             _distanceToday += _distCalc.as(LengthUnit.Kilometer, _position!, ll);
             _trail.add(ll);
@@ -718,7 +735,7 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                 Row(children: [
                   _statCard('⚡', _speed.toStringAsFixed(0), 'km/h', const Color(0xFF6C63FF)),
                   const SizedBox(width: 10),
-                  _statCard('📍', _accuracy.toStringAsFixed(0), 'precisión m', const Color(0xFF3F8CFF)),
+                  _statCard('🎭', _state.replaceAll('_', ' '), 'estado', const Color(0xFFF59E0B)),
                   const SizedBox(width: 10),
                   _statCard('🛣️', _distanceToday.toStringAsFixed(2), 'km hoy', const Color(0xFF22C55E)),
                 ]),

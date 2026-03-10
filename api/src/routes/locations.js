@@ -154,7 +154,14 @@ router.post('/batch', auth, async (req, res) => {
         // Push filtered points to processing queue
         await locationQueue.add('process-batch', {
             employeeId,
-            points: filteredPoints
+            points: filteredPoints.map(p => ({
+                lat: p.lat,
+                lng: p.lng,
+                speed: p.speed,
+                accuracy: p.accuracy,
+                timestamp: p.timestamp,
+                state: p.state || 'SIN_MOVIMIENTO'
+            }))
         });
 
         // Real-time update for admins (solo último punto válido)
@@ -166,6 +173,8 @@ router.post('/batch', auth, async (req, res) => {
                 name: req.user.name,
                 lat: lastPoint.lat,
                 lng: lastPoint.lng,
+                speed: lastPoint.speed,
+                state: lastPoint.state || 'SIN_MOVIMIENTO',
                 timestamp: lastPoint.timestamp
             });
         }

@@ -45,69 +45,99 @@ void onStart(ServiceInstance service) async {
 
   final api = ApiService();
   final storage = LocalStorage();
-  List<Map<String, dynamic>> cache = [];
+  LocalPoint? lastValidPoint;
 
-  /// Timer principal: Capturar GPS cada 15 segundos
-  Timer.periodic(const Duration(seconds: 15), (timer) async {
+  /// Función para detectar estado según velocidad
+  String calculateState(double speedKmh) {
+    if (speedKmh < 0.8) return "SIN_MOVIMIENTO";
+    if (speedKmh < 4.0) return "CAMINANDO";
+    if (speedKmh < 12.0) return "MOVIMIENTO_LENTO";
+    return "VEHICULO";
+  }
+
+  /// Iniciar Stream de ubicación en tiempo real
+  Geolocator.getPositionStream(
+    locationSettings: const AndroidSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 5,
+      intervalDuration: Duration(seconds: 5),
+      foregroundNotificationConfig: ForegroundNotificationConfig(
+        notificationText: "Rastreando ubicación en tiempo real...",
+        notificationTitle: "GPS Tracking Activo",
+        enableWakeLock: true,
+      ),
+    ),
+  ).listen((Position pos) async {
     try {
       final token = await api.getToken();
-      if (token == null) {
-        timer.cancel();
-        await service.stopSelf();
+      if (token == null) return;
+
+      final double speedKmh = pos.speed * 3.6;
+
+      // 1. Filtrar por precisión basura (> 50m)
+      if (pos.accuracy > 50) {
+        print("[GPS] Punto descartado por baja precisión: ${pos.accuracy}m");
         return;
       }
 
-      if (service is AndroidServiceInstance && await service.isForegroundService()) {
-        final stats = await storage.getStats();
-        service.setForegroundNotificationInfo(
-          title: 'GPS Tracking Activo',
-          content: 'Última actualización: ${DateTime.now().toString().substring(11, 19)} '
-              '(${stats['unsynced']} en cola)',
-        );
+      // 2. Filtrar por velocidad absurda (> 150 km/h)
+      if (speedKmh > 150) {
+        print("[GPS] Punto descartado por velocidad absurda: $speedKmh km/h");
+        return;
       }
 
-      final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
-      );
+      // 3. Filtrar por salto imposible (> 300 km/h promedio desde último punto)
+      if (lastValidPoint != null) {
+        double dist = Geolocator.distanceBetween(
+          lastValidPoint!.lat, lastValidPoint!.lng,
+          pos.latitude, pos.longitude
+        );
+        double timeSecs = (DateTime.now().millisecondsSinceEpoch - lastValidPoint!.timestamp) / 1000.0;
+        if (timeSecs > 0) {
+          double avgSpeed = (dist / timeSecs) * 3.6;
+          if (avgSpeed > 300) {
+            print("[GPS] Salto imposible detectado: $avgSpeed km/h promedio. Descartando.");
+            return;
+          }
+        }
+      }
+
+      final state = calculateState(speedKmh);
 
       final point = LocalPoint(
         lat: pos.latitude,
         lng: pos.longitude,
-        speed: pos.speed * 3.6,
+        speed: speedKmh,
         accuracy: pos.accuracy,
+        state: state,
         timestamp: DateTime.now().millisecondsSinceEpoch,
       );
 
-      // PASO CRÍTICO: Guardar SIEMPRE en BD local primero
+      // Guardar en BD local
       await storage.insertPoint(point);
+      lastValidPoint = point;
 
-      // Agregar a cache en RAM
-      cache.add({
-        'lat': point.lat,
-        'lng': point.lng,
-        'speed': point.speed,
-        'accuracy': point.accuracy,
-        'timestamp': point.timestamp,
-      });
-
-      // 🚀 OPTIMIZACIÓN: Si es el primer punto o llegamos a 5 (antes 20), subir inmediatamente
-      if (cache.length >= 5 || cache.length == 1) {
-        final ok = await api.uploadBatch(cache);
-        if (ok) {
-          final unsyncedPoints = await storage.getUnsyncedPoints(limit: cache.length);
-          final ids = unsyncedPoints.map((p) => p.id!).toList();
-          if (ids.isNotEmpty) await storage.markPointsAsSynced(ids);
-          cache.clear();
-        }
+      // Notificación de estado
+      if (service is AndroidServiceInstance && await service.isForegroundService()) {
+        final stats = await storage.getStats();
+        service.setForegroundNotificationInfo(
+          title: 'Estado: $state',
+          content: 'Velocidad: ${speedKmh.toStringAsFixed(1)} km/h | Cola: ${stats['unsynced']}',
+        );
       }
 
-      // Limpiar datos antiguos cada 1 hora
-      if (DateTime.now().minute == 0) {
+      // SUBIDA REAL-TIME: Enviar inmediatamente al servidor
+      final ok = await api.uploadBatch([point.toJson()]);
+      if (ok) {
+        if (point.id != null) await storage.markPointsAsSynced([point.id!]);
+      }
+
+      // Limpiar datos antiguos cada 1 hora (en el minuto 0)
+      if (DateTime.now().minute == 0 && DateTime.now().second < 10) {
         await storage.cleanOldSyncedPoints();
       }
     } catch (e) {
-      // Reintento silencioso vía el otro timer
+      print("[GPS] Error en stream: $e");
     }
   });
 
@@ -126,6 +156,7 @@ void onStart(ServiceInstance service) async {
         'lng': p.lng,
         'speed': p.speed,
         'accuracy': p.accuracy,
+        'state': p.state,
         'timestamp': p.timestamp,
       }).toList();
 

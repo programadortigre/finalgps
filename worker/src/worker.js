@@ -10,7 +10,12 @@ try {
     logger.info('.env file not found, using system environment variables');
 }
 
-const { processBatch } = require('./tripProcessor');
+const { processBatch, syncSchema } = require('./tripProcessor');
+
+// Sync database schema on startup
+syncSchema().then(() => {
+    logger.info('Database schema sync checked by worker.');
+});
 
 const connection = new Redis({
     host: process.env.REDIS_HOST || 'localhost',

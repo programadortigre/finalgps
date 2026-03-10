@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS locations (
     longitude FLOAT NOT NULL,
     speed FLOAT,
     accuracy FLOAT,
+    state VARCHAR(30) DEFAULT 'SIN_MOVIMIENTO',
     timestamp BIGINT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(employee_id, timestamp)

@@ -14,16 +14,24 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// Active vendor icon
-const activeIcon = L.divIcon({
-    className: '',
-    html: `<div style="position:relative">
-    <div style="background:#2563eb;border:3px solid white;border-radius:50%;width:18px;height:18px;box-shadow:0 2px 8px rgba(0,0,0,.3)"></div>
-    <div style="position:absolute;top:-2px;left:-2px;width:22px;height:22px;border:2px solid #2563eb;border-radius:50%;animation:pulse 1.5s infinite;opacity:.5"></div>
-  </div>`,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
-});
+// Base Active Icon function to handle dynamic color
+const getActiveIcon = (state) => {
+    let color = '#2563eb'; // Default Blue
+    if (state === 'SIN_MOVIMIENTO') color = '#94a3b8'; // Slate/Gray
+    if (state === 'CAMINANDO') color = '#22c55e'; // Green
+    if (state === 'MOVIMIENTO_LENTO') color = '#f59e0b'; // Amber/Orange
+    if (state === 'VEHICULO') color = '#6366f1'; // Indigo
+
+    return L.divIcon({
+        className: '',
+        html: `<div style="position:relative">
+        <div style="background:${color};border:3px solid white;border-radius:50%;width:18px;height:18px;box-shadow:0 2px 8px rgba(0,0,0,.3)"></div>
+        <div style="position:absolute;top:-2px;left:-2px;width:22px;height:22px;border:2px solid ${color};border-radius:50%;animation:pulse 1.5s infinite;opacity:.5"></div>
+      </div>`,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+    });
+};
 
 // Stop icon
 const stopIcon = L.divIcon({
@@ -47,11 +55,11 @@ const FitBounds = ({ positions }) => {
 // Componente de controles de zoom personalizado
 const ZoomControls = () => {
     const map = useMap();
-    
+
     const handleZoomIn = () => {
         map.zoomIn();
     };
-    
+
     const handleZoomOut = () => {
         map.zoomOut();
     };
@@ -66,15 +74,15 @@ const ZoomControls = () => {
             flexDirection: 'column',
             gap: '8px'
         }}>
-            <button 
-                className="zoom-btn zoom-in" 
+            <button
+                className="zoom-btn zoom-in"
                 title="Acercar (Zoom In)"
                 onClick={handleZoomIn}
             >
                 +
             </button>
-            <button 
-                className="zoom-btn zoom-out" 
+            <button
+                className="zoom-btn zoom-out"
                 title="Alejar (Zoom Out)"
                 onClick={handleZoomOut}
             >
@@ -138,16 +146,16 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
             const { data } = await api.get(`/api/trips/${trip.id}?simplify=true`);
             setRouteData(data);
             setTrip(trip);
-            
+
             // Cargar direcciones para inicio, fin y paradas
             const newAddresses = {};
             if (data.points.length > 0) {
                 const startPoint = data.points[0];
                 newAddresses[`start-${trip.id}`] = await getAddress(startPoint.lat, startPoint.lng);
-                
+
                 const endPoint = data.points.at(-1);
                 newAddresses[`end-${trip.id}`] = await getAddress(endPoint.lat, endPoint.lng);
-                
+
                 for (let i = 0; i < data.stops.length; i++) {
                     const stop = data.stops[i];
                     newAddresses[`stop-${trip.id}-${i}`] = await getAddress(stop.lat, stop.lng);
@@ -261,22 +269,28 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
             {/* ── LEGEND: live mode ── */}
             {view === 'live' && (
                 <div className="map-legend">
-                    <div className="legend-dot active-dot" /> Activo ({livePositions.length})
+                    <div className="legend-items">
+                        <div className="legend-item"><div className="legend-dot" style={{ background: '#94a3b8' }} /> Quieto</div>
+                        <div className="legend-item"><div className="legend-dot" style={{ background: '#22c55e' }} /> Caminando</div>
+                        <div className="legend-item"><div className="legend-dot" style={{ background: '#6366f1' }} /> Vehículo</div>
+                        <div className="legend-divider" />
+                        <div className="legend-item"><strong>En Vivo: {livePositions.length}</strong></div>
+                    </div>
                 </div>
             )}
 
             <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={19} zoomControl={false} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
                 {/* Carto Dark - Oscuro y detallado (zoom 10-18) */}
-                <TileLayer 
-                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" 
-                    attribution="&copy; <a href='https://carto.com/'>carto.com</a>" 
+                <TileLayer
+                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                    attribution="&copy; <a href='https://carto.com/'>carto.com</a>"
                     subdomains={['a', 'b', 'c', 'd']}
                     maxNativeZoom={18}
                     minZoom={10}
                     maxZoom={19}
                 />
                 {/* OpenStreetMap - Máxima precisión (zoom 19) */}
-                <TileLayer 
+                <TileLayer
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution="&copy; <a href='https://osm.org/'>OpenStreetMap</a>"
                     minZoom={19}
@@ -286,22 +300,41 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 {/* ── LIVE MODE ── */}
                 {view === 'live' && livePositions.map(loc => {
                     const addr = addresses[`live-${loc.employeeId}`] || 'Obteniendo dirección...';
+                    const displayState = (loc.state || 'SIN_MOVIMIENTO').replaceAll('_', ' ');
+
                     return (
-                        <Marker key={loc.employeeId} position={[loc.lat, loc.lng]} icon={activeIcon}>
+                        <Marker key={loc.employeeId} position={[loc.lat, loc.lng]} icon={getActiveIcon(loc.state)}>
                             <Popup>
-                                <div style={{ fontSize: '12px', minWidth: '200px' }}>
-                                    <strong>{loc.name || `Vendedor ${loc.employeeId}`}</strong><br />
-                                    📍 <span style={{ fontSize: '11px', color: '#666' }}>{addr}</span><br />
-                                    🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}<br />
-                                    📈 {loc.speed ? (loc.speed.toFixed(1) + ' km/h') : 'Detenido'}<br />
-                                    <a 
-                                        href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
-                                    >
-                                        🗺️ Ver en Google Maps
-                                    </a>
+                                <div style={{ fontSize: '13px', minWidth: '220px', padding: '5px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                        <strong style={{ fontSize: '15px' }}>{loc.name || `Vendedor ${loc.employeeId}`}</strong>
+                                        <span style={{
+                                            background: loc.speed > 0 ? '#dcfce7' : '#f1f5f9',
+                                            color: loc.speed > 0 ? '#166534' : '#475569',
+                                            padding: '2px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 'bold'
+                                        }}>
+                                            {displayState}
+                                        </span>
+                                    </div>
+
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', color: '#64748b' }}>
+                                        <span>📍 {addr}</span>
+                                        <div style={{ display: 'flex', gap: '15px', marginTop: '4px' }}>
+                                            <span>🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}</span>
+                                            <span>📈 {loc.speed ? (loc.speed.toFixed(1) + ' km/h') : 'Detenido'}</span>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ marginTop: '12px', borderTop: '1px solid #eee', paddingTop: '8px' }}>
+                                        <a
+                                            href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', fontSize: '12px' }}
+                                        >
+                                            🗺️ Ver en Google Maps
+                                        </a>
+                                    </div>
                                 </div>
                             </Popup>
                         </Marker>
@@ -326,7 +359,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                         <strong>🚀 Inicio del viaje</strong><br />
                                         📍 {addresses[`start-${selectedTrip.id}`] || 'Cargando...'}<br />
                                         🕐 {dayjs(selectedTrip.start_time).format('HH:mm:ss')}<br />
-                                        <a 
+                                        <a
                                             href={`https://www.google.com/maps?q=${routeData.points[0].lat},${routeData.points[0].lng}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -346,7 +379,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                         <strong>🏁 Fin del viaje</strong><br />
                                         📍 {addresses[`end-${selectedTrip.id}`] || 'Cargando...'}<br />
                                         🛣️ {(selectedTrip?.distance_meters / 1000 || 0).toFixed(2)} km<br />
-                                        <a 
+                                        <a
                                             href={`https://www.google.com/maps?q=${routeData.points.at(-1).lat},${routeData.points.at(-1).lng}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -367,7 +400,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                         📍 {addresses[`stop-${selectedTrip.id}-${i}`] || 'Cargando...'}<br />
                                         ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg<br />
                                         🕐 {dayjs(s.start_time).format('HH:mm')} – {dayjs(s.end_time).format('HH:mm')}<br />
-                                        <a 
+                                        <a
                                             href={`https://www.google.com/maps?q=${s.lat},${s.lng}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -449,11 +482,13 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
 
         .map-legend {
           position: absolute; top: 12px; right: 12px; z-index: 1000;
-          background: white; padding: 8px 14px; border-radius: 10px;
-          box-shadow: 0 2px 8px rgba(0,0,0,.1); font-size: 13px; color: #1e293b;
-          display: flex; align-items: center; gap: 8px;
+          background: white; padding: 10px 14px; border-radius: 12px;
+          box-shadow: 0 4px 12px rgba(0,0,0,.15); font-size: 13px; color: #1e293b;
         }
-        .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .legend-items { display: flex; flex-direction: column; gap: 6px; }
+        .legend-item { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .legend-divider { height: 1px; background: #e2e8f0; margin: 4px 0; }
         .active-dot { background: #2563eb; }
 
         /* Zoom Controls */

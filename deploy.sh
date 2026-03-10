@@ -62,10 +62,10 @@ for dir in "${subdirs[@]}"; do
 done
 
 # 6. Levantar todo con Docker Compose
-echo "🐳 6. Levantando contenedores (PostgreSQL, Redis, API, Worker, Admin Panel)..."
+echo "🐳 6. Actualizando contenedores (PostgreSQL, Redis, API, Worker, Admin Panel)..."
 sudo docker-compose pull || true
-sudo docker-compose down
-sudo docker-compose up -d --build
+# Usamos up -d sin 'down' previo para minimizar el tiempo de inactividad (Rolling Update)
+sudo docker-compose up -d --build --remove-orphans
 
 # Esperar que levanten los servicios pesados
 echo "⏳ Esperando 15s a que base de datos termine de iniciar..."

@@ -76,9 +76,14 @@ app.post('/api/locations/batch', locationLimiter);
 // Basic health check
 app.get('/health', (req, res) => res.json({ status: 'OK', timestamp: new Date() }));
 
+const { syncSchema } = require('./db/postgres');
+
 const PORT = process.env.API_PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', async () => {
   logger.info(`Server listening on 0.0.0.0:${PORT}`);
   logger.info(`Compression: ENABLED ✅`);
   logger.info(`Rate Limiting: ENABLED ✅`);
+
+  // Automate DB schema synchronization
+  await syncSchema();
 });

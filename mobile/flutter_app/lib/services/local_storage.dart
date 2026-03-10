@@ -22,9 +22,17 @@ class LocalStorage {
     final path = join(dbPath, _dbName);
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
+  }
+
+  /// Manejar migración de base de datos
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('ALTER TABLE $_tableName ADD COLUMN state TEXT DEFAULT "SIN_MOVIMIENTO"');
+    }
   }
 
   /// Crear tabla en la primera ejecución
@@ -36,6 +44,7 @@ class LocalStorage {
         lng REAL NOT NULL,
         speed REAL NOT NULL,
         accuracy REAL NOT NULL,
+        state TEXT DEFAULT "SIN_MOVIMIENTO",
         timestamp INTEGER NOT NULL,
         synced INTEGER DEFAULT 0,
         created_at INTEGER DEFAULT 0
@@ -62,6 +71,7 @@ class LocalStorage {
         'lng': point.lng,
         'speed': point.speed,
         'accuracy': point.accuracy,
+        'state': point.state,
         'timestamp': point.timestamp,
         'synced': 0,
         'created_at': DateTime.now().millisecondsSinceEpoch,
