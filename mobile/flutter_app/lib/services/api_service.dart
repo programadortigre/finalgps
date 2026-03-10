@@ -116,8 +116,10 @@ class ApiService {
       
       if (res.statusCode == 200 && res.data != null && (res.data as List).isNotEmpty) {
         final trips = res.data as List;
-        final latestTripId = trips[0]['id'];
-        final distanceMeters = trips[0]['distance_meters'] ?? 0;
+        // Tomamos el viaje más reciente (el primero por ORDER BY start_time DESC)
+        final latestTrip = trips[0];
+        final latestTripId = latestTrip['id'];
+        final distanceMeters = latestTrip['distance_meters'] ?? 0.0;
         
         final detailsRes = await dio.get(
           '/api/trips/$latestTripId',
@@ -128,6 +130,7 @@ class ApiService {
           return {
             'distance_meters': distanceMeters,
             'points': detailsRes.data['points'] ?? [],
+            'trip_id': latestTripId,
           };
         }
       }

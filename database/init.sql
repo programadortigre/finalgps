@@ -1,3 +1,4 @@
+-- Create role if not exists (superuser will handle)
 -- Enable PostGIS extension
 CREATE EXTENSION IF NOT EXISTS postgis;
 

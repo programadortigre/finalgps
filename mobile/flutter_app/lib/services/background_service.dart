@@ -13,15 +13,15 @@ Future<void> initializeService() async {
   await service.configure(
     androidConfiguration: AndroidConfiguration(
       onStart: onStart,
-      autoStart: false,             // Starts explicitly after login
+      autoStart: true,              // Empezar automáticamente al encender o tras login
       isForegroundMode: true,
-      notificationChannelId: 'gps_tracking_channel', // Matches MainActivity.kt
+      notificationChannelId: 'gps_tracking_channel', 
       initialNotificationTitle: 'GPS Tracking Activo',
-      initialNotificationContent: 'Iniciando rastreo...',
+      initialNotificationContent: 'Rastreando ubicación en segundo plano...',
       foregroundServiceNotificationId: 888,
     ),
     iosConfiguration: IosConfiguration(
-      autoStart: false,
+      autoStart: true,
       onForeground: onStart,
       onBackground: onIosBackground,
     ),
@@ -68,6 +68,7 @@ void onStart(ServiceInstance service) async {
 
       final pos = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
       );
 
       final point = LocalPoint(
@@ -79,10 +80,9 @@ void onStart(ServiceInstance service) async {
       );
 
       // PASO CRÍTICO: Guardar SIEMPRE en BD local primero
-      // Esto garantiza que NO se pierdan puntos nunca
       await storage.insertPoint(point);
 
-      // También agregar a cache en RAM para upload inmediato si hay conexión
+      // Agregar a cache en RAM
       cache.add({
         'lat': point.lat,
         'lng': point.lng,
@@ -91,17 +91,14 @@ void onStart(ServiceInstance service) async {
         'timestamp': point.timestamp,
       });
 
-      // Si tenemos 20 puntos en RAM, intentar enviar
-      if (cache.length >= 20) {
+      // 🚀 OPTIMIZACIÓN: Si es el primer punto o llegamos a 5 (antes 20), subir inmediatamente
+      if (cache.length >= 5 || cache.length == 1) {
         final ok = await api.uploadBatch(cache);
         if (ok) {
-          cache.clear();
-          // Marcar como sincronizados en BD local
-          final unsyncedPoints = await storage.getUnsyncedPoints(limit: 20);
+          final unsyncedPoints = await storage.getUnsyncedPoints(limit: cache.length);
           final ids = unsyncedPoints.map((p) => p.id!).toList();
-          if (ids.isNotEmpty) {
-            await storage.markPointsAsSynced(ids);
-          }
+          if (ids.isNotEmpty) await storage.markPointsAsSynced(ids);
+          cache.clear();
         }
       }
 
@@ -110,8 +107,7 @@ void onStart(ServiceInstance service) async {
         await storage.cleanOldSyncedPoints();
       }
     } catch (e) {
-      // Los puntos ya están guardados localmente - esto es seguro
-      // El error se reintentará en 5 minutos
+      // Reintento silencioso vía el otro timer
     }
   });
 

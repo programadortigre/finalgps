@@ -3,6 +3,7 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 const { locationQueue } = require('../services/queue');
 const { getIO } = require('../socket/socket');
+const db = require('../db/postgres');
 
 /// ============================================================================
 /// CONFIGURACIÓN DE FILTRADO
@@ -15,18 +16,51 @@ const MAX_LNG = 180;
 const MIN_LNG = -180;
 
 /// ============================================================================
+/// ENDPOINT: GET / - Obtener últimas ubicaciones de todos los empleados
+/// ============================================================================
+router.get('/', auth, async (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    try {
+        // Query para obtener el registro más reciente por cada employee_id
+        const result = await db.query(`
+            SELECT DISTINCT ON (e.id)
+                e.id as "employeeId",
+                e.name,
+                l.latitude as lat,
+                l.longitude as lng,
+                l.speed,
+                l.accuracy,
+                l.timestamp,
+                l.created_at as "lastUpdate"
+            FROM employees e
+            INNER JOIN locations l ON e.id = l.employee_id
+            WHERE e.role = 'employee'
+            ORDER BY e.id, l.timestamp DESC
+        `);
+
+        res.json(result.rows);
+    } catch (err) {
+        console.error('[ERROR] Failed to fetch latest locations:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+/// ============================================================================
 /// FUNCIÓN AUXILIAR: Calcular distancia entre dos puntos (Haversine)
 /// ============================================================================
 function haversineDistance(lat1, lng1, lat2, lng2) {
-  const R = 6371000; // Radio terrestre en metros
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLng / 2) * Math.sin(dLng / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
+    const R = 6371000; // Radio terrestre en metros
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
 }
 
 /// ============================================================================
