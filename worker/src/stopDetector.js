@@ -1,110 +1,116 @@
 async function detectStops(client, tripId, employeeId) {
-    const SPEED_THRESHOLD = 1.0;        // km/h - velocidad máxima para parada
+    const DISTANCE_THRESHOLD = 30;      // metros - máxima dispersión para agrupar
     const MIN_DURATION_MS = 3 * 60 * 1000; // 3 minutos mínimo
-    const DISTANCE_THRESHOLD = 20;      // metros - máxima distancia para agrupar
 
-    // Obtener todos los puntos ordenados
+    // ✅ Obtener todos los puntos ordenados cronológicamente
     const res = await client.query(
-        'SELECT id, latitude, longitude, speed, accuracy, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp ASC',
+        'SELECT id, latitude, longitude, speed, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp ASC',
         [tripId]
     );
 
     const points = res.rows;
-    if (points.length < 2) return;
+    if (points.length < 5) {
+        // Necesitamos al menos 5 puntos para una parada válida
+        return;
+    }
 
-    // ✅ PASO 1: Eliminar paradas existentes para este trip (recalcular siempre)
+    // ✅ Eliminar paradas previas para recalcular desde cero
     await client.query('DELETE FROM stops WHERE trip_id = $1', [tripId]);
 
-    // ✅ PASO 2: Agrupar puntos de parada
-    let currentStop = null;
-    const stops = [];
+    // ✅ ALGORITMO: Agrupar por proximidad espacial
+    let clusters = [];
+    let currentCluster = null;
 
     for (let i = 0; i < points.length; i++) {
         const p = points[i];
 
-        // Si punto está parado (velocidad muy baja)
-        if (p.speed < SPEED_THRESHOLD) {
-            if (!currentStop) {
-                // Iniciar nueva parada
-                currentStop = {
+        if (!currentCluster) {
+            // Iniciar nuevo cluster
+            currentCluster = {
+                startIdx: i,
+                startTime: p.timestamp,
+                points: [p],
+                center: { lat: p.latitude, lng: p.longitude }
+            };
+        } else {
+            // Calcular distancia al centro del cluster actual
+            const dist = haversineDistance(
+                currentCluster.center.lat,
+                currentCluster.center.lng,
+                p.latitude,
+                p.longitude
+            );
+
+            if (dist <= DISTANCE_THRESHOLD) {
+                // Punto pertenece al cluster, agregarlo
+                currentCluster.points.push(p);
+
+                // ✅ Actualizar centro del cluster (centroide dinámico)
+                let sumLat = 0, sumLng = 0;
+                currentCluster.points.forEach(pt => {
+                    sumLat += pt.latitude;
+                    sumLng += pt.longitude;
+                });
+                currentCluster.center.lat = sumLat / currentCluster.points.length;
+                currentCluster.center.lng = sumLng / currentCluster.points.length;
+            } else {
+                // Punto está lejos → cerrar cluster y empezar uno nuevo
+                currentCluster.endIdx = i - 1;
+                currentCluster.endTime = points[i - 1].timestamp;
+                clusters.push(currentCluster);
+
+                currentCluster = {
                     startIdx: i,
                     startTime: p.timestamp,
-                    lat: p.latitude,
-                    lng: p.longitude,
                     points: [p],
+                    center: { lat: p.latitude, lng: p.longitude }
                 };
-            } else {
-                // Verificar si el punto está cerca (filtro de precisión)
-                const dist = haversineDistance(
-                    currentStop.lat, currentStop.lng,
-                    p.latitude, p.longitude
-                );
-
-                if (dist <= DISTANCE_THRESHOLD) {
-                    // Pertenece a la misma parada
-                    currentStop.points.push(p);
-                } else {
-                    // Punto lejano pero lento = nueva parada
-                    stops.push(currentStop);
-                    currentStop = {
-                        startIdx: i,
-                        startTime: p.timestamp,
-                        lat: p.latitude,
-                        lng: p.longitude,
-                        points: [p],
-                    };
-                }
-            }
-        } else {
-            // Punto en movimiento
-            if (currentStop) {
-                // Cerrar parada
-                currentStop.endTime = points[i - 1].timestamp;
-                currentStop.endLat = points[i - 1].latitude;
-                currentStop.endLng = points[i - 1].longitude;
-                stops.push(currentStop);
-                currentStop = null;
             }
         }
     }
 
-    // Si termina con una parada activa
-    if (currentStop) {
-        currentStop.endTime = points[points.length - 1].timestamp;
-        currentStop.endLat = points[points.length - 1].latitude;
-        currentStop.endLng = points[points.length - 1].longitude;
-        stops.push(currentStop);
+    // ✅ Cerrar el último cluster
+    if (currentCluster) {
+        currentCluster.endIdx = points.length - 1;
+        currentCluster.endTime = points[points.length - 1].timestamp;
+        clusters.push(currentCluster);
     }
 
-    // ✅ PASO 3: Guardar paradas válidas (duración >= MIN_DURATION)
-    for (const stop of stops) {
-        const duration = stop.endTime - stop.startTime;
+    // ✅ Filtrar clusters válidos (duración >= MIN_DURATION) y guardar
+    let stopsCount = 0;
 
-        // Solo guardar si cumple duración mínima
+    for (const cluster of clusters) {
+        const duration = cluster.endTime - cluster.startTime;
+
+        // ✅ Solo guardar si duracion es >= 3 minutos
         if (duration >= MIN_DURATION_MS) {
             const durationSeconds = Math.floor(duration / 1000);
-            
-            // Usar promedio de coordenadas para mejor precisión
-            const avgLat = stop.points.reduce((sum, p) => sum + p.latitude, 0) / stop.points.length;
-            const avgLng = stop.points.reduce((sum, p) => sum + p.longitude, 0) / stop.points.length;
+            const centerLat = cluster.center.lat;
+            const centerLng = cluster.center.lng;
 
-            await client.query(
-                `INSERT INTO stops (trip_id, employee_id, latitude, longitude, start_time, end_time, duration_seconds, geom)
-                 VALUES ($1, $2, $3, $4, to_timestamp($5/1000.0), to_timestamp($6/1000.0), $7, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)`,
-                [tripId, employeeId, avgLat, avgLng, stop.startTime, stop.endTime, durationSeconds]
-            );
+            try {
+                await client.query(
+                    `INSERT INTO stops (trip_id, employee_id, latitude, longitude, start_time, end_time, duration_seconds, geom)
+                     VALUES ($1, $2, $3, $4, to_timestamp($5/1000.0), to_timestamp($6/1000.0), $7, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)`,
+                    [tripId, employeeId, centerLat, centerLng, cluster.startTime, cluster.endTime, durationSeconds]
+                );
 
-            console.log(
-                `[STOP] Trip ${tripId}: parada de ${(duration / 1000 / 60).toFixed(1)} min ` +
-                `en (${avgLat.toFixed(4)}, ${avgLng.toFixed(4)}) con ${stop.points.length} puntos`
-            );
+                stopsCount++;
+
+                console.log(
+                    `[STOP] Trip ${tripId}: parada de ${(duration / 1000 / 60).toFixed(1)} min ` +
+                    `en (${centerLat.toFixed(4)}, ${centerLng.toFixed(4)}) con ${cluster.points.length} puntos`
+                );
+            } catch (err) {
+                console.error(`[ERROR] Failed to insert stop for trip ${tripId}:`, err.message);
+            }
         }
     }
 
-    console.log(`[STOPS] Trip ${tripId}: detectadas ${stops.filter(s => (s.endTime - s.startTime) >= MIN_DURATION_MS).length} paradas válidas`);
+    console.log(`[STOPS] Trip ${tripId}: detectadas ${stopsCount} paradas válidas de ${clusters.length} clusters totales`);
 }
 
-/// Calcular distancia en metros entre dos puntos usando Haversine
+/// ✅ Calcular distancia en metros entre dos puntos usando Haversine
 function haversineDistance(lat1, lon1, lat2, lon2) {
     const R = 6371000; // Radio de la Tierra en metros
     const dLat = ((lat2 - lat1) * Math.PI) / 180;
