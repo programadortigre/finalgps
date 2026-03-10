@@ -20,7 +20,6 @@ const locationRoutes = require('./routes/locations');
 const tripRoutes = require('./routes/trips');
 const employeeRoutes = require('./routes/employees');
 const geocodingRoutes = require('./routes/geocoding');
-const clientRoutes = require('./routes/clients');
 const { initSocket } = require('./socket/socket');
 
 const app = express();
@@ -70,7 +69,6 @@ app.use('/api/locations', locationRoutes);
 app.use('/api/trips', tripRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/geocoding', geocodingRoutes);
-app.use('/api/clients', clientRoutes);
 
 // Aplicar rate limiter más estricto a endpoint de locations
 app.post('/api/locations/batch', locationLimiter);

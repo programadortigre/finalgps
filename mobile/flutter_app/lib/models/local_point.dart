@@ -6,7 +6,6 @@ class LocalPoint {
   final double speed;
   final double accuracy;
   final int timestamp;
-  final String state;
   final bool synced;
 
   LocalPoint({
@@ -16,7 +15,6 @@ class LocalPoint {
     required this.speed,
     required this.accuracy,
     required this.timestamp,
-    this.state = 'SIN_MOVIMIENTO',
     this.synced = false,
   });
 
@@ -29,7 +27,6 @@ class LocalPoint {
       'speed': speed,
       'accuracy': accuracy,
       'timestamp': timestamp,
-      'state': state,
       'synced': synced ? 1 : 0,
     };
   }
@@ -43,7 +40,6 @@ class LocalPoint {
       speed: (map['speed'] as num).toDouble(),
       accuracy: (map['accuracy'] as num).toDouble(),
       timestamp: map['timestamp'] as int,
-      state: map['state'] as String? ?? 'SIN_MOVIMIENTO',
       synced: (map['synced'] as int) == 1,
     );
   }
@@ -56,11 +52,10 @@ class LocalPoint {
       'speed': speed,
       'accuracy': accuracy,
       'timestamp': timestamp,
-      'state': state,
     };
   }
 
   @override
   String toString() => 'LocalPoint(id: $id, lat: $lat, lng: $lng, '
-      'speed: $speed, accuracy: $accuracy, timestamp: $timestamp, state: $state, synced: $synced)';
+      'speed: $speed, accuracy: $accuracy, timestamp: $timestamp, synced: $synced)';
 }

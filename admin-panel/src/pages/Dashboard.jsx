@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Users, History, Activity, UserCog, MapPin } from 'lucide-react';
+import { LogOut, Users, History, Activity, UserCog } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
-import Simulator from './Simulator';
 import api from '../services/api';
 import { socket, connectSocket, disconnectSocket } from '../services/socket';
 
@@ -10,7 +9,7 @@ const Dashboard = ({ user, onLogout }) => {
     const [employees, setEmployees] = useState([]);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [activeLocations, setActiveLocations] = useState({});
-    const [view, setView] = useState('live'); // 'live' | 'history' | 'vendors' | 'simulator'
+    const [view, setView] = useState('live'); // 'live' | 'history' | 'vendors'
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
@@ -102,13 +101,6 @@ const Dashboard = ({ user, onLogout }) => {
                         <UserCog size={20} />
                         <span>Vendedores</span>
                     </button>
-                    <button
-                        onClick={() => { setView('simulator'); if (isMobile) setSidebarOpen(false); }}
-                        className={view === 'simulator' ? 'active' : ''}
-                    >
-                        <MapPin size={20} />
-                        <span>Simulador</span>
-                    </button>
                 </nav>
 
                 {view === 'history' && (
@@ -147,8 +139,6 @@ const Dashboard = ({ user, onLogout }) => {
                 )}
                 {view === 'vendors' ? (
                     <Vendors />
-                ) : view === 'simulator' ? (
-                    <Simulator employees={employees} />
                 ) : (
                     <MapView
                         view={view}
