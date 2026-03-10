@@ -1,4 +1,4 @@
-const stopDetector = require('./stopDetector');
+const SemanticClassifier = require('./semanticClassifier');
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -8,56 +8,15 @@ const pool = new Pool({
     database: process.env.POSTGRES_DB || 'tracking',
 });
 
+const classifier = new SemanticClassifier(pool);
+
 /// ============================================================================
 /// FUNCIÓN: Compilar y simplificar ruta cuando viaje termina
 /// ============================================================================
-/// Usa ST_SimplifyPreserveTopology para reducir puntos manteniendo la topología
 async function updateTripRoute(client, tripId) {
     try {
         const startTime = Date.now();
 
-        // Obtener todos los puntos del viaje en orden cronológico
-        const pointsResult = await client.query(`
-            SELECT latitude, longitude FROM locations 
-            WHERE trip_id = $1 
-            ORDER BY timestamp ASC
-        `, [tripId]);
-
-        if (pointsResult.rows.length < 2) {
-            console.log(`[SIMPLIFY] Trip ${tripId}: not enough points (${pointsResult.rows.length})`);
-            return;
-        }
-
-        const pointCount = pointsResult.rows.length;
-
-        // Crear LineString con todos los puntos
-        const pointsGeom = pointsResult.rows
-            .map(p => `${p.longitude} ${p.latitude}`)
-            .join(',');
-
-        // ✅ CORRECTO: ST_SimplifyPreserveTopology conserva la topología
-        // ❌ INCORRECTO: ST_Simplify($1::geography) causa errores de casting
-        const simplifyResult = await client.query(`
-            SELECT 
-                ST_AsText(geom_full) as full_text,
-                ST_AsText(geom_simplified) as simplified_text,
-                ST_NPoints(geom_full) as count_full,
-                ST_NPoints(geom_simplified) as count_simplified
-            FROM (
-                SELECT 
-                    ST_MakeLine(
-                        ARRAY[${pointsGeom.split(',').map((_, i) => `ST_Point(${pointsGeom.split(',')[i]})`).join(', ')}]
-                    ) as geom_full,
-                    ST_SimplifyPreserveTopology(
-                        ST_MakeLine(
-                            ARRAY[${pointsGeom.split(',').map((_, i) => `ST_Point(${pointsGeom.split(',')[i]})`).join(', ')}]
-                        )::geometry,
-                        0.00005  -- 5 metros de tolerancia (en grados decimales)
-                    )::geography as geom_simplified
-            ) q
-        `);
-
-        // Más simple: usar Window Functions con ST_SimplifyPreserveTopology
         const result = await client.query(`
             INSERT INTO trip_routes (trip_id, geom_full, geom_simplified, point_count_full, point_count_simplified)
             SELECT 
@@ -87,7 +46,7 @@ async function updateTripRoute(client, tripId) {
             const { point_count_full, point_count_simplified } = result.rows[0];
             const elapsed = Date.now() - startTime;
             const reduction = ((point_count_full - point_count_simplified) / point_count_full * 100).toFixed(1);
-            
+
             console.log(
                 `[SIMPLIFY] Trip ${tripId}: compiled ${point_count_full} points ` +
                 `→ ${point_count_simplified} simplified (${reduction}% reduction) in ${elapsed}ms`
@@ -106,7 +65,14 @@ async function processBatch(employeeId, points) {
     try {
         await client.query('BEGIN');
 
-        // Find today's trip
+        // 1. Filtering noise
+        const filteredPoints = classifier.filterPoints(points);
+        if (filteredPoints.length === 0) {
+            console.log(`[BATCH] Employee ${employeeId}: No valid points after filtering`);
+            return;
+        }
+
+        // Find or create today's trip
         let res = await client.query(
             'SELECT id FROM trips WHERE employee_id = $1 AND DATE(start_time) = CURRENT_DATE AND is_active = TRUE LIMIT 1',
             [employeeId]
@@ -123,39 +89,17 @@ async function processBatch(employeeId, points) {
             tripId = res.rows[0].id;
         }
 
-        // ✅ VALIDACIÓN: Rechazar puntos con datos inválidos
-        let validPoints = 0;
-        let invalidPoints = 0;
-
-        for (let p of points) {
-            // Validar coordenadas
-            if (p.lat < -90 || p.lat > 90 || p.lng < -180 || p.lng > 180) {
-                console.warn(`[VALIDATION] Invalid coordinates: lat=${p.lat}, lng=${p.lng}`);
-                invalidPoints++;
-                continue;
-            }
-
-            // Validar timestamp (no puede ser futuro)
-            if (p.timestamp > Date.now() + 60000) {
-                console.warn(`[VALIDATION] Invalid timestamp: ${new Date(p.timestamp)}`);
-                invalidPoints++;
-                continue;
-            }
-
-            // Insert point
+        // 2. Insert filtered points
+        for (let p of filteredPoints) {
             await client.query(
                 `INSERT INTO locations (trip_id, employee_id, latitude, longitude, speed, accuracy, timestamp, geom) 
                  VALUES ($1, $2, $3, $4, $5, $6, $7, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)
                  ON CONFLICT DO NOTHING`,
                 [tripId, employeeId, p.lat, p.lng, p.speed, p.accuracy, p.timestamp]
             );
-
-            validPoints++;
         }
 
-        console.log(`[BATCH] Trip ${tripId}: inserted ${validPoints} valid points, rejected ${invalidPoints}`);
-
-        // Update distance using efficient Window Function
+        // 3. Update distance
         await client.query(`
             UPDATE trips SET distance_meters = distance_meters + (
                 SELECT COALESCE(SUM(distance), 0)
@@ -171,29 +115,35 @@ async function processBatch(employeeId, points) {
             ) WHERE id = $1
         `, [tripId]);
 
-        // Detect stops
-        await stopDetector.detectStops(client, tripId, employeeId);
+        // 4. Clustering & Visit Inference
+        const clusters = classifier.detectClusters(filteredPoints);
+        const visits = await classifier.inferVisits(employeeId, clusters);
+
+        for (const visit of visits) {
+            await client.query(`
+                INSERT INTO visits (employee_id, client_id, start_time, end_time, duration)
+                VALUES ($1, $2, $3, $4, $5)
+            `, [visit.employee_id, visit.client_id, visit.start_time, visit.end_time, visit.duration]);
+        }
+
+        // 5. Generate State Events
+        await classifier.generateStateEvents(employeeId, tripId, filteredPoints, visits);
 
         await client.query('COMMIT');
 
-        // ✅ COMPILAR RUTA cuando viaje se cierra (30+ min sin puntos o cierre manual)
+        // Close trip if inactive
         const lastPointTime = await client.query(
             'SELECT MAX(timestamp) as last_timestamp FROM locations WHERE trip_id = $1',
             [tripId]
         );
 
         if (lastPointTime.rows[0] && lastPointTime.rows[0].last_timestamp) {
-            // Convertir timestamp (puede ser ms o segundos)
             let lastTs = lastPointTime.rows[0].last_timestamp;
             if (typeof lastTs === 'number' && lastTs > 9999999999) {
-                // Es en millisegundos, convertir a segundos
                 lastTs = Math.floor(lastTs / 1000);
             }
-            
             const secondsSinceLast = Math.floor(Date.now() / 1000) - lastTs;
-            
-            if (secondsSinceLast > 1800) {  // 30 minutos
-                console.log(`[CLOSE] Trip ${tripId}: closing due to ${secondsSinceLast}s inactivity (30min threshold)`);
+            if (secondsSinceLast > 1800) {
                 await client.query(
                     'UPDATE trips SET is_active = FALSE, end_time = NOW() WHERE id = $1',
                     [tripId]
@@ -203,11 +153,11 @@ async function processBatch(employeeId, points) {
         }
 
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK');
         console.error(`[ERROR] Failed to process batch for employee ${employeeId}:`, err.message);
         throw err;
     } finally {
-        client.release();
+        if (client) client.release();
     }
 }
 

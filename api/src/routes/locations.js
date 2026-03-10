@@ -182,4 +182,33 @@ router.post('/batch', auth, async (req, res) => {
     }
 });
 
+/// ============================================================================
+/// ENDPOINT: POST /admin-simulate - Simulador para Admins (Override)
+/// ============================================================================
+router.post('/admin-simulate', auth, async (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Only admins can simulate routes' });
+    }
+
+    const { employeeId, points } = req.body;
+
+    if (!employeeId || !Array.isArray(points) || points.length === 0) {
+        return res.status(400).json({ error: 'employeeId and points array required' });
+    }
+
+    try {
+        // Enviar directamente a la cola de procesamiento sin el filtrado de accuracy/timestamp
+        // ya que el simulador genera puntos perfectos.
+        await locationQueue.add('process-batch', {
+            employeeId: parseInt(employeeId),
+            points: points // Puntos ya contienen lat, lng, speed, timestamp
+        });
+
+        res.json({ status: 'success', message: `${points.length} simulated points queued` });
+    } catch (err) {
+        console.error('[ERROR] Simulation failed:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 module.exports = router;

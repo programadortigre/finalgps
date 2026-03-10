@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS Trajectory Simulator | Antigravity</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@600&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --glass: rgba(15, 15, 20, 0.8);
+            --border: rgba(255, 255, 255, 0.1);
+            --primary: #6366f1;
+            --secondary: #10b981;
+            --accent: #f43f5e;
+            --text: #f4f4f5;
+            --bg: #09090b;
+        }
+
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            overflow: hidden;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* UI Panels */
+        .panel {
+            position: absolute;
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            z-index: 1000;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .left-panel {
+            top: 20px;
+            left: 20px;
+            width: 300px;
+            max-height: calc(100% - 40px);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .right-panel {
+            top: 20px;
+            right: 20px;
+            width: 280px;
+        }
+
+        h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.2rem;
+            margin: 0 0 10px 0;
+            background: linear-gradient(90deg, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .section-title {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #71717a;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        /* Controls */
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        select,
+        input,
+        button {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            color: var(--text);
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        button {
+            cursor: pointer;
+            font-weight: 600;
+            background: var(--primary);
+            border: none;
+            color: white;
+        }
+
+        button:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        button.secondary {
+            background: var(--secondary);
+        }
+
+        button.accent {
+            background: var(--accent);
+        }
+
+        button.ghost {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: #a1a1aa;
+        }
+
+        .mode-btn-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 5px;
+        }
+
+        .mode-btn {
+            padding: 8px;
+            font-size: 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            color: #a1a1aa;
+        }
+
+        .mode-btn.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        /* Stats */
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            font-size: 0.85rem;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 10px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .stat-val {
+            font-weight: 600;
+            color: var(--primary);
+            display: block;
+            font-size: 1.1rem;
+        }
+
+        .stat-label {
+            color: #71717a;
+            font-size: 0.7rem;
+        }
+
+        /* Logs */
+        #log {
+            margin-top: 10px;
+            font-size: 0.75rem;
+            max-height: 150px;
+            overflow-y: auto;
+            border-top: 1px solid var(--border);
+            padding-top: 10px;
+            color: #a1a1aa;
+            font-family: 'Courier New', monospace;
+        }
+
+        #log p {
+            margin: 2px 0;
+        }
+
+        .log-success {
+            color: var(--secondary);
+        }
+
+        .log-error {
+            color: var(--accent);
+        }
+
+        .leaflet-container {
+            background: #09090b !important;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="map"></div>
+
+    <!-- Configuration Panel -->
+    <div class="panel left-panel">
+        <h1>GPS Scenario Builder</h1>
+
+        <div class="control-group">
+            <div class="section-title">Auth Configuration</div>
+            <input type="password" id="token" placeholder="JWT Token..." value="">
+            <input type="text" id="api_url" placeholder="API Base URL" value="http://localhost:3000">
+        </div>
+
+        <div class="control-group">
+            <div class="section-title">Simulation Mode</div>
+            <div class="mode-btn-group">
+                <button class="mode-btn active" onclick="setMode('drive')">VEHICLE</button>
+                <button class="mode-btn" onclick="setMode('walk')">WALK</button>
+                <button class="mode-btn" onclick="setMode('stop')">STOP</button>
+            </div>
+            <div id="stop_control" style="display: none;">
+                <input type="number" id="stop_duration" placeholder="Stop minutes" value="15">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <div class="section-title">Current Path Stats</div>
+            <div class="stats">
+                <div class="stat-card">
+                    <span class="stat-val" id="count_val">0</span>
+                    <span class="stat-label">Points</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-val" id="dist_val">0.0</span>
+                    <span class="stat-label">KM Total</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <button class="secondary" onclick="registerPath()">REGISTER TRAJECTORY</button>
+            <button class="ghost" onclick="clearAll()">CLEAR ALL</button>
+        </div>
+
+        <div id="log"></div>
+    </div>
+
+    <!-- Client Panel -->
+    <div class="panel right-panel">
+        <div class="section-title">Register Client at Last Point</div>
+        <div class="control-group">
+            <input type="text" id="client_name" placeholder="Client Name (e.g. Tienda Naturista)">
+            <input type="text" id="client_addr" placeholder="Address (optional)">
+            <button onclick="registerClient()">CREATE CLIENT</button>
+        </div>
+        <p style="font-size: 0.7rem; color: #71717a; margin-top: 10px;">
+            Tip: Click points on map to build path. Select "STOP" to simulate a visit.
+        </p>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let map, polyline, points = [];
+        let currentMode = 'drive';
+        let lastTimestamp = Date.now() - 3600000; // Start 1 hour ago
+        let totalDistance = 0;
+
+        // Leaflet Init
+        map = L.map('map', {
+            zoomControl: false,
+            attributionControl: false
+        }).setView([-12.0464, -77.0428], 15);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 20
+        }).addTo(map);
+
+        polyline = L.polyline([], { color: '#6366f1', weight: 4, opacity: 0.7 }).addTo(map);
+
+        // UI Helpers
+        function setMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('stop_control').style.display = mode === 'stop' ? 'block' : 'none';
+        }
+
+        function addLog(msg, type = '') {
+            const div = document.getElementById('log');
+            const p = document.createElement('p');
+            p.className = `log-${type}`;
+            p.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            div.prepend(p);
+        }
+
+        // Math
+        function haversine(lat1, lng1, lat2, lng2) {
+            const R = 6371000;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLng = (lng2 - lng1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLng / 2) * Math.sin(dLng / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        // Interaction
+        map.on('click', function (e) {
+            const { lat, lng } = e.latlng;
+
+            if (points.length === 0) {
+                // First point
+                addPoint(lat, lng, 0, 10);
+            } else {
+                const last = points[points.length - 1];
+                const distance = haversine(last.lat, last.lng, lat, lng);
+
+                if (currentMode === 'stop') {
+                    simulateStop(lat, lng);
+                } else {
+                    simulateMovement(last, lat, lng, distance);
+                }
+            }
+            updateUI();
+        });
+
+        function addPoint(lat, lng, speed, accuracy) {
+            points.push({ lat, lng, speed, accuracy, timestamp: lastTimestamp });
+            polyline.addLatLng([lat, lng]);
+            L.circleMarker([lat, lng], { radius: 3, color: '#818cf8' }).addTo(map);
+        }
+
+        function simulateMovement(last, targetLat, targetLng, distance) {
+            // mode drive: 14 m/s, mode walk: 1.4 m/s
+            const speed = currentMode === 'drive' ? 14 : 1.4;
+            const timeDiff = distance / speed;
+            const numSteps = Math.ceil(timeDiff / 30); // Point every 30s
+
+            for (let i = 1; i <= numSteps; i++) {
+                const ratio = i / numSteps;
+                const lat = last.lat + (targetLat - last.lat) * ratio;
+                const lng = last.lng + (targetLng - last.lng) * ratio;
+                lastTimestamp += 30000;
+                addPoint(lat, lng, speed, 5);
+                totalDistance += (distance / numSteps);
+            }
+            addLog(`Interpolated ${numSteps} points (${currentMode})`, 'success');
+        }
+
+        function simulateStop(lat, lng) {
+            const durationMin = parseInt(document.getElementById('stop_duration').value);
+            const numPoints = Math.ceil(durationMin * 60 / 30);
+
+            for (let i = 0; i < numPoints; i++) {
+                lastTimestamp += 30000;
+                // Add slight jitter for realism
+                const jitterLat = lat + (Math.random() - 0.5) * 0.0001;
+                const jitterLng = lng + (Math.random() - 0.5) * 0.0001;
+                addPoint(jitterLat, jitterLng, 0.1, 15);
+            }
+            addLog(`Simulated stop of ${durationMin}m (${numPoints} points)`, 'success');
+
+            L.marker([lat, lng]).addTo(map).bindPopup("<b>Parada simulada</b>").openPopup();
+        }
+
+        function updateUI() {
+            document.getElementById('count_val').innerText = points.length;
+            document.getElementById('dist_val').innerText = (totalDistance / 1000).toFixed(2);
+        }
+
+        function clearAll() {
+            points = [];
+            totalDistance = 0;
+            lastTimestamp = Date.now() - 3600000;
+            polyline.setLatLngs([]);
+            map.eachLayer(layer => {
+                if (layer instanceof L.CircleMarker || layer instanceof L.Marker) map.removeLayer(layer);
+            });
+            updateUI();
+            addLog("Cleared all data");
+        }
+
+        // API Calls
+        async function registerPath() {
+            const token = document.getElementById('token').value;
+            const baseUrl = document.getElementById('api_url').value;
+
+            if (!token) return alert("Please set JWT Token first!");
+            if (points.length === 0) return alert("No points to upload!");
+
+            addLog(`Uploading ${points.length} points...`);
+            try {
+                const resp = await fetch(`${baseUrl}/api/locations/batch`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ points })
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    addLog(`Success! ${data.inserted} points queued.`, 'success');
+                } else {
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (err) {
+                addLog(`Network failed: ${err.message}`, 'error');
+            }
+        }
+
+        async function registerClient() {
+            const token = document.getElementById('token').value;
+            const baseUrl = document.getElementById('api_url').value;
+            const name = document.getElementById('client_name').value;
+            const addr = document.getElementById('client_addr').value;
+
+            if (!token || !name) return alert("Token and Name required");
+            if (points.length === 0) return alert("Add at least one point on map first!");
+
+            const last = points[points.length - 1];
+
+            try {
+                const resp = await fetch(`${baseUrl}/api/clients`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        name,
+                        address: addr,
+                        lat: last.lat,
+                        lng: last.lng,
+                        expected_visit_time: 15
+                    })
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    addLog(`Client "${name}" registered!`, 'success');
+                    L.marker([last.lat, last.lng], {
+                        icon: L.icon({
+                            iconUrl: 'https://cdn-icons-png.flaticon.com/512/61/61168.png',
+                            iconSize: [24, 24]
+                        })
+                    }).addTo(map).bindPopup(`<b>${name}</b>`).openPopup();
+                } else {
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (err) {
+                addLog(`Network failed: ${err.message}`, 'error');
+            }
+        }
+    </script>
+</body>
+
+</html>

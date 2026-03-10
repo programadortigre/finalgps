@@ -47,6 +47,14 @@ void onStart(ServiceInstance service) async {
   final storage = LocalStorage();
   List<Map<String, dynamic>> cache = [];
 
+  /// Función auxiliar para determinar el estado semántico basado en velocidad
+  String calculateState(double speedKmh) {
+    if (speedKmh >= 15) return 'EN_RUTA_VEHICULO';
+    if (speedKmh >= 4 && speedKmh < 15) return 'MOVIMIENTO_LENTO';
+    if (speedKmh >= 1 && speedKmh < 4) return 'EN_RUTA_CAMINANDO';
+    return 'DETENIDO';
+  }
+
   /// Timer principal: Capturar GPS cada 15 segundos
   Timer.periodic(const Duration(seconds: 15), (timer) async {
     try {
@@ -57,39 +65,45 @@ void onStart(ServiceInstance service) async {
         return;
       }
 
-      if (service is AndroidServiceInstance && await service.isForegroundService()) {
-        final stats = await storage.getStats();
-        service.setForegroundNotificationInfo(
-          title: 'GPS Tracking Activo',
-          content: 'Última actualización: ${DateTime.now().toString().substring(11, 19)} '
-              '(${stats['unsynced']} en cola)',
-        );
-      }
-
       final pos = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 10),
       );
 
+      final double speedKmh = pos.speed * 3.6;
+      final String state = calculateState(speedKmh);
+
+      if (service is AndroidServiceInstance && await service.isForegroundService()) {
+        final stats = await storage.getStats();
+        service.setForegroundNotificationInfo(
+          title: 'GPS Tracking: $state',
+          content: 'Última actualización: ${DateTime.now().toString().substring(11, 19)} '
+              '(${stats['unsynced']} en cola)',
+        );
+      }
+
+      // Notificar a la UI (MapScreen)
+      service.invoke('update', {
+        'lat': pos.latitude,
+        'lng': pos.longitude,
+        'speed': speedKmh,
+        'state': state,
+      });
+
       final point = LocalPoint(
         lat: pos.latitude,
         lng: pos.longitude,
-        speed: pos.speed * 3.6,
+        speed: speedKmh,
         accuracy: pos.accuracy,
         timestamp: DateTime.now().millisecondsSinceEpoch,
+        state: state,
       );
 
       // PASO CRÍTICO: Guardar SIEMPRE en BD local primero
       await storage.insertPoint(point);
 
       // Agregar a cache en RAM
-      cache.add({
-        'lat': point.lat,
-        'lng': point.lng,
-        'speed': point.speed,
-        'accuracy': point.accuracy,
-        'timestamp': point.timestamp,
-      });
+      cache.add(point.toJson());
 
       // 🚀 OPTIMIZACIÓN: Si es el primer punto o llegamos a 5 (antes 20), subir inmediatamente
       if (cache.length >= 5 || cache.length == 1) {
@@ -121,13 +135,7 @@ void onStart(ServiceInstance service) async {
       final unsyncedPoints = await storage.getUnsyncedPoints(limit: 100);
       if (unsyncedPoints.isEmpty) return;  // Nada que enviar
 
-      final data = unsyncedPoints.map((p) => {
-        'lat': p.lat,
-        'lng': p.lng,
-        'speed': p.speed,
-        'accuracy': p.accuracy,
-        'timestamp': p.timestamp,
-      }).toList();
+      final data = unsyncedPoints.map((p) => p.toJson()).toList();
 
       final ok = await api.uploadBatch(data);
       if (ok) {

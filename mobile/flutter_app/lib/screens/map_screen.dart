@@ -13,11 +13,27 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   GoogleMapController? _controller;
   LatLng _currentPos = const LatLng(-12.0464, -77.0428); // Default Lima
+  String _currentState = 'Desconocido';
+  double _currentSpeed = 0.0;
 
   @override
   void initState() {
     super.initState();
     _trackSelf();
+    _listenBackgroundUpdates();
+  }
+
+  void _listenBackgroundUpdates() {
+    FlutterBackgroundService().on('update').listen((event) {
+      if (event != null && mounted) {
+        setState(() {
+          _currentPos = LatLng(event['lat'], event['lng']);
+          _currentState = event['state'] ?? 'Desconocido';
+          _currentSpeed = (event['speed'] as num).toDouble();
+        });
+        _controller?.animateCamera(CameraUpdate.newLatLng(_currentPos));
+      }
+    });
   }
 
   _trackSelf() async {
@@ -30,6 +46,7 @@ class _MapScreenState extends State<MapScreen> {
       if (mounted) {
         setState(() {
           _currentPos = LatLng(pos.latitude, pos.longitude);
+          // La velocidad aquí es inmediata, el background service hace el cálculo semántico
         });
         _controller?.animateCamera(CameraUpdate.newLatLng(_currentPos));
       }
@@ -65,21 +82,38 @@ class _MapScreenState extends State<MapScreen> {
             left: 16,
             right: 16,
             child: Card(
+              elevation: 4,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Row(
+                    Row(
                       children: [
-                        Icon(Icons.check_circle, color: Colors.green),
-                        SizedBox(width: 8),
-                        Text('Tracking en segundo plano activo', fontStyle: FontStyle.italic),
+                        const Icon(Icons.radar, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Estado: $_currentState',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
                       ],
                     ),
                     const Divider(),
-                    Text('Lat: ${_currentPos.latitude.toStringAsFixed(6)}'),
-                    Text('Lng: ${_currentPos.longitude.toStringAsFixed(6)}'),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Velocidad: ${_currentSpeed.toStringAsFixed(1)} km/h'),
+                            Text('Lat: ${_currentPos.latitude.toStringAsFixed(6)}'),
+                            Text('Lng: ${_currentPos.longitude.toStringAsFixed(6)}'),
+                          ],
+                        ),
+                        const Icon(Icons.directions_walk, size: 32, color: Colors.grey),
+                      ],
+                    ),
                   ],
                 ),
               ),

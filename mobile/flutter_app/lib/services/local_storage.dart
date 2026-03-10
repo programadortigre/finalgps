@@ -22,8 +22,9 @@ class LocalStorage {
     final path = join(dbPath, _dbName);
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -37,6 +38,7 @@ class LocalStorage {
         speed REAL NOT NULL,
         accuracy REAL NOT NULL,
         timestamp INTEGER NOT NULL,
+        state TEXT NOT NULL DEFAULT 'SIN_MOVIMIENTO',
         synced INTEGER DEFAULT 0,
         created_at INTEGER DEFAULT 0
       )
@@ -52,6 +54,13 @@ class LocalStorage {
     ''');
   }
 
+  /// Manejar actualizaciones de esquema
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('ALTER TABLE $_tableName ADD COLUMN state TEXT NOT NULL DEFAULT "SIN_MOVIMIENTO"');
+    }
+  }
+
   /// Insertar un punto GPS
   Future<int> insertPoint(LocalPoint point) async {
     final database = await db;
@@ -63,6 +72,7 @@ class LocalStorage {
         'speed': point.speed,
         'accuracy': point.accuracy,
         'timestamp': point.timestamp,
+        'state': point.state,
         'synced': 0,
         'created_at': DateTime.now().millisecondsSinceEpoch,
       },
