@@ -57,10 +57,10 @@ void onStart(ServiceInstance service) async {
 
   /// Iniciar Stream de ubicación en tiempo real
   Geolocator.getPositionStream(
-    locationSettings: const AndroidSettings(
+    locationSettings: AndroidSettings(
       accuracy: LocationAccuracy.bestForNavigation,
       distanceFilter: 5,
-      intervalDuration: Duration(seconds: 5),
+      intervalDuration: const Duration(seconds: 5),
       foregroundNotificationConfig: ForegroundNotificationConfig(
         notificationText: "Rastreando ubicación en tiempo real...",
         notificationTitle: "GPS Tracking Activo",

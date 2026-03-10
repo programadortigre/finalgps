@@ -140,6 +140,22 @@ class ApiService {
     return null;
   }
 
+  Future<List<Map<String, dynamic>>?> fetchAllLocations() async {
+    final token = await _storage.read(key: 'token');
+    if (token == null) return null;
+    try {
+      final dio = await _getDio();
+      final res = await dio.get(
+        '/api/locations',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(res.data);
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<String?> getToken() => _storage.read(key: 'token');
   Future<String?> getUserName() => _storage.read(key: 'user_name');
   Future<String?> getUserRole() => _storage.read(key: 'user_role');
