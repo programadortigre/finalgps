@@ -6,6 +6,22 @@ import './App.css';
 
 function App() {
     const [user, setUser] = useState(JSON.parse(localStorage.getItem('user')));
+    const [darkMode, setDarkMode] = useState(() => {
+        const saved = localStorage.getItem('darkMode');
+        return saved ? JSON.parse(saved) : false;
+    });
+
+    // Aplicar tema al cambiar
+    useEffect(() => {
+        if (darkMode) {
+            document.body.classList.add('dark-mode');
+            document.querySelector('.app-container')?.classList.add('dark-mode');
+        } else {
+            document.body.classList.remove('dark-mode');
+            document.querySelector('.app-container')?.classList.remove('dark-mode');
+        }
+        localStorage.setItem('darkMode', JSON.stringify(darkMode));
+    }, [darkMode]);
 
     const handleLogin = (userData) => {
         localStorage.setItem('user', JSON.stringify(userData));
@@ -21,7 +37,7 @@ function App() {
 
     return (
         <Router>
-            <div className="app-container">
+            <div className={`app-container ${darkMode ? 'dark-mode' : ''}`}>
                 <Routes>
                     <Route
                         path="/login"
@@ -29,7 +45,16 @@ function App() {
                     />
                     <Route
                         path="/dashboard/*"
-                        element={user ? <Dashboard user={user} onLogout={handleLogout} /> : <Navigate to="/login" />}
+                        element={user ? (
+                            <Dashboard 
+                                user={user} 
+                                onLogout={handleLogout}
+                                darkMode={darkMode}
+                                onDarkModeToggle={() => setDarkMode(!darkMode)}
+                            />
+                        ) : (
+                            <Navigate to="/login" />
+                        )}
                     />
                     <Route path="/" element={<Navigate to="/dashboard" />} />
                 </Routes>
