@@ -1,4 +1,3 @@
-const tripProcessor = require('./tripProcessor');
 const stopDetector = require('./stopDetector');
 const { Pool } = require('pg');
 
@@ -9,6 +8,99 @@ const pool = new Pool({
     database: process.env.POSTGRES_DB || 'tracking',
 });
 
+/// ============================================================================
+/// FUNCIÓN: Compilar y simplificar ruta cuando viaje termina
+/// ============================================================================
+/// Usa ST_SimplifyPreserveTopology para reducir puntos manteniendo la topología
+async function updateTripRoute(client, tripId) {
+    try {
+        const startTime = Date.now();
+
+        // Obtener todos los puntos del viaje en orden cronológico
+        const pointsResult = await client.query(`
+            SELECT latitude, longitude FROM locations 
+            WHERE trip_id = $1 
+            ORDER BY timestamp ASC
+        `, [tripId]);
+
+        if (pointsResult.rows.length < 2) {
+            console.log(`[SIMPLIFY] Trip ${tripId}: not enough points (${pointsResult.rows.length})`);
+            return;
+        }
+
+        const pointCount = pointsResult.rows.length;
+
+        // Crear LineString con todos los puntos
+        const pointsGeom = pointsResult.rows
+            .map(p => `${p.longitude} ${p.latitude}`)
+            .join(',');
+
+        // ✅ CORRECTO: ST_SimplifyPreserveTopology conserva la topología
+        // ❌ INCORRECTO: ST_Simplify($1::geography) causa errores de casting
+        const simplifyResult = await client.query(`
+            SELECT 
+                ST_AsText(geom_full) as full_text,
+                ST_AsText(geom_simplified) as simplified_text,
+                ST_NPoints(geom_full) as count_full,
+                ST_NPoints(geom_simplified) as count_simplified
+            FROM (
+                SELECT 
+                    ST_MakeLine(
+                        ARRAY[${pointsGeom.split(',').map((_, i) => `ST_Point(${pointsGeom.split(',')[i]})`).join(', ')}]
+                    ) as geom_full,
+                    ST_SimplifyPreserveTopology(
+                        ST_MakeLine(
+                            ARRAY[${pointsGeom.split(',').map((_, i) => `ST_Point(${pointsGeom.split(',')[i]})`).join(', ')}]
+                        )::geometry,
+                        0.00005  -- 5 metros de tolerancia (en grados decimales)
+                    )::geography as geom_simplified
+            ) q
+        `);
+
+        // Más simple: usar Window Functions con ST_SimplifyPreserveTopology
+        const result = await client.query(`
+            INSERT INTO trip_routes (trip_id, geom_full, geom_simplified, point_count_full, point_count_simplified)
+            SELECT 
+                $1,
+                ST_MakeLine(ARRAY_AGG(geom ORDER BY timestamp))::geography,
+                ST_SimplifyPreserveTopology(
+                    ST_MakeLine(ARRAY_AGG(geom ORDER BY timestamp))::geometry,
+                    0.00005
+                )::geography,
+                COUNT(*),
+                ST_NPoints(ST_SimplifyPreserveTopology(
+                    ST_MakeLine(ARRAY_AGG(geom ORDER BY timestamp))::geometry,
+                    0.00005
+                ))
+            FROM locations
+            WHERE trip_id = $1
+            ON CONFLICT (trip_id) DO UPDATE SET
+                geom_full = EXCLUDED.geom_full,
+                geom_simplified = EXCLUDED.geom_simplified,
+                point_count_full = EXCLUDED.point_count_full,
+                point_count_simplified = EXCLUDED.point_count_simplified,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING point_count_full, point_count_simplified
+        `, [tripId]);
+
+        if (result.rows.length > 0) {
+            const { point_count_full, point_count_simplified } = result.rows[0];
+            const elapsed = Date.now() - startTime;
+            const reduction = ((point_count_full - point_count_simplified) / point_count_full * 100).toFixed(1);
+            
+            console.log(
+                `[SIMPLIFY] Trip ${tripId}: compiled ${point_count_full} points ` +
+                `→ ${point_count_simplified} simplified (${reduction}% reduction) in ${elapsed}ms`
+            );
+        }
+    } catch (err) {
+        console.error(`[ERROR] Failed to update trip route for trip ${tripId}:`, err.message);
+    }
+}
+
+/// ============================================================================
+/// FUNCIÓN: Procesar lote de puntos GPS
+/// ============================================================================
 async function processBatch(employeeId, points) {
     const client = await pool.connect();
     try {
@@ -16,48 +108,93 @@ async function processBatch(employeeId, points) {
 
         // Find today's trip
         let res = await client.query(
-            'SELECT id FROM trips WHERE employee_id = $1 AND DATE(start_time) = CURRENT_DATE LIMIT 1',
+            'SELECT id FROM trips WHERE employee_id = $1 AND DATE(start_time) = CURRENT_DATE AND is_active = TRUE LIMIT 1',
             [employeeId]
         );
 
         let tripId;
         if (res.rows.length === 0) {
-            const newTrip = await client.query('INSERT INTO trips (employee_id) VALUES ($1) RETURNING id', [employeeId]);
+            const newTrip = await client.query(
+                'INSERT INTO trips (employee_id, is_active) VALUES ($1, TRUE) RETURNING id',
+                [employeeId]
+            );
             tripId = newTrip.rows[0].id;
         } else {
             tripId = res.rows[0].id;
         }
 
-        // Insert points
+        // ✅ VALIDACIÓN: Rechazar puntos con datos inválidos
+        let validPoints = 0;
+        let invalidPoints = 0;
+
         for (let p of points) {
+            // Validar coordenadas
+            if (p.lat < -90 || p.lat > 90 || p.lng < -180 || p.lng > 180) {
+                console.warn(`[VALIDATION] Invalid coordinates: lat=${p.lat}, lng=${p.lng}`);
+                invalidPoints++;
+                continue;
+            }
+
+            // Validar timestamp (no puede ser futuro)
+            if (p.timestamp > Date.now() + 60000) {
+                console.warn(`[VALIDATION] Invalid timestamp: ${new Date(p.timestamp)}`);
+                invalidPoints++;
+                continue;
+            }
+
+            // Insert point
             await client.query(
                 `INSERT INTO locations (trip_id, employee_id, latitude, longitude, speed, accuracy, timestamp, geom) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)
-         ON CONFLICT DO NOTHING`,
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)
+                 ON CONFLICT DO NOTHING`,
                 [tripId, employeeId, p.lat, p.lng, p.speed, p.accuracy, p.timestamp]
             );
+
+            validPoints++;
         }
 
-        // Update distance (simplified)
+        console.log(`[BATCH] Trip ${tripId}: inserted ${validPoints} valid points, rejected ${invalidPoints}`);
+
+        // Update distance using efficient Window Function
         await client.query(`
-      UPDATE trips SET distance_meters = distance_meters + (
-        SELECT COALESCE(SUM(ST_Distance(l1.geom, l2.geom)), 0)
-        FROM locations l1
-        JOIN locations l2 ON l1.trip_id = l2.trip_id AND l1.id = l2.id - 1
-        WHERE l1.trip_id = $1
-      ) WHERE id = $1
-    `, [tripId]);
+            UPDATE trips SET distance_meters = distance_meters + (
+                SELECT COALESCE(SUM(distance), 0)
+                FROM (
+                    SELECT ST_Distance(
+                        LAG(geom) OVER (ORDER BY timestamp),
+                        geom
+                    ) as distance
+                    FROM locations
+                    WHERE trip_id = $1
+                ) q
+                WHERE distance IS NOT NULL
+            ) WHERE id = $1
+        `, [tripId]);
 
         // Detect stops
         await stopDetector.detectStops(client, tripId, employeeId);
 
         await client.query('COMMIT');
+
+        // ✅ COMPILAR RUTA cuando viaje se cierra (30+ min sin puntos)
+        const lastPointTime = await client.query(
+            'SELECT EXTRACT(EPOCH FROM (NOW() - MAX(TO_TIMESTAMP(timestamp / 1000)))::interval) as seconds_since_last FROM locations WHERE trip_id = $1',
+            [tripId]
+        );
+
+        if (lastPointTime.rows[0] && lastPointTime.rows[0].seconds_since_last > 1800) {  // 30 min
+            console.log(`[CLOSE] Trip ${tripId}: closing due to inactivity`);
+            await client.query('UPDATE trips SET is_active = FALSE, end_time = NOW() WHERE id = $1', [tripId]);
+            await updateTripRoute(client, tripId);
+        }
+
     } catch (err) {
         await client.query('ROLLBACK');
+        console.error(`[ERROR] Failed to process batch for employee ${employeeId}:`, err.message);
         throw err;
     } finally {
         client.release();
     }
 }
 
-module.exports = { processBatch };
+module.exports = { processBatch, updateTripRoute };
