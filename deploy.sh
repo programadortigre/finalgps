@@ -214,13 +214,15 @@ echo ""
 # ============================================================================
 echo "🔑 5. Asignando permisos..."
 echo ""
-subdirs=("api" "worker" "admin-panel" "database")
-for dir in "${subdirs[@]}"; do
+
+# Asignar permisos a directorios específicos
+for dir in api worker admin-panel database; do
   if [ -d "$dir" ]; then
      sudo chmod -R 755 "$dir"
      echo "   ✅ Permisos configurados: $dir"
   fi
 done
+
 echo ""
 
 # ============================================================================
