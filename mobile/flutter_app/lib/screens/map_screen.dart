@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -35,6 +36,10 @@ class _MapScreenState extends State<MapScreen> {
   Set<Polyline> _polylines = {};
   bool _isLoading = false;
   String? _errorMsg;
+  
+  // ⏱️ Debounce para actualizaciones de socket (evitar redibujarse tanto)
+  final Map<String, Timer> _updateTimers = {};
+  final Map<String, Map<String, dynamic>> _pendingUpdates = {};
 
   @override
   void initState() {
@@ -70,14 +75,17 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _trackSelf() async {
     Geolocator.getPositionStream(
       locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
-        intervalDuration: const Duration(seconds: 15),
+        accuracy: LocationAccuracy.best,  // ✅ Máxima precisión en tiempo real
+        distanceFilter: 2,  // 🚀 Actualizar cada 2 metros (más fluido)
+        intervalDuration: const Duration(seconds: 2),  // 🚀 Cada 2 segundos
       ),
     ).listen((pos) {
       if (mounted) {
         setState(() => _currentPos = LatLng(pos.latitude, pos.longitude));
-        _controller?.animateCamera(CameraUpdate.newLatLng(_currentPos));
+        // 🎥 Animar cámara suavemente
+        _controller?.animateCamera(
+          CameraUpdate.newLatLng(_currentPos),
+        );
       }
     });
   }
@@ -87,9 +95,26 @@ class _MapScreenState extends State<MapScreen> {
     if (token == null) return;
     
     SocketService.init(token);
+    
+    // 🚀 Escuchar actualizaciones en tiempo real con debounce
     SocketService.onLocationUpdate = (data) {
       if (mounted && _userRole == 'admin') {
-        _addEmployeeMarker(data);
+        final empId = data['employeeId'].toString();
+        
+        // Guardar la actualización pendiente
+        _pendingUpdates[empId] = data;
+        
+        // Cancelar timer anterior si existe
+        _updateTimers[empId]?.cancel();
+        
+        // Crear nuevo timer con debounce de 300ms (balance fluuidez/rendimiento)
+        _updateTimers[empId] = Timer(const Duration(milliseconds: 300), () {
+          if (mounted && _pendingUpdates.containsKey(empId)) {
+            _addEmployeeMarker(_pendingUpdates[empId]!);
+            _updateTimers.remove(empId);
+            _pendingUpdates.remove(empId);
+          }
+        });
       }
     };
   }

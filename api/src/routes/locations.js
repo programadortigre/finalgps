@@ -4,12 +4,15 @@ const auth = require('../middleware/auth');
 const { locationQueue } = require('../services/queue');
 const { getIO } = require('../socket/socket');
 const db = require('../db/postgres');
+const { LocationKalmanFilter } = require('../utils/kalman_filter');
 
 /// ============================================================================
-/// CONFIGURACIÓN DE FILTRADO
+/// CONFIGURACIÓN DE FILTRADO MEJORADO
 /// ============================================================================
-const ACCURACY_THRESHOLD = 50;  // Metros - rechaza GPS con error > 50m
-const DISTANCE_THRESHOLD = 10;  // Metros - agrupa puntos < 10m
+const ACCURACY_THRESHOLD = 50;      // Metros - rechaza GPS con error > 50m
+const DISTANCE_THRESHOLD = 10;      // Metros - agrupa puntos < 10m
+const MAX_SPEED_KMH = 180;          // km/h - velocidad máxima realista
+const MAX_ACCELERATION = 50;        // km/h - aceleración máxima realista
 const MAX_LAT = 90;
 const MIN_LAT = -90;
 const MAX_LNG = 180;
@@ -64,7 +67,7 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 }
 
 /// ============================================================================
-/// ENDPOINT: POST /batch - Recibir puntos GPS con FILTRADO
+/// ENDPOINT: POST /batch - Recibir puntos GPS con FILTRADO + KALMAN
 /// ============================================================================
 router.post('/batch', auth, async (req, res) => {
     const { points } = req.body;
@@ -78,9 +81,10 @@ router.post('/batch', auth, async (req, res) => {
     let filtered = 0;
     const filteredPoints = [];
     let lastValidPoint = null;
+    let locationFilter = null; // Kalman filter
 
     /// ========================================================================
-    /// FILTRADO DE PUNTOS
+    /// FILTRADO Y SUAVIZADO DE PUNTOS
     /// ========================================================================
     for (const point of points) {
         // 🔴 VALIDACIÓN 1: Accuracy > 50m → RECHAZAR (GPS ruido)
@@ -121,6 +125,7 @@ router.post('/batch', auth, async (req, res) => {
                 lastValidPoint.lat, lastValidPoint.lng,
                 point.lat, point.lng
             );
+            
             if (distance < DISTANCE_THRESHOLD) {
                 console.log(
                     `[FILTER] Point ignored: distance=${distance.toFixed(1)}m < ${DISTANCE_THRESHOLD}m (duplicate)`
@@ -128,11 +133,64 @@ router.post('/batch', auth, async (req, res) => {
                 filtered++;
                 continue;
             }
+
+            // 🔴 VALIDACIÓN 5: Velocidad máxima (validación inteligente)
+            const timeDiffSec = (point.timestamp - lastValidPoint.timestamp) / 1000;
+            if (timeDiffSec > 0) {
+                const calculatedSpeedKmh = (distance / timeDiffSec) * 3.6;
+                
+                // Rechazar si la velocidad calculada es irreal (> 180 km/h)
+                if (calculatedSpeedKmh > MAX_SPEED_KMH) {
+                    console.log(
+                        `[FILTER] Point rejected: speed=${calculatedSpeedKmh.toFixed(1)} km/h > ${MAX_SPEED_KMH} km/h`
+                    );
+                    filtered++;
+                    continue;
+                }
+
+                // 🔴 VALIDACIÓN 6: Aceleración máxima realista
+                const speedDiffKmh = Math.abs((point.speed || 0) - lastValidPoint.speed);
+                if (speedDiffKmh > MAX_ACCELERATION && timeDiffSec > 0) {
+                    const acceleration = speedDiffKmh / timeDiffSec;
+                    if (acceleration > 20) { // > 20 km/h/s es irreal
+                        console.log(
+                            `[FILTER] Point rejected: acceleration=${acceleration.toFixed(1)} km/h/s (too high)`
+                        );
+                        filtered++;
+                        continue;
+                    }
+                }
+            }
         }
 
-        // ✅ PUNTO VÁLIDO: Agregar a lista
-        filteredPoints.push(point);
-        lastValidPoint = point;
+        // 🧠 APLICAR FILTRO KALMAN para suavizar coordenadas
+        if (locationFilter === null) {
+            locationFilter = new LocationKalmanFilter(
+                point.lat,
+                point.lng,
+                point.accuracy || 50
+            );
+        }
+
+        const smoothedCoords = locationFilter.update(
+            point.lat,
+            point.lng,
+            point.accuracy || 50
+        );
+
+        // ✅ PUNTO VÁLIDO: Agregar a lista con coordenadas suavizadas
+        const smoothedPoint = {
+            ...point,
+            lat: smoothedCoords.lat,
+            lng: smoothedCoords.lng,
+        };
+
+        filteredPoints.push(smoothedPoint);
+        lastValidPoint = {
+            ...point,
+            lat: smoothedCoords.lat,
+            lng: smoothedCoords.lng,
+        };
         inserted++;
     }
 
@@ -170,10 +228,11 @@ router.post('/batch', auth, async (req, res) => {
             const lastPoint = filteredPoints[filteredPoints.length - 1];
             io.to('admins').emit('location_update', {
                 employeeId,
-                name: req.user.name,
+                employeeName: req.user.name,
                 lat: lastPoint.lat,
                 lng: lastPoint.lng,
                 speed: lastPoint.speed,
+                accuracy: lastPoint.accuracy,
                 state: lastPoint.state || 'SIN_MOVIMIENTO',
                 timestamp: lastPoint.timestamp
             });

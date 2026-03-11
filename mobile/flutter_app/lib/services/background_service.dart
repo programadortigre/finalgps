@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'api_service.dart';
 import 'local_storage.dart';
 import '../models/local_point.dart';
+import '../utils/kalman_filter.dart';
 
 /// Call from main() — notification channel created natively in MainActivity.kt
 Future<void> initializeService() async {
@@ -47,6 +48,9 @@ void onStart(ServiceInstance service) async {
   final storage = LocalStorage();
   LocalPoint? lastValidPoint;
 
+  // 🧠 Inicializar filtro Kalman para suavizar coordenadas
+  LocationKalmanFilter? locationFilter;
+
   /// Función para detectar estado según velocidad
   String calculateState(double speedKmh) {
     if (speedKmh < 0.8) return "SIN_MOVIMIENTO";
@@ -55,16 +59,17 @@ void onStart(ServiceInstance service) async {
     return "VEHICULO";
   }
 
-  /// Iniciar Stream de ubicación en tiempo real
+  /// Iniciar Stream de ubicación en tiempo real con máxima precisión
   Geolocator.getPositionStream(
     locationSettings: AndroidSettings(
-      accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 5,
-      intervalDuration: const Duration(seconds: 5),
+      accuracy: LocationAccuracy.bestForNavigation,  // ✅ Máxima precisión
+      distanceFilter: 2,  // 🚀 MEJORADO: De 5m a 2m (más puntos)
+      intervalDuration: const Duration(seconds: 2),  // 🚀 MEJORADO: De 5s a 2s
+      forceLocationManager: false,  // ✅ Usa Google Play Services (mejor)
       foregroundNotificationConfig: ForegroundNotificationConfig(
         notificationText: "Rastreando ubicación en tiempo real...",
         notificationTitle: "GPS Tracking Activo",
-        enableWakeLock: true,
+        enableWakeLock: true,  // ✅ Mantiene pantalla encendida
       ),
     ),
   ).listen((Position pos) async {
@@ -74,70 +79,89 @@ void onStart(ServiceInstance service) async {
 
       final double speedKmh = pos.speed * 3.6;
 
-      // 1. Filtrar por precisión basura (> 50m)
+      // 🔴 FILTRO 1: Precisión basura (> 50m) → Rechazar
       if (pos.accuracy > 50) {
-        print("[GPS] Punto descartado por baja precisión: ${pos.accuracy}m");
+        print("[GPS] ❌ Precisión muy baja (${pos.accuracy}m). Descartando.");
         return;
       }
 
-      // 2. Filtrar por velocidad absurda (> 150 km/h)
+      // 🔴 FILTRO 2: Velocidad absurda (> 150 km/h) → Rechazar
       if (speedKmh > 150) {
-        print("[GPS] Punto descartado por velocidad absurda: $speedKmh km/h");
+        print("[GPS] ❌ Velocidad absurda ($speedKmh km/h). Descartando.");
         return;
       }
 
-      // 3. Filtrar por salto imposible (> 300 km/h promedio desde último punto)
+      // 🔴 FILTRO 3: Salto imposible desde último punto
       if (lastValidPoint != null) {
         double dist = Geolocator.distanceBetween(
-          lastValidPoint!.lat, lastValidPoint!.lng,
-          pos.latitude, pos.longitude
+          lastValidPoint!.lat,
+          lastValidPoint!.lng,
+          pos.latitude,
+          pos.longitude,
         );
         double timeSecs = (DateTime.now().millisecondsSinceEpoch - lastValidPoint!.timestamp) / 1000.0;
+
         if (timeSecs > 0) {
           double avgSpeed = (dist / timeSecs) * 3.6;
           if (avgSpeed > 300) {
-            print("[GPS] Salto imposible detectado: $avgSpeed km/h promedio. Descartando.");
+            print("[GPS] ❌ Salto imposible: ${avgSpeed.toStringAsFixed(0)} km/h. Descartando.");
             return;
           }
         }
       }
 
+      // 🧠 Aplicar Filtro Kalman para suavizar coordenadas
+      if (locationFilter == null) {
+        locationFilter = LocationKalmanFilter(
+          initialLat: pos.latitude,
+          initialLng: pos.longitude,
+          gpsAccuracy: pos.accuracy,
+        );
+      }
+
+      final filtered = locationFilter!.update(
+        pos.latitude,
+        pos.longitude,
+        gpsAccuracy: pos.accuracy,
+      );
+
       final state = calculateState(speedKmh);
 
       final point = LocalPoint(
-        lat: pos.latitude,
-        lng: pos.longitude,
+        lat: filtered['lat']!,  // ✅ Usar coordenada filtrada
+        lng: filtered['lng']!,  // ✅ Usar coordenada filtrada
         speed: speedKmh,
         accuracy: pos.accuracy,
         state: state,
         timestamp: DateTime.now().millisecondsSinceEpoch,
       );
 
-      // Guardar en BD local
+      // 💾 Guardar en BD local
       await storage.insertPoint(point);
       lastValidPoint = point;
 
-      // Notificación de estado
+      // 📱 Actualizar notificación
       if (service is AndroidServiceInstance && await service.isForegroundService()) {
         final stats = await storage.getStats();
         service.setForegroundNotificationInfo(
-          title: 'Estado: $state',
-          content: 'Velocidad: ${speedKmh.toStringAsFixed(1)} km/h | Cola: ${stats['unsynced']}',
+          title: 'Estado: $state | Precisión: ${pos.accuracy.toStringAsFixed(1)}m',
+          content: 'Vel: ${speedKmh.toStringAsFixed(1)} km/h | Cola: ${stats['unsynced']}',
         );
       }
 
-      // SUBIDA REAL-TIME: Enviar inmediatamente al servidor
+      // 🚀 SUBIDA REAL-TIME: Enviar inmediatamente al servidor
       final ok = await api.uploadBatch([point.toJson()]);
       if (ok) {
         if (point.id != null) await storage.markPointsAsSynced([point.id!]);
+        print("[✅ GPS] Punto enviado: ${point.lat.toStringAsFixed(6)}, ${point.lng.toStringAsFixed(6)}");
       }
 
-      // Limpiar datos antiguos cada 1 hora (en el minuto 0)
+      // 🧹 Limpiar datos antiguos cada 1 hora
       if (DateTime.now().minute == 0 && DateTime.now().second < 10) {
         await storage.cleanOldSyncedPoints();
       }
     } catch (e) {
-      print("[GPS] Error en stream: $e");
+      print("[❌ GPS] Error en stream: $e");
     }
   });
 
