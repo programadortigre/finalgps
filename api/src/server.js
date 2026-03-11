@@ -54,6 +54,9 @@ const apiLimiter = rateLimit({
   trustProxy: true, // Confiar en X-Forwarded-For header (para proxies como nginx)
 });
 
+// Trust proxy for X-Forwarded-For header (required for rate-limit)
+app.set('trust proxy', 1);
+
 // Middlewares
 app.use(cors());
 app.use(express.json());

@@ -15,21 +15,33 @@ pool.on('error', (err) => {
 });
 
 async function syncSchema() {
-    try {
-        const checkColumn = await pool.query(`
-            SELECT 1 FROM information_schema.columns 
-            WHERE table_name='locations' AND column_name='state';
-        `);
+    const maxRetries = 5;
+    let retries = 0;
 
-        if (checkColumn.rowCount === 0) {
-            logger.info('Migrating database: Adding "state" column to "locations" table...');
-            await pool.query(`
-                ALTER TABLE locations ADD COLUMN state VARCHAR(30) DEFAULT 'SIN_MOVIMIENTO';
+    while (retries < maxRetries) {
+        try {
+            const checkColumn = await pool.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='locations' AND column_name='state';
             `);
-            logger.info('Migration completed successfully.');
+
+            if (checkColumn.rowCount === 0) {
+                logger.info('Migrating database: Adding "state" column to "locations" table...');
+                await pool.query(`
+                    ALTER TABLE locations ADD COLUMN state VARCHAR(30) DEFAULT 'SIN_MOVIMIENTO';
+                `);
+                logger.info('Migration completed successfully.');
+            }
+            return; // Success
+        } catch (err) {
+            retries++;
+            if (retries >= maxRetries) {
+                logger.warn('Could not sync schema after ' + maxRetries + ' retries. Continuing anyway...', err.message);
+                return;
+            }
+            logger.warn('Schema sync attempt ' + retries + ' failed, retrying in 2s...', err.message);
+            await new Promise(resolve => setTimeout(resolve, 2000));
         }
-    } catch (err) {
-        logger.error('Error during schema synchronization:', err);
     }
 }
 
