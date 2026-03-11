@@ -1,0 +1,55 @@
+# Environment variables - NUNCA commitar archivos .env reales
+.env
+.env.local
+.env.*.local
+.env.backup*
+
+# Node modules
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+.next/
+
+# Logs
+logs/
+*.log
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.packages
+.gradle/
+local.properties
+*.iml
+
+# Testing
+coverage/
+.pytest_cache/
