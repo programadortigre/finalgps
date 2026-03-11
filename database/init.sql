@@ -1,4 +1,16 @@
 -- Create role if not exists (superuser will handle)
+-- Create gpsuser role with password if doesn't exist
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_user WHERE usename = 'gpsuser') THEN
+    CREATE ROLE gpsuser WITH LOGIN PASSWORD 'gpspass123';
+  END IF;
+END
+$$;
+
+-- Grant permissions to gpsuser
+GRANT ALL PRIVILEGES ON DATABASE gpsdb TO gpsuser;
+
 -- Enable PostGIS extension
 CREATE EXTENSION IF NOT EXISTS postgis;
 
@@ -57,6 +69,25 @@ CREATE TABLE IF NOT EXISTS stops (
     duration_seconds INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Simplified Routes table (for performance optimization)
+CREATE TABLE IF NOT EXISTS trip_routes (
+    id SERIAL PRIMARY KEY,
+    trip_id INTEGER UNIQUE REFERENCES trips(id) ON DELETE CASCADE,
+    simplified_route GEOGRAPHY(LineString, 4326),
+    point_count INTEGER DEFAULT 0,
+    simplified_point_count INTEGER DEFAULT 0,
+    simplification_tolerance FLOAT DEFAULT 0.0001,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for trip_routes
+CREATE INDEX IF NOT EXISTS idx_trip_routes_trip_id ON trip_routes (trip_id);
+
+-- Grant table permissions to gpsuser
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO gpsuser;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO gpsuser;
 
 -- Data Seeding
 -- admin@tracking.com / admin123
