@@ -74,9 +74,9 @@ CREATE TABLE IF NOT EXISTS stops (
 CREATE TABLE IF NOT EXISTS trip_routes (
     id SERIAL PRIMARY KEY,
     trip_id INTEGER UNIQUE REFERENCES trips(id) ON DELETE CASCADE,
-    simplified_route GEOGRAPHY(LineString, 4326),
+    geom_simplified GEOGRAPHY(LineString, 4326),
     point_count INTEGER DEFAULT 0,
-    simplified_point_count INTEGER DEFAULT 0,
+    point_count_simplified INTEGER DEFAULT 0,
     simplification_tolerance FLOAT DEFAULT 0.0001,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
