@@ -161,6 +161,74 @@ class ApiService {
   Future<String?> getUserRole() => _storage.read(key: 'user_role');
   Future<String?> getUserEmail() => _storage.read(key: 'user_email');
 
+  /// 📍 Obtener historial de viajes de un vendedor por fecha
+  Future<List<Map<String, dynamic>>?> fetchTripsForEmployee(int employeeId, String date) async {
+    final token = await _storage.read(key: 'token');
+    if (token == null) return null;
+    try {
+      final dio = await _getDio();
+      final res = await dio.get(
+        '/api/trips?employeeId=$employeeId&date=$date',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(res.data);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 📍 Obtener detalles completos de un viaje con paradas y ruta
+  Future<Map<String, dynamic>?> fetchTripDetails(int tripId) async {
+    final token = await _storage.read(key: 'token');
+    if (token == null) return null;
+    try {
+      final dio = await _getDio();
+      final res = await dio.get(
+        '/api/trips/$tripId',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return res.data as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 👥 Obtener lista de todos los empleados (solo para admins)
+  Future<List<Map<String, dynamic>>?> fetchEmployees() async {
+    final token = await _storage.read(key: 'token');
+    if (token == null) return null;
+    try {
+      final dio = await _getDio();
+      final res = await dio.get(
+        '/api/employees',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(res.data);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 📍 Obtener paradas de un viaje
+  Future<List<Map<String, dynamic>>?> fetchStopsForTrip(int tripId) async {
+    final token = await _storage.read(key: 'token');
+    if (token == null) return null;
+    try {
+      final dio = await _getDio();
+      final res = await dio.get(
+        '/api/trips/$tripId/stops',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(res.data);
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<void> logout() async {
     await _storage.delete(key: 'token');
     await _storage.delete(key: 'user_name');

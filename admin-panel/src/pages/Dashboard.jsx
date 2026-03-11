@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Users, History, Activity, UserCog, Moon, Sun } from 'lucide-react';
+import { LogOut, Users, History, Activity, UserCog } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
 import api from '../services/api';
 import { socket, connectSocket, disconnectSocket } from '../services/socket';
 
-const Dashboard = ({ user, onLogout, darkMode, onDarkModeToggle }) => {
+const Dashboard = ({ user, onLogout }) => {
     const [employees, setEmployees] = useState([]);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [activeLocations, setActiveLocations] = useState({});
@@ -121,13 +121,6 @@ const Dashboard = ({ user, onLogout, darkMode, onDarkModeToggle }) => {
                 )}
 
                 <footer className="sidebar-footer">
-                    <button 
-                        onClick={onDarkModeToggle} 
-                        className="theme-toggle-btn"
-                        title={darkMode ? 'Tema Claro' : 'Tema Oscuro'}
-                    >
-                        {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-                    </button>
                     <button onClick={onLogout} className="logout-btn">
                         <LogOut size={18} /> Cerrar Sesión
                     </button>
@@ -188,10 +181,8 @@ const Dashboard = ({ user, onLogout, darkMode, onDarkModeToggle }) => {
         .empty-msg { font-size: 13px; color: #475569; padding: 8px 4px; }
 
         /* Footer */
-        .sidebar-footer { padding: 16px 10px; border-top: 1px solid #1e293b; display: flex; gap: 10px; }
-        .theme-toggle-btn { flex: 0.4; display: flex; align-items: center; justify-content: center; padding: 11px 12px; background: #1e3a8a; border: none; color: #60a5fa; border-radius: 8px; cursor: pointer; font-weight: 500; transition: background .15s; }
-        .theme-toggle-btn:hover { background: #1d3a6f; }
-        .logout-btn { flex: 0.6; display: flex; align-items: center; gap: 10px; padding: 11px 12px; background: #7f1d1d; border: none; color: #fca5a5; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background .15s; }
+        .sidebar-footer { padding: 16px 10px; border-top: 1px solid #1e293b; }
+        .logout-btn { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 12px; background: #7f1d1d; border: none; color: #fca5a5; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background .15s; }
         .logout-btn:hover { background: #991b1b; }
 
         /* Main content */

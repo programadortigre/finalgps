@@ -898,7 +898,6 @@ class AdminMonitoringScreen extends StatefulWidget {
 class _AdminMonitoringScreenState extends State<AdminMonitoringScreen> {
   final MapController _mapCtrl = MapController();
   final _api = ApiService();
-  final _socket = SocketService();
   
   Map<int, Map<String, dynamic>> _vendors = {};
   bool _loading = true;
@@ -923,7 +922,7 @@ class _AdminMonitoringScreenState extends State<AdminMonitoringScreen> {
       });
     }
 
-    _socket.onLocationUpdate = (data) {
+    SocketService.onLocationUpdate = (data) {
       if (mounted) {
         setState(() {
           _vendors[data['employeeId']] = {
@@ -933,12 +932,16 @@ class _AdminMonitoringScreenState extends State<AdminMonitoringScreen> {
         });
       }
     };
-    await _socket.connect();
+    
+    final token = await _api.getToken();
+    if (token != null) {
+      await SocketService.init(token);
+    }
   }
 
   @override
   void dispose() {
-    _socket.disconnect();
+    SocketService.disconnect();
     super.dispose();
   }
 
