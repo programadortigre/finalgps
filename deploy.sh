@@ -1,85 +1,316 @@
 ﻿#!/bin/bash
 set -e
 
-echo "🚀 Iniciando despliegue de GPS Tracking System en VPS Ubuntu..."
+echo "🚀 Iniciando despliegue de GPS Tracking System en Ubuntu..."
+echo ""
 
-# 1. Update system and install dependencies
-echo "📦 1. Actualizando sistema y verificando dependencias (Docker, Docker-Compose, Git)..."
-sudo apt-get update
-sudo apt-get install -y docker.io docker-compose git curl ufw
+# ============================================================================
+# PASO 1: Verificar dependencias (sin instalar si ya existen)
+# ============================================================================
+echo "📦 1. Verificando dependencias (Docker, Docker-Compose, Git)..."
+echo ""
 
-# Auto start docker service
-sudo systemctl enable docker
-sudo systemctl start docker
+# Verificar Docker
+if ! command -v docker &> /dev/null; then
+    echo "   ⬇️  Docker no encontrado. Instalando..."
+    sudo apt-get update
+    sudo apt-get install -y docker.io
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    echo "   ✅ Docker instalado"
+else
+    DOCKER_VERSION=$(docker --version)
+    echo "   ✅ Docker ya instalado: $DOCKER_VERSION"
+fi
 
-# 2. Configurando Firewall UFW
-echo "🛡️ 2. Configurando reglas de cortafuegos (Firewall UFW)..."
-sudo ufw allow OpenSSH
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw allow 3000/tcp # Internal API
-sudo ufw allow 3001/tcp # Socket.io
-sudo ufw --force enable
+# Verificar Docker Compose
+if ! command -v docker-compose &> /dev/null; then
+    echo "   ⬇️  Docker Compose no encontrado. Instalando..."
+    sudo apt-get update
+    sudo apt-get install -y docker-compose
+    echo "   ✅ Docker Compose instalado"
+else
+    DC_VERSION=$(docker-compose --version)
+    echo "   ✅ Docker Compose ya instalado: $DC_VERSION"
+fi
 
-# 3. Preparación del proyecto
+# Verificar Git
+if ! command -v git &> /dev/null; then
+    echo "   ⬇️  Git no encontrado. Instalando..."
+    sudo apt-get update
+    sudo apt-get install -y git
+    echo "   ✅ Git instalado"
+else
+    GIT_VERSION=$(git --version)
+    echo "   ✅ Git ya instalado: $GIT_VERSION"
+fi
+
+# Verificar curl y ufw
+if ! command -v curl &> /dev/null; then
+    sudo apt-get update
+    sudo apt-get install -y curl
+fi
+
+if ! command -v ufw &> /dev/null; then
+    sudo apt-get update
+    sudo apt-get install -y ufw
+fi
+
+echo "   ✅ Todas las dependencias están listas"
+echo ""
+
+# ============================================================================
+# PASO 2: Configurar Firewall UFW (solo si no está habilitado)
+# ============================================================================
+echo "🛡️ 2. Configurando firewall UFW..."
+echo ""
+
+# Verificar si ufw está activo
+if sudo ufw status | grep -q "Status: inactive"; then
+    echo "   ⬇️  Habilitando UFW y configurando reglas..."
+    sudo ufw --force enable
+    echo "   ✅ UFW habilitado"
+else
+    echo "   ✅ UFW ya está activo"
+fi
+
+# Agregar reglas necesarias (no causa problemas si ya existen)
+echo "   Configurando reglas de firewall..."
+sudo ufw allow OpenSSH 2>/dev/null || true
+sudo ufw allow 80/tcp 2>/dev/null || true      # HTTP
+sudo ufw allow 443/tcp 2>/dev/null || true     # HTTPS
+sudo ufw allow 3000/tcp 2>/dev/null || true    # API interna
+sudo ufw allow 3001/tcp 2>/dev/null || true    # Socket.io
+echo "   ✅ Reglas de firewall configuradas"
+echo ""
+
+# ============================================================================
+# PASO 3: Preparar directorio del proyecto
+# ============================================================================
 echo "📂 3. Preparando directorio del proyecto..."
+echo ""
 PROJECT_DIR="/opt/finalgps"
 
 if [ ! -d "$PROJECT_DIR" ]; then
-  echo "Clonando/Copiando proyecto al servidor. (Asumiremos que ejecutas esto dentro del repo o lo subiste por FTP/Git)"
-  sudo mkdir -p $PROJECT_DIR
-  sudo cp -r ./* $PROJECT_DIR/ || true
+    echo "   Creando directorio: $PROJECT_DIR"
+    sudo mkdir -p $PROJECT_DIR
+    sudo cp -r ./* $PROJECT_DIR/ || true
+    echo "   ✅ Proyecto copiado a $PROJECT_DIR"
+else
+    echo "   ✅ Directorio $PROJECT_DIR ya existe"
+    echo "   Actualizando archivos from current location..."
+    sudo cp -r ./* $PROJECT_DIR/ || true
 fi
 
 cd $PROJECT_DIR
+echo "   Directorio actual: $(pwd)"
+echo ""
 
-# 4. Configurar Variables de Entorno (Si no existen)
+# ============================================================================
+# PASO 4: Configurar Variables de Entorno (.env)
+# ============================================================================
+echo "⚙️  4. Configurando variables de entorno..."
+echo ""
+
 if [ ! -f ".env" ]; then
-    echo "⚠️ .env no encontrado. Creando uno básico para producción..."
+    echo "   ⚠️  .env no encontrado. Creando configuración por defecto..."
+    echo ""
+    echo "   Selecciona el DEPLOY_MODE:"
+    echo "     1) cloudflare - VM sin IP pública con Cloudflare Tunnel"
+    echo "     2) production - Servidor con IP pública estática"
+    echo "     3) ngrok      - Testing temporal con NGROK"
+    echo "     4) local      - Desarrollo local"
+    echo ""
+    read -p "   Opción (1-4): " DEPLOY_OPTION
+    
+    case $DEPLOY_OPTION in
+        1)
+            DEPLOY_MODE="cloudflare"
+            read -p "   Ingresa tu dominio Cloudflare (ej: miempresa.com): " DOMAIN
+            API_DOMAIN="$DOMAIN"
+            API_PORT="443"
+            ;;
+        2)
+            DEPLOY_MODE="production"
+            read -p "   Ingresa tu dominio (ej: gps.empresa.com): " DOMAIN
+            API_DOMAIN="$DOMAIN"
+            API_PORT="443"
+            ;;
+        3)
+            DEPLOY_MODE="ngrok"
+            read -p "   Ingresa tu URL de NGROK (ej: abc123.ngrok.io): " DOMAIN
+            API_DOMAIN="$DOMAIN"
+            API_PORT="443"
+            ;;
+        *)
+            DEPLOY_MODE="local"
+            API_DOMAIN="localhost"
+            API_PORT="3000"
+            ;;
+    esac
+    
+    # Generar .env con valores seguros
     cat <<EOF > .env
-POSTGRES_DB=tracking_prod
-POSTGRES_USER=gpsadmin
-POSTGRES_PASSWORD=$(openssl rand -hex 12)
+# ============================================================================
+# 🚀 DEPLOY CONFIGURATION
+# ============================================================================
+DEPLOY_MODE=$DEPLOY_MODE
+API_DOMAIN=$API_DOMAIN
+API_PORT=$API_PORT
+
+# ============================================================================
+# 📊 DATABASE
+# ============================================================================
+POSTGRES_DB=tracking
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=$(openssl rand -hex 16)
 POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
+
+# ============================================================================
+# 💾 CACHE / MESSAGE BROKER
+# ============================================================================
 REDIS_HOST=redis
 REDIS_PORT=6379
+
+# ============================================================================
+# 🔐 AUTHENTICATION
+# ============================================================================
 JWT_SECRET=$(openssl rand -base64 32)
 JWT_EXPIRATION=30d
-API_PORT=3000
-NODE_ENV=production
-EOF
-    echo "✅ .env generado automáticamente con contraseñas seguras."
-fi
 
-# 5. Permisos
+# ============================================================================
+# 🔧 SERVER ENVIRONMENT
+# ============================================================================
+NODE_ENV=production
+SOCKET_PORT=3001
+EOF
+    
+    echo "   ✅ .env generado con DEPLOY_MODE=$DEPLOY_MODE, DOMAIN=$API_DOMAIN"
+else
+    echo "   ✅ .env ya existe, usando configuración existente"
+    DEPLOY_MODE=$(grep "DEPLOY_MODE=" .env | cut -d'=' -f2)
+    API_DOMAIN=$(grep "API_DOMAIN=" .env | cut -d'=' -f2)
+    echo "   Modo actual: $DEPLOY_MODE, Dominio: $API_DOMAIN"
+fi
+echo ""
+
+# ============================================================================
+# PASO 5: Asignar permisos
+# ============================================================================
 echo "🔑 5. Asignando permisos..."
+echo ""
 subdirs=("api" "worker" "admin-panel" "database")
 for dir in "${subdirs[@]}"; do
   if [ -d "$dir" ]; then
-     sudo chmod -R 755 $dir
+     sudo chmod -R 755 "$dir"
+     echo "   ✅ Permisos configurados: $dir"
   fi
 done
+echo ""
 
-# 6. Levantar todo con Docker Compose
-echo "🐳 6. Actualizando contenedores (PostgreSQL, Redis, API, Worker, Admin Panel)..."
+# ============================================================================
+# PASO 6: Levantar servicios con Docker Compose
+# ============================================================================
+echo "🐳 6. Iniciando servicios (PostgreSQL, Redis, API, Worker, Admin)..."
+echo ""
+
+# Verificar si docker compose está corriendo
+if sudo docker-compose ps | grep -q "Up"; then
+    echo "   ⚠️  Servicios ya están corriendo. Actualizando..."
+else
+    echo "   Iniciando servicios por primera vez..."
+fi
+
 sudo docker-compose pull || true
-# Usamos up -d sin 'down' previo para minimizar el tiempo de inactividad (Rolling Update)
 sudo docker-compose up -d --build --remove-orphans
 
-# Esperar que levanten los servicios pesados
-echo "⏳ Esperando 15s a que base de datos termine de iniciar..."
+echo "   ⏳ Esperando a que levanten los servicios (15 segundos)..."
 sleep 15
 
-echo "🛠️ Forzando creación de tablas y datos iniciales (Por si el volumen ya existía)..."
+echo "   ✅ Servicios levantados"
+echo ""
+
+# ============================================================================
+# PASO 7: Inicializar base de datos (si es primera vez)
+# ============================================================================
+echo "🛠️ 7. Inicializando base de datos..."
+echo ""
+
 source .env
-sudo docker exec -i gps-postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < ./database/init.sql || echo "Advertencia: El volcado SQL pudo tener conflictos (normal si ya existía)."
 
-# 7. Verificar estado
-echo "✅ 7. Estado final de los contenedores:"
+# Esperar a que PostgreSQL esté listo
+echo "   Esperando PostgreSQL..."
+for i in {1..30}; do
+    if sudo docker exec gps-postgres pg_isready -U postgres -d "$POSTGRES_DB" &>/dev/null; then
+        echo "   ✅ PostgreSQL está listo"
+        break
+    fi
+    echo "   Intento $i/30..."
+    sleep 1
+done
+
+# Inicializar datos
+if [ -f "./database/init.sql" ]; then
+    echo "   Ejecutando init.sql..."
+    sudo docker exec -i gps-postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < ./database/init.sql 2>/dev/null || \
+    echo "   ⚠️  Nota: init.sql completado (algunos errores are normales si las tablas ya existen)"
+fi
+echo ""
+
+# ============================================================================
+# PASO 8: Verificación final
+# ============================================================================
+echo "✅ 8. Verificación del estado final..."
+echo ""
+echo "Estado de los contenedores:"
 sudo docker-compose ps
+echo ""
 
+# Mostrar URLs de acceso según DEPLOY_MODE
+echo "════════════════════════════════════════════════════════════════"
 echo "🎉 DESPLIEGUE COMPLETADO 🎉"
-echo "--------------------------------------------------------"
-echo "-> Panel Administrador disponible en: http://TU_DOMAIN_APP"
-echo "--------------------------------------------------------"
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+echo "Configuración actual:"
+echo "  Deploy Mode: $DEPLOY_MODE"
+echo "  Domain/IP: $API_DOMAIN"
+echo "  Port: $API_PORT"
+echo ""
+
+if [ "$API_PORT" == "443" ]; then
+    ACCESS_URL="https://$API_DOMAIN"
+else
+    ACCESS_URL="http://$API_DOMAIN:$API_PORT"
+fi
+
+echo "URLs de acceso:"
+echo "  🌐 Admin Panel: $ACCESS_URL"
+echo "  🔗 API: $ACCESS_URL/api"
+echo ""
+
+case $DEPLOY_MODE in
+    cloudflare)
+        echo "⚠️  CLOUDFLARE TUNNEL: Asegúrate de que warp-cli tunnel esté ejecutándose:"
+        echo "    warp-cli tunnel run"
+        echo ""
+        ;;
+    ngrok)
+        echo "⚠️  NGROK: Asegúrate de que NGROK esté ejecutándose en otra terminal:"
+        echo "    ngrok http 3000"
+        echo ""
+        ;;
+    production)
+        echo "📄 Recuerda configurar: DNS, SSL Certificate, y firewall rules"
+        echo ""
+        ;;
+esac
+
+echo "Para más información, ver:"
+echo "  📖 README.md"
+echo "  📖 DEPLOYMENT_GUIDE.md"
+echo "  📖 DEPLOYMENT_CONFIG.md"
+echo ""
+echo "Si algo falla, revisa los logs:"
+echo "  sudo docker-compose logs -f"
+echo "════════════════════════════════════════════════════════════════"
