@@ -12,12 +12,19 @@ echo ""
 
 # Verificar Docker
 if ! command -v docker &> /dev/null; then
-    echo "   ⬇️  Docker no encontrado. Instalando..."
-    sudo apt-get update
-    sudo apt-get install -y docker.io
-    sudo systemctl enable docker
-    sudo systemctl start docker
-    echo "   ✅ Docker instalado"
+    echo "   ⬇️  Docker no encontrado. Instalando version oficial de Docker..."
+    echo "   Removiendo versiones antiguas si existen..."
+    sudo apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+    
+    echo "   Instalando Docker usando script oficial..."
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sudo sh get-docker.sh
+    rm get-docker.sh
+    
+    echo "   Agregando usuario al grupo docker..."
+    sudo usermod -aG docker $USER 2>/dev/null || true
+    
+    echo "   ✅ Docker instalado correctamente"
 else
     DOCKER_VERSION=$(docker --version)
     echo "   ✅ Docker ya instalado: $DOCKER_VERSION"
@@ -26,8 +33,8 @@ fi
 # Verificar Docker Compose
 if ! command -v docker-compose &> /dev/null; then
     echo "   ⬇️  Docker Compose no encontrado. Instalando..."
-    sudo apt-get update
-    sudo apt-get install -y docker-compose
+    sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    sudo chmod +x /usr/local/bin/docker-compose
     echo "   ✅ Docker Compose instalado"
 else
     DC_VERSION=$(docker-compose --version)
@@ -45,16 +52,23 @@ else
     echo "   ✅ Git ya instalado: $GIT_VERSION"
 fi
 
-# Verificar curl y ufw
+# Verificar curl
 if ! command -v curl &> /dev/null; then
     sudo apt-get update
     sudo apt-get install -y curl
 fi
 
+# Verificar ufw
 if ! command -v ufw &> /dev/null; then
     sudo apt-get update
     sudo apt-get install -y ufw
 fi
+
+# Asegurarse de que Docker está corriendo
+echo "   Iniciando servicio Docker..."
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo systemctl status docker --no-pager | head -3
 
 echo "   ✅ Todas las dependencias están listas"
 echo ""

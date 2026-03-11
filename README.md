@@ -99,6 +99,29 @@ Accede a:
 - **[CLOUDFLARE_TUNNEL_GUIDE.md](CLOUDFLARE_TUNNEL_GUIDE.md)** - Guía detallada de Cloudflare Tunnel para VM sin IP
 - **[DEPLOYMENT_CONFIG.md](DEPLOYMENT_CONFIG.md)** - Documentación técnica detallada
 - **[DEPLOYMENT_SUMMARY.md](DEPLOYMENT_SUMMARY.md)** - Resumen del sistema de deploy flexible
+- **[DEPLOY_TROUBLESHOOTING.md](DEPLOY_TROUBLESHOOTING.md)** - Solución de problemas comunes en VM/Ubuntu
+
+---
+
+## 🆘 Troubleshooting
+
+Si encuentras errores al ejecutar `deploy.sh` en tu VM Ubuntu:
+
+### Error: `#!/bin/bash: not found`
+Esto es un problema de saltos de línea (CRLF vs LF).
+
+**Solución:**
+```bash
+bash fix-deploy.sh
+sudo bash deploy.sh
+```
+
+Ver detalle en: [DEPLOY_TROUBLESHOOTING.md](DEPLOY_TROUBLESHOOTING.md)
+
+### Error: `containerd.io: Entra en conflicto: containerd`
+El repositorio apt oficial de Docker tiene conflictos en Ubuntu noble.
+
+**✅ Ya está arreglado** en el nuevo `deploy.sh` - usa el script oficial de Docker.
 
 ---
 
