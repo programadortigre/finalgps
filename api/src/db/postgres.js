@@ -15,11 +15,15 @@ pool.on('error', (err) => {
 });
 
 async function syncSchema() {
-    const maxRetries = 5;
+    const maxRetries = 10;
     let retries = 0;
 
     while (retries < maxRetries) {
         try {
+            // Wait for PostgreSQL to be ready
+            await pool.query('SELECT 1');
+            
+            // Check if column exists
             const checkColumn = await pool.query(`
                 SELECT 1 FROM information_schema.columns 
                 WHERE table_name='locations' AND column_name='state';
@@ -27,20 +31,33 @@ async function syncSchema() {
 
             if (checkColumn.rowCount === 0) {
                 logger.info('Migrating database: Adding "state" column to "locations" table...');
-                await pool.query(`
-                    ALTER TABLE locations ADD COLUMN state VARCHAR(30) DEFAULT 'SIN_MOVIMIENTO';
-                `);
-                logger.info('Migration completed successfully.');
+                try {
+                    await pool.query(`
+                        ALTER TABLE locations ADD COLUMN state VARCHAR(30) DEFAULT 'SIN_MOVIMIENTO';
+                    `);
+                    logger.info('✅ Migration completed successfully.');
+                } catch (altErr) {
+                    if (altErr.code === '42701') {
+                        // Column already exists (duplicate column)
+                        logger.info('✅ Column "state" already exists, skipping migration.');
+                    } else {
+                        throw altErr;
+                    }
+                }
+            } else {
+                logger.info('✅ Schema already up-to-date.');
             }
             return; // Success
         } catch (err) {
             retries++;
+            const waitTime = Math.min(2000 * retries, 10000); // Max 10 seconds
             if (retries >= maxRetries) {
-                logger.warn('Could not sync schema after ' + maxRetries + ' retries. Continuing anyway...', err.message);
+                logger.warn('⚠️  Could not sync schema after ' + maxRetries + ' retries. Continuing anyway...');
+                logger.warn('Error: ' + err.message);
                 return;
             }
-            logger.warn('Schema sync attempt ' + retries + ' failed, retrying in 2s...', err.message);
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            logger.warn('⏳ Schema sync attempt ' + retries + '/' + maxRetries + ' failed, retrying in ' + (waitTime / 1000) + 's...');
+            await new Promise(resolve => setTimeout(resolve, waitTime));
         }
     }
 }
