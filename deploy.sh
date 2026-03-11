@@ -253,7 +253,7 @@ echo ""
 echo "🛠️ 7. Inicializando base de datos..."
 echo ""
 
-source .env
+. .env
 
 # Esperar a que PostgreSQL esté listo
 echo "   Esperando PostgreSQL..."
