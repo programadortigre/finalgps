@@ -270,11 +270,13 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
             {view === 'live' && (
                 <div className="map-legend">
                     <div className="legend-items">
-                        <div className="legend-item"><div className="legend-dot" style={{ background: '#94a3b8' }} /> Quieto</div>
-                        <div className="legend-item"><div className="legend-dot" style={{ background: '#22c55e' }} /> Caminando</div>
+                        <div style={{ fontSize: '12px', fontWeight: 700, marginBottom: '8px', color: '#0f172a' }}>Estado en Vivo</div>
                         <div className="legend-item"><div className="legend-dot" style={{ background: '#6366f1' }} /> Vehículo</div>
+                        <div className="legend-item"><div className="legend-dot" style={{ background: '#22c55e' }} /> Caminando</div>
+                        <div className="legend-item"><div className="legend-dot" style={{ background: '#f59e0b' }} /> Movimiento Lento</div>
+                        <div className="legend-item"><div className="legend-dot" style={{ background: '#94a3b8' }} /> Quieto</div>
                         <div className="legend-divider" />
-                        <div className="legend-item"><strong>En Vivo: {livePositions.length}</strong></div>
+                        <div className="legend-item" style={{ fontWeight: 700, color: '#2563eb' }}>🔴 Activos: {livePositions.length}</div>
                     </div>
                 </div>
             )}
@@ -301,38 +303,57 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 {view === 'live' && livePositions.map(loc => {
                     const addr = addresses[`live-${loc.employeeId}`] || 'Obteniendo dirección...';
                     const displayState = (loc.state || 'SIN_MOVIMIENTO').replaceAll('_', ' ');
+                    const stateColors = {
+                        'SIN_MOVIMIENTO': { bg: '#f1f5f9', color: '#475569' },
+                        'CAMINANDO': { bg: '#dcfce7', color: '#166534' },
+                        'MOVIMIENTO_LENTO': { bg: '#fef3c7', color: '#b45309' },
+                        'VEHICULO': { bg: '#dbeafe', color: '#0c4a6e' }
+                    };
+                    const stateColor = stateColors[loc.state] || stateColors['SIN_MOVIMIENTO'];
 
                     return (
                         <Marker key={loc.employeeId} position={[loc.lat, loc.lng]} icon={getActiveIcon(loc.state)}>
                             <Popup>
-                                <div style={{ fontSize: '13px', minWidth: '220px', padding: '5px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                        <strong style={{ fontSize: '15px' }}>{loc.name || `Vendedor ${loc.employeeId}`}</strong>
+                                <div style={{ fontSize: '13px', minWidth: '240px', padding: '8px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', gap: '8px' }}>
+                                        <div style={{ flex: 1 }}>
+                                            <strong style={{ fontSize: '14px', color: '#0f172a', display: 'block' }}>{loc.name || `Vendedor ${loc.employeeId}`}</strong>
+                                            <span style={{ fontSize: '11px', color: '#475569' }}>ID: {loc.employeeId}</span>
+                                        </div>
                                         <span style={{
-                                            background: loc.speed > 0 ? '#dcfce7' : '#f1f5f9',
-                                            color: loc.speed > 0 ? '#166534' : '#475569',
-                                            padding: '2px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 'bold'
+                                            background: stateColor.bg,
+                                            color: stateColor.color,
+                                            padding: '3px 8px',
+                                            borderRadius: '12px',
+                                            fontSize: '11px',
+                                            fontWeight: 'bold',
+                                            whiteSpace: 'nowrap'
                                         }}>
                                             {displayState}
                                         </span>
                                     </div>
 
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', color: '#64748b' }}>
-                                        <span>📍 {addr}</span>
-                                        <div style={{ display: 'flex', gap: '15px', marginTop: '4px' }}>
-                                            <span>🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}</span>
-                                            <span>📈 {loc.speed ? (loc.speed.toFixed(1) + ' km/h') : 'Detenido'}</span>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', color: '#64748b', borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginBottom: '8px' }}>
+                                        <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
+                                            <span style={{ marginTop: '2px', fontSize: '12px' }}>📍</span>
+                                            <span style={{ fontSize: '12px' }}>{addr}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '12px', fontSize: '12px' }}>
+                                            <span title="Última actualización">🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}</span>
+                                            <span title="Velocidad">📈 {loc.speed ? (loc.speed.toFixed(1) + ' km/h') : '0 km/h'}</span>
                                         </div>
                                     </div>
 
-                                    <div style={{ marginTop: '12px', borderTop: '1px solid #eee', paddingTop: '8px' }}>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
                                         <a
                                             href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', fontSize: '12px' }}
+                                            style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', fontSize: '12px', flex: 1, textAlign: 'center', padding: '6px', background: '#dbeafe', borderRadius: '6px', transition: 'all .2s' }}
+                                            onMouseEnter={(e) => e.target.style.background = '#bfdbfe'}
+                                            onMouseLeave={(e) => e.target.style.background = '#dbeafe'}
                                         >
-                                            🗺️ Ver en Google Maps
+                                            🗺️ Google Maps
                                         </a>
                                     </div>
                                 </div>
@@ -429,67 +450,69 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
 
         .history-sidepanel {
           position: absolute; top: 12px; left: 56px; z-index: 1000;
-          background: #ffffff; padding: 20px; border-radius: 16px;
-          box-shadow: 0 10px 30px rgba(0,0,0,.15); width: 320px;
-          display: flex; flex-direction: column; max-height: 90vh;
+          background: #ffffff; padding: 20px; border-radius: 12px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.15); width: 340px;
+          display: flex; flex-direction: column; max-height: 85vh;
         }
-        .hs-title { margin: 0; font-size: 16px; font-weight: 700; color: #1e293b; }
-        .hs-employee { font-size: 14px; color: #64748b; margin-top: 4px; margin-bottom: 16px; font-weight: 500; }
-        .hs-date-picker { margin-bottom: 16px; width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #cbd5e1; font-size: 14px; background: #f8fafc; outline: none; }
-        .hs-date-picker:focus { border-color: #6C63FF; }
+        .hs-title { margin: 0; font-size: 18px; font-weight: 700; color: #0f172a; }
+        .hs-employee { font-size: 13px; color: #64748b; margin-top: 6px; margin-bottom: 16px; font-weight: 500; }
+        .hs-date-picker { margin-bottom: 16px; width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 14px; background: #f8fafc; outline: none; cursor: pointer; }
+        .hs-date-picker:focus { border-color: #6C63FF; background: white; }
         
-        .trip-list-overlay { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
-        .no-trips { font-size: 13px; color: #94a3b8; padding: 8px 0; text-align: center; }
+        .trip-list-overlay { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; }
+        .no-trips { font-size: 13px; color: #94a3b8; padding: 20px 0; text-align: center; }
         .trip-pill {
           display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 10px; cursor: pointer;
           background: #f8fafc; font-size: 13px; border: 1px solid #e2e8f0; transition: all .2s ease;
         }
-        .trip-pill:hover  { border-color: #6C63FF; background: #f1f5f9; }
-        .trip-time { font-weight: 600; color: #1e293b; }
+        .trip-pill:hover { border-color: #6C63FF; background: #f1f5f9; box-shadow: 0 2px 8px rgba(108, 99, 255, 0.1); }
+        .trip-time { font-weight: 600; color: #0f172a; }
         .trip-dist { font-size: 12px; color: #64748b; }
 
-        .trip-details { display: flex; flex-direction: column; overflow-y: auto; padding-right: 4px; }
-        .back-btn { background: none; border: none; padding: 0; color: #6C63FF; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; margin-bottom: 16px; }
+        .trip-details { display: flex; flex-direction: column; overflow-y: auto; padding-right: 4px; flex: 1; }
+        .back-btn { background: none; border: none; padding: 0 0 12px 0; color: #6C63FF; font-size: 14px; font-weight: 600; cursor: pointer; text-align: left; margin-bottom: 8px; transition: color .2s; }
+        .back-btn:hover { color: #5651d9; }
         
         .trip-stats-row { display: flex; gap: 10px; margin-bottom: 16px; }
-        .stat-box { flex: 1; background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; }
-        .stat-box span { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-        .stat-box strong { font-size: 16px; color: #1e293b; }
+        .stat-box { flex: 1; background: #f8fafc; border: 1px solid #e2e8f0; padding: 14px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; transition: all .2s; }
+        .stat-box:hover { border-color: #cbd5e1; }
+        .stat-box span { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+        .stat-box strong { font-size: 18px; color: #0f172a; }
 
         .map-action-btn {
           flex: 1; padding: 12px; background: #f1f5f9; border: none; border-radius: 10px;
-          cursor: pointer; font-size: 13px; font-weight: 600; color: #1e293b; transition: all 0.2s;
+          cursor: pointer; font-size: 14px; font-weight: 600; color: #0f172a; transition: all 0.2s;
         }
+        .map-action-btn:hover { background: #e2e8f0; }
         .map-action-btn.active { background: #6C63FF; color: white; box-shadow: 0 4px 12px rgba(108,99,255,0.3); }
 
-        .timeline-title { font-size: 13px; text-transform: uppercase; color: #94a3b8; letter-spacing: 1px; margin-bottom: 12px; margin-top: 8px; }
+        .timeline-title { font-size: 12px; text-transform: uppercase; color: #94a3b8; letter-spacing: 1px; margin-bottom: 12px; margin-top: 8px; font-weight: 600; }
         .timeline { display: flex; flex-direction: column; gap: 0; position: relative; margin-left: 10px; }
-        .timeline-item { display: flex; gap: 16px; position: relative; padding-bottom: 24px; }
+        .timeline-item { display: flex; gap: 16px; position: relative; padding-bottom: 20px; }
         .timeline-item:last-child { padding-bottom: 0; }
         
-        .tl-icon { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; z-index: 2; position: relative; }
-        .start-icon { background: #e0e7ff; color: #4f46e5; border: 2px solid #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,.1); }
-        .stop-icon { background: #fef3c7; color: #d97706; border: 2px solid #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,.1); }
-        .end-icon { background: #e2e8f0; color: #475569; border: 2px solid #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,.1); }
+        .tl-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; z-index: 2; position: relative; flex-shrink: 0; }
+        .start-icon { background: #e0e7ff; color: #4f46e5; border: 2px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,.1); }
+        .stop-icon { background: #fef3c7; color: #d97706; border: 2px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,.1); }
+        .end-icon { background: #e0e7ff; color: #4f46e5; border: 2px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,.1); }
         
-        .tl-line { position: absolute; left: 13px; top: 28px; bottom: 0; width: 2px; background: #e2e8f0; z-index: 1; }
+        .tl-line { position: absolute; left: 15px; top: 32px; bottom: 0; width: 2px; background: #e2e8f0; z-index: 1; }
         .timeline-item:last-child .tl-line { display: none; }
         
-        .tl-content { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
-        .tl-content strong { font-size: 14px; color: #1e293b; }
+        .tl-content { display: flex; flex-direction: column; gap: 3px; padding-top: 2px; }
+        .tl-content strong { font-size: 14px; color: #0f172a; }
         .tl-content span { font-size: 12px; color: #64748b; }
         .text-muted { font-size: 11px !important; opacity: 0.8; }
 
         .map-legend {
           position: absolute; top: 12px; right: 12px; z-index: 1000;
-          background: white; padding: 10px 14px; border-radius: 12px;
-          box-shadow: 0 4px 12px rgba(0,0,0,.15); font-size: 13px; color: #1e293b;
+          background: white; padding: 14px 16px; border-radius: 12px;
+          box-shadow: 0 4px 12px rgba(0,0,0,.15); font-size: 13px; color: #0f172a;
         }
-        .legend-items { display: flex; flex-direction: column; gap: 6px; }
-        .legend-item { display: flex; align-items: center; gap: 8px; font-weight: 500; }
-        .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-        .legend-divider { height: 1px; background: #e2e8f0; margin: 4px 0; }
-        .active-dot { background: #2563eb; }
+        .legend-items { display: flex; flex-direction: column; gap: 8px; }
+        .legend-item { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+        .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,.1); }
+        .legend-divider { height: 1px; background: #e2e8f0; margin: 2px 0; }
 
         /* Zoom Controls */
         .zoom-controls { position: fixed !important; }
@@ -498,6 +521,23 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
           background: white; color: #0f172a; font-size: 20px; font-weight: bold;
           cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2);
           transition: all 0.2s; display: flex; align-items: center; justify-content: center;
+        }
+        .zoom-btn:hover { background: #f1f5f9; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+        .zoom-btn:active { transform: scale(0.95); }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+          .history-sidepanel { width: calc(100vw - 32px); max-width: 340px; left: 16px; top: 16px; }
+          .map-legend { top: auto; bottom: 80px; }
+          .zoom-btn { width: 40px; height: 40px; font-size: 18px; }
+        }
+
+        @media (max-width: 480px) {
+          .history-sidepanel { width: calc(100vw - 24px); padding: 16px; left: 12px; top: 12px; max-height: 70vh; }
+          .hs-title { font-size: 16px; }
+          .trip-pill { padding: 10px; }
+          .map-legend { bottom: 75px; padding: 10px 12px; font-size: 12px; }
+          .zoom-btn { width: 38px; height: 38px; font-size: 16px; }
         }
         .zoom-btn:hover { background: #f1f5f9; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
         .zoom-btn:active { transform: scale(0.95); }

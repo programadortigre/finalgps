@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipBack, Gauge } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Gauge } from 'lucide-react';
 import { useMap, Marker, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import api from '../services/api';
@@ -35,6 +35,7 @@ const Playback = ({ points }) => {
     const [playing, setPlaying] = useState(false);
     const [speed, setSpeed] = useState(1);   // multiplier
     const [currentAddress, setCurrentAddress] = useState('Cargando dirección...');
+    const [loop, setLoop] = useState(false);
     const intervalRef = useRef(null);
     const total = points.length;
 
@@ -42,12 +43,16 @@ const Playback = ({ points }) => {
         if (!playing) { clearInterval(intervalRef.current); return; }
         intervalRef.current = setInterval(() => {
             setIdx(i => {
-                if (i >= total - 1) { setPlaying(false); return i; }
+                if (i >= total - 1) { 
+                    if (loop) return 0;
+                    setPlaying(false); 
+                    return i; 
+                }
                 return i + 1;
             });
         }, 500 / speed);
         return () => clearInterval(intervalRef.current);
-    }, [playing, speed, total]);
+    }, [playing, speed, total, loop]);
 
     // Cargar dirección cuando cambia el punto actual
     useEffect(() => {
@@ -60,11 +65,14 @@ const Playback = ({ points }) => {
     }, [idx, points]);
 
     const reset = () => { setPlaying(false); setIdx(0); };
+    const skipForward = () => setIdx(Math.min(idx + Math.floor(total * 0.1), total - 1));
+    const skipBackward = () => setIdx(Math.max(idx - Math.floor(total * 0.1), 0));
 
     if (!total) return null;
 
     const currentPoint = points[idx];
     const trailPoints = points.slice(0, idx + 1).map(p => [p.lat, p.lng]);
+    const progressPercent = (idx / (total - 1)) * 100;
 
     return (
         <>
@@ -89,30 +97,45 @@ const Playback = ({ points }) => {
             {/* Playback bar */}
             <div className="playback-bar">
                 <div className="pb-controls">
-                    <button onClick={reset} title="Reiniciar"><SkipBack size={18} /></button>
-                    <button className="pb-play" onClick={() => setPlaying(!playing)}>
+                    <button onClick={reset} title="Reiniciar" className="pb-btn"><SkipBack size={18} /></button>
+                    <button onClick={skipBackward} title="Retroceder 10%" className="pb-btn"><SkipBack size={16} style={{ transform: 'scale(-1, 1)' }} /></button>
+                    <button className="pb-play" onClick={() => setPlaying(!playing)} title={playing ? 'Pausar' : 'Reproducir'}>
                         {playing ? <Pause size={20} /> : <Play size={20} />}
                     </button>
+                    <button onClick={skipForward} title="Avanzar 10%" className="pb-btn"><SkipForward size={16} /></button>
                     <span className="pb-counter">{idx + 1} / {total}</span>
+                    <button 
+                        onClick={() => setLoop(!loop)} 
+                        className={`pb-btn ${loop ? 'active' : ''}`}
+                        title={loop ? 'Loop activado' : 'Activar loop'}
+                        style={{ fontSize: '12px', fontWeight: 'bold' }}
+                    >
+                        🔄
+                    </button>
                 </div>
-                <input
-                    type="range" min={0} max={total - 1} value={idx}
-                    onChange={e => { setPlaying(false); setIdx(Number(e.target.value)); }}
-                    className="pb-slider"
-                />
+                <div className="pb-slider-container">
+                    <input
+                        type="range" min={0} max={total - 1} value={idx}
+                        onChange={e => { setPlaying(false); setIdx(Number(e.target.value)); }}
+                        className="pb-slider"
+                    />
+                    <div className="pb-progress" style={{ width: `${progressPercent}%` }} />
+                </div>
                 <div className="pb-speed">
                     <Gauge size={14} />
-                    {[1, 2, 5, 10].map(s => (
-                        <button key={s} className={speed === s ? 'active' : ''} onClick={() => setSpeed(s)}>
+                    {[0.5, 1, 2, 5].map(s => (
+                        <button key={s} className={`pb-speed-btn ${speed === s ? 'active' : ''}`} onClick={() => setSpeed(s)}>
                             {s}x
                         </button>
                     ))}
                 </div>
                 {currentPoint && (
                     <div className="pb-info">
-                        <div style={{ fontSize: '11px', color: '#666', marginBottom: '4px' }}>📍 {currentAddress}</div>
-                        <div>{new Date(currentPoint.timestamp).toLocaleTimeString('es-PE')}
-                        {currentPoint.speed != null && ` · ${(currentPoint.speed).toFixed(1)} km/h`}</div>
+                        <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '4px' }}>📍 {currentAddress}</div>
+                        <div style={{ fontSize: '12px', color: '#1e293b', fontWeight: '500' }}>
+                            {new Date(currentPoint.timestamp).toLocaleTimeString('es-PE')}
+                            {currentPoint.speed != null && ` · ${(currentPoint.speed).toFixed(1)} km/h`}
+                        </div>
                     </div>
                 )}
             </div>
@@ -120,49 +143,71 @@ const Playback = ({ points }) => {
             <style>{`
         .playback-bar {
           position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-          z-index: 1000; background: white; border-radius: 16px;
-          padding: 12px 18px; box-shadow: 0 8px 30px rgba(0,0,0,.15);
-          display: flex; flex-direction: column; gap: 8px; min-width: 360px;
+          z-index: 1000; background: white; border-radius: 12px;
+          padding: 12px 16px; box-shadow: 0 8px 20px rgba(0,0,0,.15);
+          display: flex; flex-direction: column; gap: 10px; max-width: 90vw;
         }
-        .pb-controls { display: flex; align-items: center; gap: 10px; }
-        .pb-controls button { background: #f1f5f9; border: none; border-radius: 8px; padding: 7px; cursor: pointer; display: flex; align-items: center; }
-        .pb-play { background: #2563eb !important; color: white; padding: 8px !important; border-radius: 50% !important; }
-        .pb-counter { font-size: 13px; color: #64748b; margin-left: 4px; }
-        .pb-slider { flex: 1; accent-color: #2563eb; width: 100%; height: 6px; cursor: pointer; }
-        .pb-speed { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #64748b; }
-        .pb-speed button { background: #f1f5f9; border: none; border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 12px; font-weight: 600; }
-        .pb-speed button.active { background: #2563eb; color: white; }
-        .pb-info { font-size: 12px; color: #475569; text-align: center; }
+        .pb-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .pb-btn { 
+          background: #f1f5f9; border: none; border-radius: 6px; padding: 6px; 
+          cursor: pointer; display: flex; align-items: center; color: #475569;
+          transition: all .2s; 
+        }
+        .pb-btn:hover { background: #e2e8f0; color: #1e293b; }
+        .pb-btn.active { background: #2563eb; color: white; }
+        .pb-play { 
+          background: #2563eb !important; color: white; padding: 8px !important; 
+          border-radius: 50% !important; width: 40px !important; height: 40px !important;
+          display: flex !important; align-items: center !important; justify-content: center !important;
+        }
+        .pb-counter { font-size: 13px; color: #64748b; margin: 0 4px; white-space: nowrap; font-weight: 600; }
+        .pb-slider-container { position: relative; width: 100%; }
+        .pb-slider { 
+          flex: 1; accent-color: #2563eb; width: 100%; height: 6px; 
+          cursor: pointer; appearance: none; -webkit-appearance: none;
+          background: transparent;
+        }
+        .pb-slider::-webkit-slider-thumb { 
+          -webkit-appearance: none; width: 14px; height: 14px; 
+          border-radius: 50%; background: #2563eb; cursor: pointer;
+        }
+        .pb-slider::-moz-range-thumb {
+          width: 14px; height: 14px; border-radius: 50%; 
+          background: #2563eb; cursor: pointer; border: none;
+        }
+        .pb-progress { 
+          position: absolute; height: 3px; background: #2563eb; 
+          top: 50%; transform: translateY(-50%); border-radius: 99px;
+          pointer-events: none; transition: width .1s;
+        }
+        .pb-speed { 
+          display: flex; align-items: center; gap: 6px; font-size: 12px; 
+          color: #64748b; justify-content: center;
+        }
+        .pb-speed-btn { 
+          background: #f1f5f9; border: none; border-radius: 6px; 
+          padding: 4px 8px; cursor: pointer; font-size: 11px; font-weight: 600;
+          transition: all .2s; color: #475569;
+        }
+        .pb-speed-btn:hover { background: #e2e8f0; }
+        .pb-speed-btn.active { background: #2563eb; color: white; }
+        .pb-info { 
+          font-size: 12px; color: #475569; text-align: center; 
+          background: #f8fafc; padding: 8px; border-radius: 6px;
+        }
 
         /* Mobile Responsive */
         @media (max-width: 768px) {
           .playback-bar {
-            bottom: 12px; padding: 10px 14px; gap: 6px; min-width: auto;
-            max-width: calc(100vw - 24px); border-radius: 12px;
+            bottom: 12px; padding: 10px 12px; gap: 8px; border-radius: 10px;
           }
-          .pb-controls button { padding: 6px; }
+          .pb-controls { gap: 6px; }
+          .pb-btn { padding: 5px; }
+          .pb-play { width: 36px !important; height: 36px !important; }
           .pb-counter { font-size: 12px; }
           .pb-speed { gap: 4px; font-size: 11px; }
-          .pb-speed button { padding: 2px 6px; font-size: 11px; }
-          .pb-info { font-size: 11px; }
-          .pb-info > div { font-size: 11px; }
-        }
-
-        @media (max-width: 480px) {
-          .playback-bar {
-            bottom: 8px; padding: 8px 12px; gap: 4px;
-          }
-          .pb-controls { gap: 8px; }
-          .pb-controls button { padding: 5px; }
-          .pb-controls svg { width: 16px; height: 16px; }
-          .pb-play svg { width: 18px; height: 18px; }
-          .pb-counter { font-size: 11px; margin-left: 3px; }
-          .pb-slider { height: 8px; }
-          .pb-speed { gap: 3px; font-size: 10px; }
-          .pb-speed button { padding: 2px 5px; font-size: 10px; }
-          .pb-speed svg { width: 12px; height: 12px; }
-          .pb-info { font-size: 10px; }
-          .pb-info > div { font-size: 10px; }
+          .pb-speed-btn { padding: 3px 6px; font-size: 10px; }
+          .pb-info { font-size: 11px; padding: 6px; }
         }
       `}</style>
         </>

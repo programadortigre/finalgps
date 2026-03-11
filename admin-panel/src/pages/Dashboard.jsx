@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Users, History, Activity, UserCog } from 'lucide-react';
+import { LogOut, Users, History, Activity, UserCog, Search, Filter, Wifi, WifiOff } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
 import api from '../services/api';
@@ -12,9 +12,14 @@ const Dashboard = ({ user, onLogout }) => {
     const [view, setView] = useState('live'); // 'live' | 'history' | 'vendors'
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [selectedStatus, setSelectedStatus] = useState('all'); // 'all' | 'SIN_MOVIMIENTO' | 'CAMINANDO' | 'MOVIMIENTO_LENTO' | 'VEHICULO'
+    const [isConnected, setIsConnected] = useState(true);
 
     useEffect(() => {
         connectSocket();
+        setIsConnected(true);
+        
         // ✅ Suscribirse a la sala de admins con join_admins event
         socket.emit('join_admins', user.id);
         console.log('[Dashboard] Admin subscribed to join_admins:', user.id);
@@ -27,6 +32,9 @@ const Dashboard = ({ user, onLogout }) => {
                 [data.employeeId]: { ...data, lastUpdate: new Date().toISOString() }
             }));
         });
+
+        socket.on('disconnect', () => setIsConnected(false));
+        socket.on('connect', () => setIsConnected(true));
 
         const fetchEmployees = async () => {
             try {
@@ -55,12 +63,30 @@ const Dashboard = ({ user, onLogout }) => {
 
         return () => {
             socket.off('location_update');
+            socket.off('disconnect');
+            socket.off('connect');
             disconnectSocket();
             window.removeEventListener('resize', handleResize);
         };
     }, []);
 
     const activeCount = Object.keys(activeLocations).length;
+
+    // Filtrar empleados para vista "En Vivo"
+    const filteredLiveLocations = Object.values(activeLocations).filter(loc => {
+        const matchesSearch = loc.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                              `Vendedor ${loc.employeeId}`.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesStatus = selectedStatus === 'all' || loc.state === selectedStatus;
+        return matchesSearch && matchesStatus;
+    });
+
+    // Estadísticas por estado
+    const statusStats = {
+        'SIN_MOVIMIENTO': Object.values(activeLocations).filter(l => l.state === 'SIN_MOVIMIENTO').length,
+        'CAMINANDO': Object.values(activeLocations).filter(l => l.state === 'CAMINANDO').length,
+        'MOVIMIENTO_LENTO': Object.values(activeLocations).filter(l => l.state === 'MOVIMIENTO_LENTO').length,
+        'VEHICULO': Object.values(activeLocations).filter(l => l.state === 'VEHICULO').length,
+    };
 
     return (
         <div className="dashboard-layout">
@@ -120,6 +146,113 @@ const Dashboard = ({ user, onLogout }) => {
                     </div>
                 )}
 
+                {view === 'live' && (
+                    <div className="employee-list">
+                        <h3 style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ color: isConnected ? '#22c55e' : '#ef4444', fontSize: '10px' }}>●</span>
+                            {isConnected ? 'Conectado' : 'Desconectado'}
+                        </h3>
+                        
+                        {/* Search Box */}
+                        <div style={{ position: 'relative', marginBottom: '12px' }}>
+                            <Search size={16} style={{ position: 'absolute', left: '8px', top: '10px', color: '#64748b', pointerEvents: 'none' }} />
+                            <input
+                                type="text"
+                                placeholder="Buscar vendedor..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    paddingLeft: '32px',
+                                    paddingRight: '8px',
+                                    paddingTop: '8px',
+                                    paddingBottom: '8px',
+                                    border: '1px solid #334155',
+                                    borderRadius: '6px',
+                                    background: '#1e293b',
+                                    color: '#e2e8f0',
+                                    fontSize: '13px',
+                                    outline: 'none',
+                                }}
+                                onFocus={(e) => e.target.style.borderColor = '#64748b'}
+                                onBlur={(e) => e.target.style.borderColor = '#334155'}
+                            />
+                        </div>
+
+                        {/* Status Filters */}
+                        <div style={{ marginBottom: '12px' }}>
+                            <div style={{ fontSize: '11px', color: '#475569', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Filter size={12} /> Filtrar por estado
+                            </div>
+                            <select
+                                value={selectedStatus}
+                                onChange={(e) => setSelectedStatus(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    padding: '8px 10px',
+                                    border: '1px solid #334155',
+                                    borderRadius: '6px',
+                                    background: '#1e293b',
+                                    color: '#e2e8f0',
+                                    fontSize: '12px',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                <option value="all">Todos ({activeCount})</option>
+                                <option value="VEHICULO">🚗 Vehículo ({statusStats.VEHICULO})</option>
+                                <option value="CAMINANDO">🚶 Caminando ({statusStats.CAMINANDO})</option>
+                                <option value="MOVIMIENTO_LENTO">🐢 Lento ({statusStats.MOVIMIENTO_LENTO})</option>
+                                <option value="SIN_MOVIMIENTO">⏸️ Quieto ({statusStats.SIN_MOVIMIENTO})</option>
+                            </select>
+                        </div>
+
+                        {/* Live List */}
+                        <div style={{ marginBottom: '8px', fontSize: '11px', color: '#64748b' }}>
+                            Mostrando {filteredLiveLocations.length} de {activeCount}
+                        </div>
+                        <div style={{ flex: 1, overflowY: 'auto' }}>
+                            {filteredLiveLocations.length === 0 ? (
+                                <p className="empty-msg">{activeCount === 0 ? 'Sin empleados activos' : 'Sin resultados'}</p>
+                            ) : (
+                                filteredLiveLocations.map(loc => (
+                                    <div
+                                        key={loc.employeeId}
+                                        style={{
+                                            padding: '10px 12px',
+                                            marginBottom: '6px',
+                                            background: '#1e293b',
+                                            borderRadius: '6px',
+                                            cursor: 'pointer',
+                                            transition: 'all .15s',
+                                            borderLeft: '3px solid #2563eb'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.background = '#334155'}
+                                        onMouseLeave={(e) => e.currentTarget.style.background = '#1e293b'}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                            <span className={`dot ${activeLocations[loc.employeeId] ? 'dot-active' : ''}`} />
+                                            <span style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: '600', flex: 1 }}>{loc.name || `Vendedor ${loc.employeeId}`}</span>
+                                            <span style={{
+                                                background: loc.state === 'VEHICULO' ? '#6366f150' : loc.state === 'CAMINANDO' ? '#22c55e50' : '#f59e0b50',
+                                                color: loc.state === 'VEHICULO' ? '#6366f1' : loc.state === 'CAMINANDO' ? '#22c55e' : '#f59e0b',
+                                                padding: '2px 8px',
+                                                borderRadius: '4px',
+                                                fontSize: '10px',
+                                                fontWeight: '600'
+                                            }}>
+                                                {loc.state?.replace(/_/g, ' ') || 'Desconocido'}
+                                            </span>
+                                        </div>
+                                        <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                                            📍 {loc.speed ? (loc.speed.toFixed(1) + ' km/h') : 'Detenido'}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 <footer className="sidebar-footer">
                     <button onClick={onLogout} className="logout-btn">
                         <LogOut size={18} /> Cerrar Sesión
@@ -143,7 +276,7 @@ const Dashboard = ({ user, onLogout }) => {
                     <MapView
                         view={view}
                         selectedEmployee={selectedEmployee}
-                        activeLocations={activeLocations}
+                        activeLocations={view === 'live' ? Object.fromEntries(filteredLiveLocations.map(loc => [loc.employeeId, loc])) : activeLocations}
                     />
                 )}
             </main>
