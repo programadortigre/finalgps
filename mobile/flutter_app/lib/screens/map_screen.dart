@@ -143,11 +143,12 @@ class _MapScreenState extends State<MapScreen> {
     setState(() => _isLoading = true);
     try {
       final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
-      final trips = await _api.fetchTripsForEmployee(_selectedEmployee!['id'], dateStr);
+      // ✅ MEJORADO: Usar el nuevo endpoint de historial por rango (aunque sea el mismo día por ahora)
+      final history = await _api.fetchTripHistory(_selectedEmployee!['id'], dateStr, dateStr);
       
-      if (trips != null) {
+      if (history != null) {
         setState(() {
-          _trips = trips;
+          _trips = history;
           if (_trips.isNotEmpty) {
             _selectedTrip = _trips[0];
             _loadTrip(_selectedTrip!['id']);
@@ -270,7 +271,7 @@ class _MapScreenState extends State<MapScreen> {
       markerId: MarkerId('emp_${data['employeeId']}'),
       position: LatLng(data['lat'] as double, data['lng'] as double),
       infoWindow: InfoWindow(
-        title: data['employeeName'] ?? 'Vendedor',
+        title: data['name'] ?? data['employeeName'] ?? 'Vendedor',
         snippet: 'En vivo: ${_formatTime(data['timestamp'])}',
       ),
       icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueCyan),
@@ -525,17 +526,24 @@ class _MapScreenState extends State<MapScreen> {
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      Icon(Icons.straighten, color: Colors.blueAccent, size: 16),
+                      const Icon(Icons.straighten, color: Colors.blueAccent, size: 16),
                       const SizedBox(width: 4),
                       Text(
-                        '${(trip['distance_meters'] ?? 0) / 1000} km',
+                        '${((trip['distance_meters'] ?? 0) / 1000).toStringAsFixed(2)} km',
                         style: const TextStyle(color: Colors.white70, fontSize: 12),
                       ),
                       const SizedBox(width: 16),
-                      Icon(Icons.schedule, color: Colors.blueAccent, size: 16),
+                      const Icon(Icons.schedule, color: Colors.blueAccent, size: 16),
                       const SizedBox(width: 4),
                       Text(
-                        _formatDuration(trip['duration_seconds'] ?? 0),
+                        '${trip['duration_minutes'] ?? _formatDuration(trip['duration_seconds'] ?? 0)} min',
+                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                      const SizedBox(width: 16),
+                      const Icon(Icons.location_on, color: Colors.orangeAccent, size: 16),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${trip['stop_count'] ?? 0} paradas',
                         style: const TextStyle(color: Colors.white70, fontSize: 12),
                       ),
                     ],

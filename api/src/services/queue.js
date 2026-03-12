@@ -9,4 +9,4 @@ const connection = new Redis({
 
 const locationQueue = new Queue('location-updates', { connection });
 
-module.exports = { locationQueue };
+module.exports = { locationQueue, redis: connection };

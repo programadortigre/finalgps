@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'api_service.dart';
 import 'local_storage.dart';
 import '../models/local_point.dart';
@@ -43,6 +44,9 @@ void onStart(ServiceInstance service) async {
     service.on('setAsForeground').listen((_) => service.setAsForegroundService());
     service.on('setAsBackground').listen((_) => service.setAsBackgroundService());
   }
+
+  // Activar wakelock para mantener CPU despierto
+  WakelockPlus.enable();
 
   final api = ApiService();
   final storage = LocalStorage();
@@ -196,5 +200,8 @@ void onStart(ServiceInstance service) async {
     }
   });
 
-  service.on('stopService').listen((_) => service.stopSelf());
+  service.on('stopService').listen((_) {
+    WakelockPlus.disable();
+    service.stopSelf();
+  });
 }

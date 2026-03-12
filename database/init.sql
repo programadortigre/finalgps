@@ -9,7 +9,7 @@ END
 $$;
 
 -- Grant permissions to gpsuser
-GRANT ALL PRIVILEGES ON DATABASE gpsdb TO gpsuser;
+GRANT ALL PRIVILEGES ON DATABASE tracking TO gpsuser;
 
 -- Enable PostGIS extension
 CREATE EXTENSION IF NOT EXISTS postgis;

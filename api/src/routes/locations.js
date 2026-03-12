@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
-const { locationQueue } = require('../services/queue');
+const { locationQueue, redis } = require('../services/queue');
 const { getIO } = require('../socket/socket');
 const db = require('../db/postgres');
 const { LocationKalmanFilter } = require('../utils/kalman_filter');
@@ -17,9 +17,6 @@ const MAX_LAT = 90;
 const MIN_LAT = -90;
 const MAX_LNG = 180;
 const MIN_LNG = -180;
- 
- // In-memory cache for Kalman filters (per employee)
- const filterCache = {};
 
 /// ============================================================================
 /// ENDPOINT: GET / - Obtener últimas ubicaciones de todos los empleados
@@ -84,7 +81,22 @@ router.post('/batch', auth, async (req, res) => {
     let filtered = 0;
     const filteredPoints = [];
     let lastValidPoint = null;
-    let locationFilter = null; // Kalman filter
+
+    // 🧠 APLICAR FILTRO KALMAN (Persistente por empleado en Redis)
+    const filterKey = `kalman:employee:${employeeId}`;
+    const locationFilter = new LocationKalmanFilter(0, 0, 50); // Valores dummy iniciales
+    
+    try {
+        const savedStateJson = await redis.get(filterKey);
+        if (savedStateJson) {
+            locationFilter.setState(JSON.parse(savedStateJson));
+        } else if (points.length > 0) {
+            // Inicializar con el primer punto si no hay estado previo
+            locationFilter.reset(points[0].lat, points[0].lng);
+        }
+    } catch (e) {
+        console.error(`[Redis] Error loading kalman state for ${employeeId}:`, e);
+    }
 
     /// ========================================================================
     /// FILTRADO Y SUAVIZADO DE PUNTOS
@@ -166,16 +178,7 @@ router.post('/batch', auth, async (req, res) => {
             }
         }
 
-        // 🧠 APLICAR FILTRO KALMAN para suavizar coordenadas (Persistente por empleado)
-        if (!filterCache[employeeId]) {
-            filterCache[employeeId] = new LocationKalmanFilter(
-                point.lat,
-                point.lng,
-                point.accuracy || 50
-            );
-        }
-
-        const smoothedCoords = filterCache[employeeId].update(
+        const smoothedCoords = locationFilter.update(
             point.lat,
             point.lng,
             point.accuracy || 50
@@ -200,6 +203,13 @@ router.post('/batch', auth, async (req, res) => {
     console.log(
         `[BATCH] Received ${points.length} points: ${inserted} inserted, ${filtered} filtered`
     );
+
+    // Guardar estado actualizado en Redis (expira en 12 horas si no hay movimiento)
+    try {
+        await redis.setex(filterKey, 43200, JSON.stringify(locationFilter.getState()));
+    } catch (e) {
+        console.error(`[Redis] Error saving kalman state for ${employeeId}:`, e);
+    }
 
     if (filteredPoints.length === 0) {
         // Todos los puntos fueron filtrados
@@ -250,6 +260,60 @@ router.post('/batch', auth, async (req, res) => {
     } catch (err) {
         console.error('[ERROR] Failed to queue locations:', err);
         res.status(500).json({ error: 'Failed to queue locations' });
+    }
+});
+
+/// ============================================================================
+/// ENDPOINT: POST /status - Actualizar estado explícito (ej. OFFLINE)
+/// ============================================================================
+router.post('/status', auth, async (req, res) => {
+    const { state } = req.body;
+    const employeeId = req.user.id;
+
+    if (!state) {
+        return res.status(400).json({ error: 'Status is required' });
+    }
+
+    try {
+        // Enviar actualización en tiempo real al panel de admin
+        const io = getIO();
+        if (io) {
+            // Obtenemos último registro para tener coords válidas aunque cambie solo el estado
+            const lastLoc = await db.query(`
+                SELECT latitude as lat, longitude as lng, speed, accuracy
+                FROM locations 
+                WHERE employee_id = $1 
+                ORDER BY timestamp DESC LIMIT 1
+            `, [employeeId]);
+
+            let updateData = {
+                employeeId,
+                name: req.user.name,
+                state: state,
+                timestamp: Date.now()
+            };
+
+            if (lastLoc.rows.length > 0) {
+                updateData = { ...updateData, ...lastLoc.rows[0] };
+            }
+
+            io.to('admins').emit('location_update', updateData);
+        }
+
+        // Podríamos encolar esto también si queremos guardar el evento "Offline"
+        await locationQueue.add('process-batch', {
+            employeeId,
+            points: [{
+                lat: 0, lng: 0, speed: 0, accuracy: 0, // Dummies, solo importa el estado
+                timestamp: Date.now(),
+                state: state
+            }]
+        });
+
+        res.json({ success: true, message: `Status updated to ${state}` });
+    } catch (err) {
+        console.error('[ERROR] Failed to update status:', err);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 

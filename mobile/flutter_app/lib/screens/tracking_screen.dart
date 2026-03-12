@@ -1,0 +1,561 @@
+import 'dart:async';
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
+import '../services/api_service.dart';
+import 'auth_wrapper.dart';
+import 'admin_monitoring_screen.dart';
+
+class TrackingScreen extends StatefulWidget {
+  const TrackingScreen({super.key});
+  @override
+  State<TrackingScreen> createState() => _TrackingScreenState();
+}
+
+class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStateMixin {
+  final MapController _mapCtrl = MapController();
+  final _api = ApiService();
+
+  // ─ Location state ─
+  LatLng? _position;
+  double  _speed = 0;
+  double  _accuracy = 0;
+  String  _state = "SIN_MOVIMIENTO";
+  double  _distanceToday = 0;
+  final Distance _distCalc = const Distance();
+
+  List<List<LatLng>> _segments = [[]];
+  bool _isOnline = false;
+  bool _followMe = true;
+  StreamSubscription<Position>? _locationSub;
+
+  // ─ User info ─
+  String _userName = '';
+  String _userRole = '';
+  String _userInitials = '';
+  bool   _isAdmin = false;
+
+  // ─ Timer ─
+  DateTime? _sessionStart;
+  Timer? _clockTimer;
+  String _elapsed = '00:00:00';
+
+  // ─ Animations ─
+  late AnimationController _pulseCtrl;
+  late Animation<double>   _pulseAnim;
+  late AnimationController _slideCtrl;
+  late Animation<double>   _slideAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 0.6, end: 1.0).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+
+    _slideCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
+    _slideAnim = CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOutBack);
+    _slideCtrl.forward();
+
+    _loadUserInfo();
+    _loadTodayRoute();
+    _startListening();
+  }
+
+  Future<void> _loadTodayRoute() async {
+    final routes = await _api.fetchTodayRoutes();
+    if (routes != null && mounted) {
+      setState(() {
+        _distanceToday = 0;
+        _segments.clear();
+        for (var r in routes) {
+           _distanceToday += (r['distance_meters'] as num? ?? 0).toDouble() / 1000.0;
+           final pts = r['points'] as List;
+           if (pts.isNotEmpty) {
+             _segments.add(pts.map((p) => LatLng(
+                 (p['lat'] as num).toDouble(), 
+                 (p['lng'] as num).toDouble()
+             )).toList());
+           }
+        }
+        
+        // Ensure there is at least one active segment
+        if (_segments.isEmpty) {
+          _segments.add([]);
+        }
+
+        // Move map to the last known point if available
+        if (_segments.isNotEmpty && _segments.last.isNotEmpty && _followMe) {
+           _mapCtrl.move(_segments.last.last, 16);
+        }
+      });
+    }
+  }
+
+  Future<void> _loadUserInfo() async {
+    final name = await _api.getUserName() ?? 'Usuario';
+    final role = await _api.getUserRole() ?? '';
+    final parts = name.trim().split(' ');
+    final initials = parts.length >= 2
+        ? '${parts[0][0]}${parts[1][0]}'.toUpperCase()
+        : name.isNotEmpty ? name[0].toUpperCase() : 'U';
+    if (mounted) {
+      setState(() {
+        _userName = name;
+        _userRole = role;
+        _userInitials = initials;
+        _isAdmin = role.toLowerCase() == 'admin';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _locationSub?.cancel();
+    _clockTimer?.cancel();
+    _pulseCtrl.dispose();
+    _slideCtrl.dispose();
+    super.dispose();
+  }
+
+  void _startListening() {
+    _locationSub = Geolocator.getPositionStream(
+      locationSettings: AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 5,
+        intervalDuration: const Duration(seconds: 5),
+      ),
+    ).listen((pos) {
+      final ll = LatLng(pos.latitude, pos.longitude);
+      if (mounted) {
+        setState(() {
+          _speed    = pos.speed * 3.6;
+          _accuracy = pos.accuracy;
+          
+          // Detección simple para la UI con textos cortos amigables
+          if (_speed < 0.8) {
+            _state = "Quieto";
+          } else if (_speed < 4.0) {
+            _state = "A pie";
+          } else if (_speed < 12.0) {
+            _state = "Lento";
+          } else {
+            _state = "En auto";
+          }
+
+          if (_position != null && _isOnline) {
+            _distanceToday += _distCalc.as(LengthUnit.Kilometer, _position!, ll);
+            if (_segments.isEmpty) _segments.add([]);
+            _segments.last.add(ll);
+          }
+          _position = ll;
+        });
+        if (_followMe) _mapCtrl.move(ll, _mapCtrl.camera.zoom);
+      }
+    });
+  }
+
+  void _startClock() {
+    _sessionStart = DateTime.now();
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_sessionStart != null && mounted) {
+        final diff = DateTime.now().difference(_sessionStart!);
+        setState(() {
+          _elapsed = '${diff.inHours.toString().padLeft(2, '0')}:'
+              '${(diff.inMinutes % 60).toString().padLeft(2, '0')}:'
+              '${(diff.inSeconds % 60).toString().padLeft(2, '0')}';
+        });
+      }
+    });
+  }
+
+  void _stopClock() {
+    _clockTimer?.cancel();
+    _clockTimer = null;
+  }
+
+  Future<void> _toggleOnline() async {
+    setState(() => _isOnline = !_isOnline);
+    if (_isOnline) {
+      _startClock();
+      if (_segments.isEmpty || _segments.last.isNotEmpty) {
+        _segments.add([]); // Start a new disconnected segment
+      }
+      await FlutterBackgroundService().startService();
+    } else {
+      _stopClock();
+      FlutterBackgroundService().invoke('stopService');
+      // 🛑 FIX: Explicitly notify server that tracking stopped
+      try {
+        await _api.updateStatus('OFFLINE'); 
+      } catch (e) {
+        debugPrint('Error notifying offline status: $e');
+      }
+    }
+  }
+
+  Future<void> _logout() async {
+    _stopClock();
+    FlutterBackgroundService().invoke('stopService');
+    await _api.logout();
+    if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AuthWrapper()));
+  }
+
+  String _roleLabel(String role) {
+    switch (role.toLowerCase()) {
+      case 'admin': return 'Administrador';
+      case 'vendor': return 'Vendedor';
+      case 'supervisor': return 'Supervisor';
+      default: return role.isNotEmpty ? role : 'Vendedor';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      body: Stack(children: [
+        // ── Full-screen Dark Map ──
+        FlutterMap(
+          mapController: _mapCtrl,
+          options: MapOptions(
+            initialCenter: _position ?? const LatLng(-12.0464, -77.0428),
+            initialZoom: 16,
+            onPositionChanged: (_, hasGesture) { if (hasGesture) setState(() => _followMe = false); },
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+              subdomains: const ['a', 'b', 'c', 'd'],
+              userAgentPackageName: 'com.example.flutter_gps_tracker',
+            ),
+            // Route trail segments with glow effect
+            if (_segments.any((s) => s.length > 1)) ...[
+              PolylineLayer(polylines: [
+                for (var seg in _segments.where((s) => s.length > 1))
+                  Polyline(points: seg, color: const Color(0xFF6C63FF).withOpacity(.25), strokeWidth: 14),
+                for (var seg in _segments.where((s) => s.length > 1))
+                  Polyline(points: seg, color: const Color(0xFF6C63FF), strokeWidth: 4, borderColor: const Color(0xFF3F8CFF), borderStrokeWidth: 1),
+              ]),
+            ],
+            // My position marker
+            if (_position != null)
+              MarkerLayer(markers: [
+                Marker(
+                  point: _position!,
+                  width: 80, height: 80,
+                  child: AnimatedBuilder(
+                    animation: _pulseAnim,
+                    builder: (_, __) => Stack(alignment: Alignment.center, children: [
+                      // Outer pulse ring
+                      Container(
+                        width: 70 * _pulseAnim.value, height: 70 * _pulseAnim.value,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: (_isOnline ? const Color(0xFF6C63FF) : const Color(0xFF94A3B8)).withOpacity(.3),
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      // Middle glow
+                      Container(
+                        width: 40, height: 40,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: (_isOnline ? const Color(0xFF6C63FF) : const Color(0xFF94A3B8)).withOpacity(.15),
+                        ),
+                      ),
+                      // Inner dot
+                      Container(
+                        width: 18, height: 18,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: _isOnline
+                              ? [const Color(0xFF6C63FF), const Color(0xFF3F8CFF)]
+                              : [const Color(0xFF64748B), const Color(0xFF94A3B8)],
+                          ),
+                          border: Border.all(color: Colors.white, width: 3),
+                          boxShadow: [
+                            BoxShadow(
+                              color: (_isOnline ? const Color(0xFF6C63FF) : const Color(0xFF64748B)).withOpacity(.6),
+                              blurRadius: 12,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ]),
+                  ),
+                ),
+              ]),
+          ],
+        ),
+
+        // ── Top Bar (Glassmorphism) ──
+        Positioned(
+          top: 0, left: 0, right: 0,
+          child: SlideTransition(
+            position: Tween<Offset>(begin: const Offset(0, -1), end: Offset.zero).animate(_slideAnim),
+            child: Container(
+              padding: EdgeInsets.fromLTRB(20, MediaQuery.of(context).padding.top + 8, 16, 14),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    const Color(0xFF1A1A2E).withOpacity(.95),
+                    const Color(0xFF1A1A2E).withOpacity(.7),
+                    const Color(0xFF1A1A2E).withOpacity(0),
+                  ],
+                  stops: const [0, 0.7, 1],
+                ),
+              ),
+              child: Row(children: [
+                // Avatar
+                Container(
+                  width: 44, height: 44,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [Color(0xFF6C63FF), Color(0xFF3F8CFF)]),
+                    borderRadius: BorderRadius.circular(15),
+                    boxShadow: [BoxShadow(color: const Color(0xFF6C63FF).withOpacity(.4), blurRadius: 12, offset: const Offset(0, 4))],
+                  ),
+                  child: Center(
+                    child: Text(_userInitials, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Name & status
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _userName.isNotEmpty ? _userName : 'Cargando...',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Row(children: [
+                        AnimatedBuilder(
+                          animation: _pulseAnim,
+                          builder: (_, __) => Container(
+                            width: 8, height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _isOnline ? const Color(0xFF22C55E) : const Color(0xFF64748B),
+                              boxShadow: _isOnline ? [BoxShadow(color: const Color(0xFF22C55E).withOpacity(_pulseAnim.value), blurRadius: 6, spreadRadius: 1)] : [],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _isOnline ? 'En línea · ${_roleLabel(_userRole)}' : 'Desconectado · ${_roleLabel(_userRole)}',
+                          style: TextStyle(
+                            color: _isOnline ? const Color(0xFF22C55E) : const Color(0xFF64748B),
+                            fontSize: 12, fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ]),
+                    ],
+                  ),
+                ),
+                // Action buttons
+                _glassBtn(Icons.my_location_rounded, () {
+                  if (_position != null) {
+                    setState(() => _followMe = true);
+                    _mapCtrl.move(_position!, 17);
+                  }
+                }),
+                if (_isAdmin) ...[
+                  const SizedBox(width: 8),
+                  _glassBtn(Icons.dashboard_customize_rounded, () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminMonitoringScreen()));
+                  }, color: const Color(0xFF6C63FF)),
+                ],
+                const SizedBox(width: 8),
+                _glassBtn(Icons.logout_rounded, _logout),
+              ]),
+            ),
+          ),
+        ),
+
+        // ── Bottom Panel (Dark themed) ──
+        Positioned(
+          left: 0, right: 0, bottom: 0,
+          child: SlideTransition(
+            position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero).animate(_slideAnim),
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1A2E),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(.4), blurRadius: 30, offset: const Offset(0, -8)),
+                ],
+              ),
+              padding: EdgeInsets.fromLTRB(20, 18, 20, bottomPad + 20),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                // Handle bar
+                Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(.15),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // ── Stats Cards Row ──
+                Row(children: [
+                  _statCard('⚡', _speed.toStringAsFixed(0), 'km/h', const Color(0xFF6C63FF)),
+                  const SizedBox(width: 10),
+                  _statCard('🎭', _state.replaceAll('_', ' '), 'estado', const Color(0xFFF59E0B)),
+                  const SizedBox(width: 10),
+                  _statCard('🛣️', _distanceToday.toStringAsFixed(2), 'km hoy', const Color(0xFF22C55E)),
+                ]),
+
+                const SizedBox(height: 16),
+
+                // ── Elapsed time (only when online) ──
+                AnimatedCrossFade(
+                  firstChild: const SizedBox.shrink(),
+                  secondChild: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF242740),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFF6C63FF).withOpacity(.2)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.timer_outlined, color: Color(0xFF6C63FF), size: 18),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Tiempo activo:  $_elapsed',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  crossFadeState: _isOnline ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+                  duration: const Duration(milliseconds: 300),
+                ),
+
+                SizedBox(height: _isOnline ? 16 : 0),
+
+                // ── Toggle Tracking Button ──
+                GestureDetector(
+                  onTap: _toggleOnline,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 400),
+                    curve: Curves.easeInOut,
+                    width: double.infinity,
+                    height: 62,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: _isOnline
+                          ? [const Color(0xFFEF4444), const Color(0xFFDC2626)]
+                          : [const Color(0xFF6C63FF), const Color(0xFF3F8CFF)],
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: (_isOnline ? const Color(0xFFEF4444) : const Color(0xFF6C63FF)).withOpacity(.4),
+                          blurRadius: 20, offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: Icon(
+                          _isOnline ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                          key: ValueKey(_isOnline),
+                          color: Colors.white, size: 30,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: Text(
+                          _isOnline ? 'DETENER RASTREO' : 'INICIAR RASTREO',
+                          key: ValueKey(_isOnline),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                            letterSpacing: .8,
+                          ),
+                        ),
+                      ),
+                    ]),
+                  ),
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  // ── Glass-style action button ──
+  Widget _glassBtn(IconData icon, VoidCallback onTap, {Color? color}) => Material(
+    color: color?.withOpacity(.2) ?? Colors.white.withOpacity(.12),
+    borderRadius: BorderRadius.circular(14),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Container(
+        width: 42, height: 42,
+        alignment: Alignment.center,
+        child: Icon(icon, size: 20, color: color ?? Colors.white.withOpacity(.9)),
+      ),
+    ),
+  );
+
+  // ── Stat card with colored accent ──
+  Widget _statCard(String emoji, String value, String label, Color accent) => Expanded(
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF242740),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accent.withOpacity(.2), width: 1),
+      ),
+      child: Column(children: [
+        Text(emoji, style: const TextStyle(fontSize: 20)),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(label, style: TextStyle(fontSize: 10, color: accent.withOpacity(.8), fontWeight: FontWeight.w500)),
+      ]),
+    ),
+  );
+}

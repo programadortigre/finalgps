@@ -40,6 +40,103 @@ router.get('/', auth, async (req, res) => {
     }
 });
 
+// ✅ ENDPOINT: Obtener historial de paradas por rango de fechas
+// GET /api/trips/stops/history/:employeeId
+router.get('/stops/history/:employeeId', auth, async (req, res) => {
+    const employeeId = req.params.employeeId;
+    const { startDate, endDate } = req.query;
+
+    // Validar autorización (admin o propietario)
+    if (req.user.role !== 'admin' && req.user.id !== parseInt(employeeId)) {
+        return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    if (!startDate || !endDate) {
+        return res.status(400).json({ error: 'startDate and endDate are required (YYYY-MM-DD)' });
+    }
+
+    try {
+        const result = await db.query(`
+            SELECT 
+                s.id,
+                s.latitude,
+                s.longitude,
+                s.start_time,
+                s.end_time,
+                s.duration_seconds,
+                t.id as trip_id,
+                DATE(s.start_time) as stop_date
+            FROM stops s
+            INNER JOIN trips t ON s.trip_id = t.id
+            WHERE s.employee_id = $1
+            AND DATE(s.start_time) >= $2
+            AND DATE(s.start_time) <= $3
+            ORDER BY s.start_time DESC
+        `, [employeeId, startDate, endDate]);
+
+        res.json({
+            count: result.rows.length,
+            stops: result.rows
+        });
+    } catch (err) {
+        console.error('[ERROR] Failed to get stops history:', err.message);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// ✅ ENDPOINT: Obtener historial de viajes por rango de fechas
+// GET /api/trips/history/:employeeId
+router.get('/history/:employeeId', auth, async (req, res) => {
+    const employeeId = req.params.employeeId;
+    const { startDate, endDate } = req.query;
+
+    // Validar autorización (admin o propietario)
+    if (req.user.role !== 'admin' && req.user.id !== parseInt(employeeId)) {
+        return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    if (!startDate || !endDate) {
+        return res.status(400).json({ error: 'startDate and endDate are required (YYYY-MM-DD)' });
+    }
+
+    try {
+        const result = await db.query(`
+            SELECT 
+                t.id,
+                t.start_time,
+                t.end_time,
+                t.distance_meters,
+                t.is_active,
+                (SELECT COUNT(*) FROM stops WHERE trip_id = t.id) as stop_count,
+                (SELECT COUNT(*) FROM locations WHERE trip_id = t.id) as point_count,
+                DATE(t.start_time) as trip_date
+            FROM trips t
+            WHERE t.employee_id = $1
+            AND DATE(t.start_time) >= $2
+            AND DATE(t.start_time) <= $3
+            ORDER BY t.start_time DESC
+        `, [employeeId, startDate, endDate]);
+
+        const trips = result.rows.map(trip => ({
+            ...trip,
+            duration_minutes: trip.end_time ? 
+                Math.round((new Date(trip.end_time) - new Date(trip.start_time)) / 60000) : 
+                null,
+            duration_hours: trip.end_time ?
+                ((new Date(trip.end_time) - new Date(trip.start_time)) / 3600000).toFixed(2) :
+                null
+        }));
+
+        res.json({
+            count: trips.length,
+            trips: trips
+        });
+    } catch (err) {
+        console.error('[ERROR] Failed to get trips history:', err.message);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // Get details of a single trip (route + stops)
 // NUEVO: Soporta ?simplify=true para obtener ruta compilada en lugar de todos los puntos
 router.get('/:id', auth, async (req, res) => {

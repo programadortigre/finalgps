@@ -9,7 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 const List<Map<String, String>> kServerPresets = [
   {'label': '🌐 Elyon GPS',    'url': 'https://elyongps.com'},
   {'label': '🌐 Servidor Zyma', 'url': 'https://zyma.lat'},
-  {'label': '🏠 Local (Dev)',     'url': 'http://192.168.0.102:3000'},
+  {'label': '🏠 Local (Dev)',     'url': 'http://10.0.2.2:3000'}, // Standard Android Emulator localhost
 ];
 
 const String _kServerUrlKey = 'server_url';
@@ -71,6 +71,7 @@ class ApiService {
         // Save user info
         final user = res.data['user'];
         if (user != null) {
+          await _storage.write(key: 'user_id', value: (user['id'] ?? '').toString());
           await _storage.write(key: 'user_name', value: user['name'] ?? '');
           await _storage.write(key: 'user_role', value: user['role'] ?? '');
           await _storage.write(key: 'user_email', value: email);
@@ -102,7 +103,7 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>?> fetchTodayRoute() async {
+  Future<List<Map<String, dynamic>>?> fetchTodayRoutes() async {
     final token = await _storage.read(key: 'token');
     if (token == null) return null;
     try {
@@ -117,23 +118,21 @@ class ApiService {
       
       if (res.statusCode == 200 && res.data != null && (res.data as List).isNotEmpty) {
         final trips = res.data as List;
-        // Tomamos el viaje más reciente (el primero por ORDER BY start_time DESC)
-        final latestTrip = trips[0];
-        final latestTripId = latestTrip['id'];
-        final distanceMeters = latestTrip['distance_meters'] ?? 0.0;
-        
-        final detailsRes = await dio.get(
-          '/api/trips/$latestTripId',
-          options: Options(headers: {'Authorization': 'Bearer $token'}),
-        );
-        
-        if (detailsRes.statusCode == 200 && detailsRes.data != null) {
-          return {
-            'distance_meters': distanceMeters,
-            'points': detailsRes.data['points'] ?? [],
-            'trip_id': latestTripId,
-          };
+        List<Map<String, dynamic>> allRoutes = [];
+        for (var trip in trips) {
+          final detailsRes = await dio.get(
+            '/api/trips/${trip['id']}',
+            options: Options(headers: {'Authorization': 'Bearer $token'}),
+          );
+          if (detailsRes.statusCode == 200 && detailsRes.data != null) {
+            allRoutes.add({
+              'distance_meters': trip['distance_meters'] ?? 0.0,
+              'points': detailsRes.data['points'] ?? [],
+              'trip_id': trip['id'],
+            });
+          }
         }
+        return allRoutes;
       }
     } catch (e) {
       // Ignored
@@ -161,8 +160,47 @@ class ApiService {
   Future<String?> getUserName() => _storage.read(key: 'user_name');
   Future<String?> getUserRole() => _storage.read(key: 'user_role');
   Future<String?> getUserEmail() => _storage.read(key: 'user_email');
+  Future<String?> getUserId() => _storage.read(key: 'user_id');
 
-  /// 📍 Obtener historial de viajes de un vendedor por fecha
+  /// 📍 Obtener historial de viajes por rango de fechas (NUEVO ENDPOINT)
+  Future<List<Map<String, dynamic>>?> fetchTripHistory(int employeeId, String startDate, String endDate) async {
+    final token = await _storage.read(key: 'token');
+    if (token == null) return null;
+    try {
+      final dio = await _getDio();
+      final res = await dio.get(
+        '/api/trips/history/$employeeId?startDate=$startDate&endDate=$endDate',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(res.data['trips']);
+      }
+    } catch (e) {
+      print('[ApiService] Error fetching trip history: $e');
+    }
+    return null;
+  }
+
+  /// 📍 Obtener historial de paradas por rango de fechas (NUEVO ENDPOINT)
+  Future<List<Map<String, dynamic>>?> fetchStopHistory(int employeeId, String startDate, String endDate) async {
+    final token = await _storage.read(key: 'token');
+    if (token == null) return null;
+    try {
+      final dio = await _getDio();
+      final res = await dio.get(
+        '/api/trips/stops/history/$employeeId?startDate=$startDate&endDate=$endDate',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(res.data['stops']);
+      }
+    } catch (e) {
+      print('[ApiService] Error fetching stop history: $e');
+    }
+    return null;
+  }
+
+  /// 📍 Obtener historial de viajes de un vendedor por fecha (legacy)
   Future<List<Map<String, dynamic>>?> fetchTripsForEmployee(int employeeId, String date) async {
     final token = await _storage.read(key: 'token');
     if (token == null) return null;
@@ -228,6 +266,24 @@ class ApiService {
       }
     } catch (_) {}
     return null;
+  }
+
+  Future<bool> updateStatus(String status) async {
+    try {
+      final token = await getToken();
+      if (token == null) return false;
+      
+      final dio = await _getDio(); // Use _getDio() instead of _dio
+      final response = await dio.post(
+        '/api/locations/status', // Added /api prefix
+        data: {'state': status},
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      // debugPrint('Error en updateStatus: $e'); // Removed debugPrint as it's not defined
+      return false;
+    }
   }
 
   Future<void> logout() async {
