@@ -17,6 +17,9 @@ const MAX_LAT = 90;
 const MIN_LAT = -90;
 const MAX_LNG = 180;
 const MIN_LNG = -180;
+ 
+ // In-memory cache for Kalman filters (per employee)
+ const filterCache = {};
 
 /// ============================================================================
 /// ENDPOINT: GET / - Obtener últimas ubicaciones de todos los empleados
@@ -163,16 +166,16 @@ router.post('/batch', auth, async (req, res) => {
             }
         }
 
-        // 🧠 APLICAR FILTRO KALMAN para suavizar coordenadas
-        if (locationFilter === null) {
-            locationFilter = new LocationKalmanFilter(
+        // 🧠 APLICAR FILTRO KALMAN para suavizar coordenadas (Persistente por empleado)
+        if (!filterCache[employeeId]) {
+            filterCache[employeeId] = new LocationKalmanFilter(
                 point.lat,
                 point.lng,
                 point.accuracy || 50
             );
         }
 
-        const smoothedCoords = locationFilter.update(
+        const smoothedCoords = filterCache[employeeId].update(
             point.lat,
             point.lng,
             point.accuracy || 50
@@ -228,7 +231,7 @@ router.post('/batch', auth, async (req, res) => {
             const lastPoint = filteredPoints[filteredPoints.length - 1];
             io.to('admins').emit('location_update', {
                 employeeId,
-                employeeName: req.user.name,
+                name: req.user.name, // ✅ FIX: Usar 'name' en lugar de 'employeeName'
                 lat: lastPoint.lat,
                 lng: lastPoint.lng,
                 speed: lastPoint.speed,

@@ -199,6 +199,42 @@ router.patch('/:id/close', auth, async (req, res) => {
             [tripId]
         );
 
+        // ✅ NUEVO: Compilar y simplificar ruta inmediatamente (Douglas-Peucker via PostGIS)
+        try {
+            await db.query(`
+                WITH route AS (
+                    SELECT ST_MakeLine(ARRAY_AGG(geom ORDER BY timestamp)) AS geom_line,
+                           COUNT(*) AS full_count
+                    FROM locations
+                    WHERE trip_id = $1
+                )
+                INSERT INTO trip_routes (
+                    trip_id,
+                    geom_full,
+                    geom_simplified,
+                    point_count_full,
+                    point_count_simplified
+                )
+                SELECT
+                    $1,
+                    geom_line::geography,
+                    ST_SimplifyPreserveTopology(geom_line, 0.00005)::geography,
+                    full_count,
+                    ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.00005))
+                FROM route
+                ON CONFLICT (trip_id) DO UPDATE SET
+                    geom_full = EXCLUDED.geom_full,
+                    geom_simplified = EXCLUDED.geom_simplified,
+                    point_count_full = EXCLUDED.point_count_full,
+                    point_count_simplified = EXCLUDED.point_count_simplified,
+                    updated_at = CURRENT_TIMESTAMP;
+            `, [tripId]);
+            console.log(`[API] Trip ${tripId}: route simplified successfully (optimized query)`);
+        } catch (simplifyErr) {
+            console.error(`[WARNING] Trip ${tripId}: failed to simplify route:`, simplifyErr.message);
+            // No fallamos el request principal si falla la simplificación
+        }
+
         console.log(`[API] Trip ${tripId}: closed by ${req.user.name}`);
 
         res.json({

@@ -59,21 +59,26 @@ async function updateTripRoute(client, tripId) {
 
         // Más simple: usar Window Functions con ST_SimplifyPreserveTopology
         const result = await client.query(`
-            INSERT INTO trip_routes (trip_id, geom_full, geom_simplified, point_count_full, point_count_simplified)
+            WITH route AS (
+                SELECT ST_MakeLine(ARRAY_AGG(geom ORDER BY timestamp)) AS geom_line,
+                       COUNT(*) AS full_count
+                FROM locations
+                WHERE trip_id = $1
+            )
+            INSERT INTO trip_routes (
+                trip_id, 
+                geom_full, 
+                geom_simplified, 
+                point_count_full, 
+                point_count_simplified
+            )
             SELECT 
                 $1,
-                ST_MakeLine(ARRAY_AGG(geom ORDER BY timestamp))::geography,
-                ST_SimplifyPreserveTopology(
-                    ST_MakeLine(ARRAY_AGG(geom ORDER BY timestamp))::geometry,
-                    0.00005
-                )::geography,
-                COUNT(*),
-                ST_NPoints(ST_SimplifyPreserveTopology(
-                    ST_MakeLine(ARRAY_AGG(geom ORDER BY timestamp))::geometry,
-                    0.00005
-                ))
-            FROM locations
-            WHERE trip_id = $1
+                geom_line::geography,
+                ST_SimplifyPreserveTopology(geom_line, 0.00005)::geography,
+                full_count,
+                ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.00005))
+            FROM route
             ON CONFLICT (trip_id) DO UPDATE SET
                 geom_full = EXCLUDED.geom_full,
                 geom_simplified = EXCLUDED.geom_simplified,

@@ -22,15 +22,16 @@ const initSocket = (server) => {
         console.log(`[Socket] User connected: ${socket.id}`);
 
         // ✅ Admin se suscribe a actualizaciones en tiempo real
-        socket.on('join_admins', (userId) => {
+        socket.on('join_admins', (admin) => {
+            const adminId = typeof admin === 'object' ? admin.id : admin;
             socket.join('admins');
-            console.log(`[Socket] Admin ${userId} joined 'admins' room`);
+            console.log(`[Socket] Admin ${adminId} joined 'admins' room`);
 
             // Notificar a otros admins que uno nuevo se conectó
             io.to('admins').emit('admin_connected', {
-                userId,
+                userId: adminId,
                 timestamp: new Date(),
-                message: `Admin ${userId} connected`
+                message: `Admin ${adminId} connected`
             });
         });
 

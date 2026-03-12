@@ -21,8 +21,10 @@ const Dashboard = ({ user, onLogout }) => {
         setIsConnected(true);
         
         // ✅ Suscribirse a la sala de admins con join_admins event
-        socket.emit('join_admins', user.id);
-        console.log('[Dashboard] Admin subscribed to join_admins:', user.id);
+        const adminId = user.user?.id || user.id;
+        const adminName = user.user?.name || user.name || 'Admin';
+        socket.emit('join_admins', { id: adminId, name: adminName });
+        console.log('[Dashboard] Admin subscribed to join_admins:', adminId);
 
         // ✅ Escuchar actualizaciones de ubicación en tiempo real
         socket.on('location_update', (data) => {
@@ -100,7 +102,7 @@ const Dashboard = ({ user, onLogout }) => {
                     <div className="sidebar-logo">📍</div>
                     <div>
                         <h2>GPS Tracker</h2>
-                        <span>{user.name}</span>
+                        <span>{user.user?.name || user.name || 'Admin'}</span>
                     </div>
                 </header>
 

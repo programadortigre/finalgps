@@ -68,13 +68,11 @@ app.set('socketio', io);
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.post('/api/locations/batch', locationLimiter);
 app.use('/api/locations', locationRoutes);
 app.use('/api/trips', tripRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/geocoding', geocodingRoutes);
-
-// Aplicar rate limiter más estricto a endpoint de locations
-app.post('/api/locations/batch', locationLimiter);
 
 // Basic health check
 app.get('/health', (req, res) => res.json({ status: 'OK', timestamp: new Date() }));

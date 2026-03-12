@@ -18,6 +18,12 @@ sudo bash deploy.sh
 ssh ubuntu@192.168.1.9
 ubuntu23131510@
 
+
+ssh ubuntu@192.168.0.106
+ubuntu23131510@
+
+
+
 http://192.168.1.9:8000/
 
 
