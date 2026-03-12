@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { LogOut, Users, History, Activity, UserCog, Search, Filter, Wifi, WifiOff } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
+import HistoryView from './History';
 import api from '../services/api';
 import { socket, connectSocket, disconnectSocket } from '../services/socket';
 
@@ -13,7 +14,7 @@ const Dashboard = ({ user, onLogout }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
     const [searchQuery, setSearchQuery] = useState('');
-    const [selectedStatus, setSelectedStatus] = useState('all'); // 'all' | 'SIN_MOVIMIENTO' | 'CAMINANDO' | 'MOVIMIENTO_LENTO' | 'VEHICULO'
+    const [selectedStatus, setSelectedStatus] = useState('all'); // 'all' | 'Quieto' | 'A pie' | 'Lento' | 'En auto'
     const [isConnected, setIsConnected] = useState(true);
 
     useEffect(() => {
@@ -84,10 +85,10 @@ const Dashboard = ({ user, onLogout }) => {
 
     // Estadísticas por estado
     const statusStats = {
-        'SIN_MOVIMIENTO': Object.values(activeLocations).filter(l => l.state === 'SIN_MOVIMIENTO').length,
-        'CAMINANDO': Object.values(activeLocations).filter(l => l.state === 'CAMINANDO').length,
-        'MOVIMIENTO_LENTO': Object.values(activeLocations).filter(l => l.state === 'MOVIMIENTO_LENTO').length,
-        'VEHICULO': Object.values(activeLocations).filter(l => l.state === 'VEHICULO').length,
+        'Quieto': Object.values(activeLocations).filter(l => l.state === 'Quieto' || l.state === 'SIN_MOVIMIENTO').length,
+        'A pie': Object.values(activeLocations).filter(l => l.state === 'A pie' || l.state === 'CAMINANDO').length,
+        'Lento': Object.values(activeLocations).filter(l => l.state === 'Lento' || l.state === 'MOVIMIENTO_LENTO').length,
+        'En auto': Object.values(activeLocations).filter(l => l.state === 'En auto' || l.state === 'VEHICULO').length,
     };
 
     return (
@@ -201,10 +202,10 @@ const Dashboard = ({ user, onLogout }) => {
                                 }}
                             >
                                 <option value="all">Todos ({activeCount})</option>
-                                <option value="VEHICULO">🚗 Vehículo ({statusStats.VEHICULO})</option>
-                                <option value="CAMINANDO">🚶 Caminando ({statusStats.CAMINANDO})</option>
-                                <option value="MOVIMIENTO_LENTO">🐢 Lento ({statusStats.MOVIMIENTO_LENTO})</option>
-                                <option value="SIN_MOVIMIENTO">⏸️ Quieto ({statusStats.SIN_MOVIMIENTO})</option>
+                                <option value="En auto">🚗 En auto ({statusStats['En auto']})</option>
+                                <option value="A pie">🚶 A pie ({statusStats['A pie']})</option>
+                                <option value="Lento">🐢 Lento ({statusStats['Lento']})</option>
+                                <option value="Quieto">⏸️ Quieto ({statusStats['Quieto']})</option>
                             </select>
                         </div>
 
@@ -235,8 +236,8 @@ const Dashboard = ({ user, onLogout }) => {
                                             <span className={`dot ${activeLocations[loc.employeeId] ? 'dot-active' : ''}`} />
                                             <span style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: '600', flex: 1 }}>{loc.name || `Vendedor ${loc.employeeId}`}</span>
                                             <span style={{
-                                                background: loc.state === 'VEHICULO' ? '#6366f150' : loc.state === 'CAMINANDO' ? '#22c55e50' : '#f59e0b50',
-                                                color: loc.state === 'VEHICULO' ? '#6366f1' : loc.state === 'CAMINANDO' ? '#22c55e' : '#f59e0b',
+                                                background: (loc.state === 'En auto' || loc.state === 'VEHICULO') ? '#6366f150' : (loc.state === 'A pie' || loc.state === 'CAMINANDO') ? '#22c55e50' : '#f59e0b50',
+                                                color: (loc.state === 'En auto' || loc.state === 'VEHICULO') ? '#6366f1' : (loc.state === 'A pie' || loc.state === 'CAMINANDO') ? '#22c55e' : '#f59e0b',
                                                 padding: '2px 8px',
                                                 borderRadius: '4px',
                                                 fontSize: '10px',
@@ -274,6 +275,8 @@ const Dashboard = ({ user, onLogout }) => {
                 )}
                 {view === 'vendors' ? (
                     <Vendors />
+                ) : view === 'history' ? (
+                    <HistoryView user={user} />
                 ) : (
                     <MapView
                         view={view}

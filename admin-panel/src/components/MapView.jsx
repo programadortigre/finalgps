@@ -16,11 +16,10 @@ L.Icon.Default.mergeOptions({
 
 // Base Active Icon function to handle dynamic color
 const getActiveIcon = (state) => {
-    let color = '#2563eb'; // Default Blue
-    if (state === 'SIN_MOVIMIENTO') color = '#94a3b8'; // Slate/Gray
-    if (state === 'CAMINANDO') color = '#22c55e'; // Green
-    if (state === 'MOVIMIENTO_LENTO') color = '#f59e0b'; // Amber/Orange
-    if (state === 'VEHICULO') color = '#6366f1'; // Indigo
+    if (state === 'Quieto' || state === 'SIN_MOVIMIENTO') color = '#94a3b8'; // Slate/Gray
+    if (state === 'A pie' || state === 'CAMINANDO') color = '#22c55e'; // Green
+    if (state === 'Lento' || state === 'MOVIMIENTO_LENTO') color = '#f59e0b'; // Amber/Orange
+    if (state === 'En auto' || state === 'VEHICULO') color = '#6366f1'; // Indigo
 
     return L.divIcon({
         className: '',
@@ -137,6 +136,38 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
         }
     }, [view, activeLocations]);
 
+    // Cargar todo el historial del día seleccionado
+    const fetchAllTripsForDay = async () => {
+        setPlayback(false);
+        try {
+            const allTripsData = [];
+            const newAddresses = {};
+            
+            for (const trip of trips) {
+                const { data } = await api.get(`/api/trips/${trip.id}?simplify=true`);
+                allTripsData.push({ ...trip, ...data });
+                
+                if (data.points && data.points.length > 0) {
+                    const startPoint = data.points[0];
+                    newAddresses[`start-${trip.id}`] = await getAddress(startPoint.lat, startPoint.lng);
+                    const endPoint = data.points.at(-1);
+                    newAddresses[`end-${trip.id}`] = await getAddress(endPoint.lat, endPoint.lng);
+                    
+                    for (let i = 0; i < (data.stops || []).length; i++) {
+                        const stop = data.stops[i];
+                        newAddresses[`stop-${trip.id}-${i}`] = await getAddress(stop.lat, stop.lng);
+                    }
+                }
+            }
+            
+            setRouteData({ isMulti: true, trips: allTripsData });
+            setTrip({ id: 'all_day', distance_meters: trips.reduce((acc, t) => acc + (t.distance_meters || 0), 0) });
+            setAddresses(prev => ({ ...prev, ...newAddresses }));
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
     const fetchTripDetails = async (trip) => {
         setPlayback(false);
         try {
@@ -144,7 +175,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
             // Reduce de 238 KB → 28 KB (88% reducción)
             // Puntos: 1920 → 120 (94% reducción)
             const { data } = await api.get(`/api/trips/${trip.id}?simplify=true`);
-            setRouteData(data);
+            setRouteData({ isMulti: false, ...data });
             setTrip(trip);
 
             // Cargar direcciones para inicio, fin y paradas
@@ -184,6 +215,11 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                     {!routeData ? (
                         <div className="trip-list-overlay">
                             {trips.length === 0 && <div className="no-trips">Sin viajes registrados para este día.</div>}
+                            {trips.length > 1 && (
+                                <button className="map-action-btn" onClick={fetchAllTripsForDay} style={{ marginBottom: '10px' }}>
+                                    🗺️ Ver Día Completo ({trips.length} viajes)
+                                </button>
+                            )}
                             {trips.map(t => (
                                 <div key={t.id} className="trip-pill" onClick={() => fetchTripDetails(t)}>
                                     <span className="trip-time">⌚ Inicio: {dayjs(t.start_time).format('hh:mm A')}</span>
@@ -199,66 +235,104 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
 
                             <div className="trip-stats-row">
                                 <div className="stat-box">
-                                    <span>Recorrido</span>
+                                    <span>Recorrido Total</span>
                                     <strong>{(selectedTrip.distance_meters / 1000).toFixed(2)} km</strong>
                                 </div>
                                 <div className="stat-box">
-                                    <span>Paradas</span>
-                                    <strong>{routeData.stops.length}</strong>
+                                    <span>Paradas Totales</span>
+                                    <strong>{routeData.isMulti ? routeData.trips.reduce((acc, t) => acc + (t.stops?.length || 0), 0) : (routeData.stops?.length || 0)}</strong>
                                 </div>
                             </div>
 
-                            <button
-                                className={`map-action-btn ${playbackMode ? 'active' : ''}`}
-                                onClick={() => setPlayback(!playbackMode)}
-                                style={{ width: '100%', marginBottom: '20px', padding: '10px' }}
-                            >
-                                {playbackMode ? '⏹ Detener Animación' : '▶ Reproducir Ruta (Playback)'}
-                            </button>
+                            {!routeData.isMulti && (
+                                <button
+                                    className={`map-action-btn ${playbackMode ? 'active' : ''}`}
+                                    onClick={() => setPlayback(!playbackMode)}
+                                    style={{ width: '100%', marginBottom: '20px', padding: '10px' }}
+                                >
+                                    {playbackMode ? '⏹ Detener Animación' : '▶ Reproducir Ruta (Playback)'}
+                                </button>
+                            )}
 
-                            <h4 className="timeline-title">Línea de tiempo</h4>
+                            <h4 className="timeline-title">{routeData.isMulti ? 'Resumen del Día' : 'Línea de tiempo'}</h4>
                             <div className="timeline">
-                                {/* Start Point */}
-                                <div className="timeline-item">
-                                    <div className="tl-icon start-icon">🚀</div>
-                                    <div className="tl-content">
-                                        <strong>Inicio de jornada</strong>
-                                        <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`start-${selectedTrip?.id}`] || 'Cargando dirección...'}</span>
-                                        <span>{dayjs(selectedTrip.start_time).format('hh:mm A')}</span>
-                                    </div>
-                                </div>
-
-                                {/* Stops */}
-                                {routeData.stops.map((s, i) => (
-                                    <div key={i} className="timeline-item check">
-                                        <div className="tl-line"></div>
-                                        <div className="tl-icon stop-icon">🛑</div>
-                                        <div className="tl-content">
-                                            <strong>Parada {i + 1}</strong>
-                                            <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`stop-${selectedTrip?.id}-${i}`] || 'Cargando...'}</span>
-                                            <span style={{ color: '#f59e0b', fontWeight: 600 }}>
-                                                ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg
-                                            </span>
-                                            <span className="tl-time text-muted">{dayjs(s.start_time).format('hh:mm A')} – {dayjs(s.end_time).format('hh:mm A')}</span>
+                                {routeData.isMulti ? (
+                                    routeData.trips.map((tInfo, idx) => (
+                                        <div key={`multi-${idx}`} style={{ marginBottom: '16px' }}>
+                                            <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#6C63FF', marginBottom: '8px' }}>Viaje {idx + 1}</div>
+                                            
+                                            {/* Start Point */}
+                                            <div className="timeline-item">
+                                                <div className="tl-icon start-icon" style={{width: '24px', height: '24px', fontSize: '12px'}}>🚀</div>
+                                                <div className="tl-content">
+                                                    <strong>Inicio</strong>
+                                                    <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`start-${tInfo.id}`] || 'Cargando...'}</span>
+                                                    <span>{dayjs(tInfo.start_time).format('hh:mm A')}</span>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* End Point */}
+                                            {tInfo.points && tInfo.points.length > 0 && (
+                                                <div className="timeline-item pb-0">
+                                                    <div className="tl-icon end-icon" style={{width: '24px', height: '24px', fontSize: '12px'}}>🏁</div>
+                                                    <div className="tl-content">
+                                                        <strong>Fin</strong>
+                                                        <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`end-${tInfo.id}`] || 'Cargando...'}</span>
+                                                        <span>
+                                                            {tInfo.points.at(-1)?.timestamp
+                                                                ? dayjs(Number(tInfo.points.at(-1).timestamp)).format('hh:mm A')
+                                                                : dayjs(tInfo.end_time || new Date()).format('hh:mm A')}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
-                                    </div>
-                                ))}
-
-                                {/* End Point */}
-                                {routeData.points.length > 0 && (
-                                    <div className="timeline-item">
-                                        <div className="tl-line"></div>
-                                        <div className="tl-icon end-icon">🏁</div>
-                                        <div className="tl-content">
-                                            <strong>Fin de jornada</strong>
-                                            <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`end-${selectedTrip?.id}`] || 'Cargando dirección...'}</span>
-                                            <span>
-                                                {routeData.points.at(-1)?.timestamp
-                                                    ? dayjs(Number(routeData.points.at(-1).timestamp)).format('hh:mm A')
-                                                    : dayjs(selectedTrip.end_time || new Date()).format('hh:mm A')}
-                                            </span>
+                                    ))
+                                ) : (
+                                    <>
+                                        {/* Start Point */}
+                                        <div className="timeline-item">
+                                            <div className="tl-icon start-icon">🚀</div>
+                                            <div className="tl-content">
+                                                <strong>Inicio de jornada</strong>
+                                                <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`start-${selectedTrip?.id}`] || 'Cargando dirección...'}</span>
+                                                <span>{dayjs(selectedTrip.start_time).format('hh:mm A')}</span>
+                                            </div>
                                         </div>
-                                    </div>
+
+                                        {/* Stops */}
+                                        {(routeData.stops || []).map((s, i) => (
+                                            <div key={i} className="timeline-item check">
+                                                <div className="tl-line"></div>
+                                                <div className="tl-icon stop-icon">🛑</div>
+                                                <div className="tl-content">
+                                                    <strong>Parada {i + 1}</strong>
+                                                    <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`stop-${selectedTrip?.id}-${i}`] || 'Cargando...'}</span>
+                                                    <span style={{ color: '#f59e0b', fontWeight: 600 }}>
+                                                        ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg
+                                                    </span>
+                                                    <span className="tl-time text-muted">{dayjs(s.start_time).format('hh:mm A')} – {dayjs(s.end_time).format('hh:mm A')}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+
+                                        {/* End Point */}
+                                        {routeData.points && routeData.points.length > 0 && (
+                                            <div className="timeline-item">
+                                                <div className="tl-line"></div>
+                                                <div className="tl-icon end-icon">🏁</div>
+                                                <div className="tl-content">
+                                                    <strong>Fin de jornada</strong>
+                                                    <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`end-${selectedTrip?.id}`] || 'Cargando dirección...'}</span>
+                                                    <span>
+                                                        {routeData.points.at(-1)?.timestamp
+                                                            ? dayjs(Number(routeData.points.at(-1).timestamp)).format('hh:mm A')
+                                                            : dayjs(selectedTrip.end_time || new Date()).format('hh:mm A')}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </div>
                         </div>
@@ -271,9 +345,9 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 <div className="map-legend">
                     <div className="legend-items">
                         <div style={{ fontSize: '12px', fontWeight: 700, marginBottom: '8px', color: '#0f172a' }}>Estado en Vivo</div>
-                        <div className="legend-item"><div className="legend-dot" style={{ background: '#6366f1' }} /> Vehículo</div>
-                        <div className="legend-item"><div className="legend-dot" style={{ background: '#22c55e' }} /> Caminando</div>
-                        <div className="legend-item"><div className="legend-dot" style={{ background: '#f59e0b' }} /> Movimiento Lento</div>
+                        <div className="legend-item"><div className="legend-dot" style={{ background: '#6366f1' }} /> En auto</div>
+                        <div className="legend-item"><div className="legend-dot" style={{ background: '#22c55e' }} /> A pie</div>
+                        <div className="legend-item"><div className="legend-dot" style={{ background: '#f59e0b' }} /> Lento</div>
                         <div className="legend-item"><div className="legend-dot" style={{ background: '#94a3b8' }} /> Quieto</div>
                         <div className="legend-divider" />
                         <div className="legend-item" style={{ fontWeight: 700, color: '#2563eb' }}>🔴 Activos: {livePositions.length}</div>
@@ -302,14 +376,18 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 {/* ── LIVE MODE ── */}
                 {view === 'live' && livePositions.map(loc => {
                     const addr = addresses[`live-${loc.employeeId}`] || 'Obteniendo dirección...';
-                    const displayState = (loc.state || 'SIN_MOVIMIENTO').replaceAll('_', ' ');
+                    const displayState = (loc.state || 'Quieto').replaceAll('_', ' ');
                     const stateColors = {
+                        'Quieto': { bg: '#f1f5f9', color: '#475569' },
                         'SIN_MOVIMIENTO': { bg: '#f1f5f9', color: '#475569' },
+                        'A pie': { bg: '#dcfce7', color: '#166534' },
                         'CAMINANDO': { bg: '#dcfce7', color: '#166534' },
+                        'Lento': { bg: '#fef3c7', color: '#b45309' },
                         'MOVIMIENTO_LENTO': { bg: '#fef3c7', color: '#b45309' },
+                        'En auto': { bg: '#dbeafe', color: '#0c4a6e' },
                         'VEHICULO': { bg: '#dbeafe', color: '#0c4a6e' }
                     };
-                    const stateColor = stateColors[loc.state] || stateColors['SIN_MOVIMIENTO'];
+                    const stateColor = stateColors[loc.state] || stateColors['Quieto'];
 
                     return (
                         <Marker key={loc.employeeId} position={[loc.lat, loc.lng]} icon={getActiveIcon(loc.state)}>
@@ -365,79 +443,129 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 {/* ── HISTORY MODE ── */}
                 {view === 'history' && routeData && !playbackMode && (
                     <>
-                        <FitBounds positions={routeData.points} />
-                        {routeData.points.length > 1 && (
+                        {routeData.isMulti ? (
                             <>
-                                <Polyline positions={routeData.points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />
-                                <Polyline positions={routeData.points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />
+                                <FitBounds positions={routeData.trips.flatMap(t => t.points || [])} />
+                                {routeData.trips.map((tInfo, idx) => {
+                                    const pts = tInfo.points || [];
+                                    const stops = tInfo.stops || [];
+                                    if (pts.length < 2) return null;
+                                    return (
+                                        <React.Fragment key={`multi-trip-${idx}`}>
+                                            <Polyline positions={pts.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />
+                                            <Polyline positions={pts.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />
+                                            
+                                            {pts[0] && (
+                                                <Marker position={[pts[0].lat, pts[0].lng]}>
+                                                    <Popup>
+                                                        <div style={{ fontSize: '12px', minWidth: '220px' }}>
+                                                            <strong>🚀 Inicio Trayecto {idx + 1}</strong><br />
+                                                            🕐 {dayjs(tInfo.start_time).format('HH:mm:ss')}
+                                                        </div>
+                                                    </Popup>
+                                                </Marker>
+                                            )}
+                                            {pts.length > 1 && (
+                                                <Marker position={[pts.at(-1).lat, pts.at(-1).lng]}>
+                                                    <Popup>
+                                                        <div style={{ fontSize: '12px', minWidth: '220px' }}>
+                                                            <strong>🏁 Fin Trayecto {idx + 1}</strong><br />
+                                                            🛣️ {((tInfo.distance_meters || 0) / 1000).toFixed(2)} km
+                                                        </div>
+                                                    </Popup>
+                                                </Marker>
+                                            )}
+                                            {stops.map((s, i) => (
+                                                <Marker key={`multi-stop-${idx}-${i}`} position={[s.lat, s.lng]} icon={stopIcon}>
+                                                    <Popup>
+                                                        <div style={{ fontSize: '12px', minWidth: '220px' }}>
+                                                            <strong>🛑 Parada {i + 1} (Trayecto {idx+1})</strong><br />
+                                                            ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg
+                                                        </div>
+                                                    </Popup>
+                                                </Marker>
+                                            ))}
+                                        </React.Fragment>
+                                    );
+                                })}
+                            </>
+                        ) : (
+                            <>
+                                <FitBounds positions={routeData.points} />
+                                {(routeData.points || []).length > 1 && (
+                                    <>
+                                        <Polyline positions={routeData.points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />
+                                        <Polyline positions={routeData.points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />
+                                    </>
+                                )}
+                                {/* Start marker */}
+                                {(routeData.points || [])[0] && (
+                                    <Marker position={[routeData.points[0].lat, routeData.points[0].lng]}>
+                                        <Popup>
+                                            <div style={{ fontSize: '12px', minWidth: '220px' }}>
+                                                <strong>🚀 Inicio del viaje</strong><br />
+                                                📍 {addresses[`start-${selectedTrip.id}`] || 'Cargando...'}<br />
+                                                🕐 {dayjs(selectedTrip.start_time).format('HH:mm:ss')}<br />
+                                                <a
+                                                    href={`https://www.google.com/maps?q=${routeData.points[0].lat},${routeData.points[0].lng}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
+                                                >
+                                                    🗺️ Ver en Google Maps
+                                                </a>
+                                            </div>
+                                        </Popup>
+                                    </Marker>
+                                )}
+                                {/* End marker */}
+                                {(routeData.points || []).length > 1 && (
+                                    <Marker position={[routeData.points.at(-1).lat, routeData.points.at(-1).lng]}>
+                                        <Popup>
+                                            <div style={{ fontSize: '12px', minWidth: '220px' }}>
+                                                <strong>🏁 Fin del viaje</strong><br />
+                                                📍 {addresses[`end-${selectedTrip.id}`] || 'Cargando...'}<br />
+                                                🛣️ {(selectedTrip?.distance_meters / 1000 || 0).toFixed(2)} km<br />
+                                                <a
+                                                    href={`https://www.google.com/maps?q=${routeData.points.at(-1).lat},${routeData.points.at(-1).lng}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
+                                                >
+                                                    🗺️ Ver en Google Maps
+                                                </a>
+                                            </div>
+                                        </Popup>
+                                    </Marker>
+                                )}
+                                {/* Stops */}
+                                {(routeData.stops || []).map((s, i) => (
+                                    <Marker key={i} position={[s.lat, s.lng]} icon={stopIcon}>
+                                        <Popup>
+                                            <div style={{ fontSize: '12px', minWidth: '220px' }}>
+                                                <strong>🛑 Parada {i + 1}</strong><br />
+                                                📍 {addresses[`stop-${selectedTrip.id}-${i}`] || 'Cargando...'}<br />
+                                                ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg<br />
+                                                🕐 {dayjs(s.start_time).format('HH:mm')} – {dayjs(s.end_time).format('HH:mm')}<br />
+                                                <a
+                                                    href={`https://www.google.com/maps?q=${s.lat},${s.lng}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
+                                                >
+                                                    🗺️ Ver en Google Maps
+                                                </a>
+                                            </div>
+                                        </Popup>
+                                    </Marker>
+                                ))}
                             </>
                         )}
-                        {/* Start marker */}
-                        {routeData.points[0] && (
-                            <Marker position={[routeData.points[0].lat, routeData.points[0].lng]}>
-                                <Popup>
-                                    <div style={{ fontSize: '12px', minWidth: '220px' }}>
-                                        <strong>🚀 Inicio del viaje</strong><br />
-                                        📍 {addresses[`start-${selectedTrip.id}`] || 'Cargando...'}<br />
-                                        🕐 {dayjs(selectedTrip.start_time).format('HH:mm:ss')}<br />
-                                        <a
-                                            href={`https://www.google.com/maps?q=${routeData.points[0].lat},${routeData.points[0].lng}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
-                                        >
-                                            🗺️ Ver en Google Maps
-                                        </a>
-                                    </div>
-                                </Popup>
-                            </Marker>
-                        )}
-                        {/* End marker */}
-                        {routeData.points.length > 1 && (
-                            <Marker position={[routeData.points.at(-1).lat, routeData.points.at(-1).lng]}>
-                                <Popup>
-                                    <div style={{ fontSize: '12px', minWidth: '220px' }}>
-                                        <strong>🏁 Fin del viaje</strong><br />
-                                        📍 {addresses[`end-${selectedTrip.id}`] || 'Cargando...'}<br />
-                                        🛣️ {(selectedTrip?.distance_meters / 1000 || 0).toFixed(2)} km<br />
-                                        <a
-                                            href={`https://www.google.com/maps?q=${routeData.points.at(-1).lat},${routeData.points.at(-1).lng}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
-                                        >
-                                            🗺️ Ver en Google Maps
-                                        </a>
-                                    </div>
-                                </Popup>
-                            </Marker>
-                        )}
-                        {/* Stops */}
-                        {routeData.stops.map((s, i) => (
-                            <Marker key={i} position={[s.lat, s.lng]} icon={stopIcon}>
-                                <Popup>
-                                    <div style={{ fontSize: '12px', minWidth: '220px' }}>
-                                        <strong>🛑 Parada {i + 1}</strong><br />
-                                        📍 {addresses[`stop-${selectedTrip.id}-${i}`] || 'Cargando...'}<br />
-                                        ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg<br />
-                                        🕐 {dayjs(s.start_time).format('HH:mm')} – {dayjs(s.end_time).format('HH:mm')}<br />
-                                        <a
-                                            href={`https://www.google.com/maps?q=${s.lat},${s.lng}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
-                                        >
-                                            🗺️ Ver en Google Maps
-                                        </a>
-                                    </div>
-                                </Popup>
-                            </Marker>
-                        ))}
                     </>
                 )}
 
                 {/* ── PLAYBACK MODE ── */}
-                {view === 'history' && routeData && playbackMode && (
+                {view === 'history' && routeData && (routeData.points || []).length > 0 && playbackMode && (
                     <Playback points={routeData.points} />
                 )}
 
