@@ -16,10 +16,11 @@ L.Icon.Default.mergeOptions({
 
 // Base Active Icon function to handle dynamic color
 const getActiveIcon = (state) => {
-    if (state === 'Quieto' || state === 'SIN_MOVIMIENTO') color = '#94a3b8'; // Slate/Gray
-    if (state === 'A pie' || state === 'CAMINANDO') color = '#22c55e'; // Green
-    if (state === 'Lento' || state === 'MOVIMIENTO_LENTO') color = '#f59e0b'; // Amber/Orange
-    if (state === 'En auto' || state === 'VEHICULO') color = '#6366f1'; // Indigo
+    let color = '#94a3b8'; // Default color (Slate/Gray)
+    if (state === 'Quieto' || state === 'SIN_MOVIMIENTO') color = '#94a3b8';
+    if (state === 'A pie' || state === 'CAMINANDO') color = '#22c55e';
+    if (state === 'Lento' || state === 'MOVIMIENTO_LENTO') color = '#f59e0b';
+    if (state === 'En auto' || state === 'VEHICULO') color = '#6366f1';
 
     return L.divIcon({
         className: '',
