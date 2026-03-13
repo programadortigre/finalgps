@@ -199,8 +199,15 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
 
     const livePositions = Array.isArray(activeLocations) ? activeLocations : Object.values(activeLocations || {});
 
+    // Determinar si hay puntos y stops
+    const points = routeData && Array.isArray(routeData.points) ? routeData.points : [];
+    const stops = routeData && Array.isArray(routeData.stops) ? routeData.stops : [];
+
+    // Si no hay puntos, mostrar mensaje amigable
+    const noPoints = view === 'history' && routeData && points.length === 0;
+
     return (
-        <div style={{ height: '100%', width: '100%', position: 'relative' }}>
+        <div style={{ minHeight: '350px', height: '50vh', width: '100%', position: 'relative' }}>
             {/* ── HISTORY CONTROLS (Side Panel) ── */}
             {view === 'history' && selectedEmployee && (
                 <div className="history-sidepanel">
@@ -356,7 +363,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 </div>
             )}
 
-            <MapContainer center={[-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={19} zoomControl={false} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
+            <MapContainer center={points[0] ? [points[0].lat, points[0].lng] : [-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={19} zoomControl={false} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
                 {/* Carto Dark - Oscuro y detallado (zoom 10-18) */}
                 <TileLayer
                     url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
@@ -444,17 +451,24 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                 {/* ── HISTORY MODE ── */}
                 {view === 'history' && routeData && !playbackMode && (
                     <>
+                        {/* Caso: Sin puntos */}
+                        {noPoints && (
+                            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: '#fff', padding: '24px', borderRadius: '12px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 1000 }}>
+                                <strong>Sin datos de recorrido para este viaje</strong>
+                            </div>
+                        )}
+                        {/* Caso: Múltiples viajes (día completo) */}
                         {routeData.isMulti ? (
                             <>
                                 <FitBounds positions={Array.isArray(routeData.trips) ? routeData.trips.flatMap(t => t.points || []) : []} />
                                 {(Array.isArray(routeData.trips) ? routeData.trips : []).map((tInfo, idx) => {
                                     const pts = Array.isArray(tInfo.points) ? tInfo.points : [];
-                                    const stops = Array.isArray(tInfo.stops) ? tInfo.stops : [];
-                                    if (pts.length < 2) return null;
+                                    const stopsArr = Array.isArray(tInfo.stops) ? tInfo.stops : [];
+                                    // Mostrar marcador de inicio aunque solo haya 1 punto
                                     return (
                                         <React.Fragment key={`multi-trip-${idx}`}>
-                                            <Polyline positions={pts.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />
-                                            <Polyline positions={pts.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />
+                                            {pts.length > 1 && <Polyline positions={pts.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />}
+                                            {pts.length > 1 && <Polyline positions={pts.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />}
                                             {pts[0] && (
                                                 <Marker position={[pts[0].lat, pts[0].lng]}>
                                                     <Popup>
@@ -465,6 +479,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                                     </Popup>
                                                 </Marker>
                                             )}
+                                            {/* Fin solo si hay más de 1 punto */}
                                             {pts.length > 1 && (
                                                 <Marker position={[pts.at(-1).lat, pts.at(-1).lng]}>
                                                     <Popup>
@@ -475,7 +490,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                                     </Popup>
                                                 </Marker>
                                             )}
-                                            {stops.map((s, i) => (
+                                            {stopsArr.map((s, i) => (
                                                 <Marker key={`multi-stop-${idx}-${i}`} position={[s.lat, s.lng]} icon={stopIcon}>
                                                     <Popup>
                                                         <div style={{ fontSize: '12px', minWidth: '220px' }}>
@@ -491,23 +506,24 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                             </>
                         ) : (
                             <>
-                                <FitBounds positions={Array.isArray(routeData.points) ? routeData.points : []} />
-                                {(Array.isArray(routeData.points) && routeData.points.length > 1) && (
+                                <FitBounds positions={points} />
+                                {/* Dibujar línea solo si hay más de 1 punto */}
+                                {points.length > 1 && (
                                     <>
-                                        <Polyline positions={routeData.points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />
-                                        <Polyline positions={routeData.points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />
+                                        <Polyline positions={points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />
+                                        <Polyline positions={points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />
                                     </>
                                 )}
-                                {/* Start marker */}
-                                {(Array.isArray(routeData.points) && routeData.points[0]) && (
-                                    <Marker position={[routeData.points[0].lat, routeData.points[0].lng]}>
+                                {/* Siempre mostrar marcador de inicio */}
+                                {points[0] && (
+                                    <Marker position={[points[0].lat, points[0].lng]}>
                                         <Popup>
                                             <div style={{ fontSize: '12px', minWidth: '220px' }}>
                                                 <strong>🚀 Inicio del viaje</strong><br />
                                                 📍 {addresses[`start-${selectedTrip.id}`] || 'Cargando...'}<br />
                                                 🕐 {dayjs(selectedTrip.start_time).format('HH:mm:ss')}<br />
                                                 <a
-                                                    href={`https://www.google.com/maps?q=${routeData.points[0].lat},${routeData.points[0].lng}`}
+                                                    href={`https://www.google.com/maps?q=${points[0].lat},${points[0].lng}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
@@ -518,16 +534,16 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                         </Popup>
                                     </Marker>
                                 )}
-                                {/* End marker */}
-                                {(Array.isArray(routeData.points) && routeData.points.length > 1) && (
-                                    <Marker position={[routeData.points.at(-1).lat, routeData.points.at(-1).lng]}>
+                                {/* Fin solo si hay más de 1 punto */}
+                                {points.length > 1 && (
+                                    <Marker position={[points.at(-1).lat, points.at(-1).lng]}>
                                         <Popup>
                                             <div style={{ fontSize: '12px', minWidth: '220px' }}>
                                                 <strong>🏁 Fin del viaje</strong><br />
                                                 📍 {addresses[`end-${selectedTrip.id}`] || 'Cargando...'}<br />
                                                 🛣️ {(selectedTrip?.distance_meters / 1000 || 0).toFixed(2)} km<br />
                                                 <a
-                                                    href={`https://www.google.com/maps?q=${routeData.points.at(-1).lat},${routeData.points.at(-1).lng}`}
+                                                    href={`https://www.google.com/maps?q=${points.at(-1).lat},${points.at(-1).lng}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
@@ -538,8 +554,8 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                         </Popup>
                                     </Marker>
                                 )}
-                                {/* Stops */}
-                                {(Array.isArray(routeData.stops) ? routeData.stops : []).map((s, i) => (
+                                {/* Paradas */}
+                                {stops.map((s, i) => (
                                     <Marker key={i} position={[s.lat, s.lng]} icon={stopIcon}>
                                         <Popup>
                                             <div style={{ fontSize: '12px', minWidth: '220px' }}>
