@@ -131,6 +131,14 @@ void onStart(ServiceInstance service) async {
 
       final state = calculateState(speedKmh);
 
+      // Obtener employeeId de la sesión
+      final userIdStr = await api.getUserId();
+      final employeeId = int.tryParse(userIdStr ?? '');
+      // Filtrar puntos inválidos
+      if (filtered['lat'] == 0.0 || filtered['lng'] == 0.0 || employeeId == null) {
+        print('[GPS] ❌ Punto inválido (lat/lng=0 o employeeId nulo). Descartando.');
+        return;
+      }
       final point = LocalPoint(
         lat: filtered['lat']!,  // ✅ Usar coordenada filtrada
         lng: filtered['lng']!,  // ✅ Usar coordenada filtrada
@@ -138,6 +146,7 @@ void onStart(ServiceInstance service) async {
         accuracy: pos.accuracy,
         state: state,
         timestamp: DateTime.now().millisecondsSinceEpoch,
+        employeeId: employeeId,
       );
 
       // 💾 Guardar en BD local

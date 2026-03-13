@@ -8,6 +8,7 @@ class LocalPoint {
   final int timestamp;
   final String state;
   final bool synced;
+  final int? employeeId;
 
   LocalPoint({
     this.id,
@@ -18,6 +19,7 @@ class LocalPoint {
     required this.timestamp,
     this.state = 'SIN_MOVIMIENTO',
     this.synced = false,
+    this.employeeId,
   });
 
   /// Convertir a Map para guardar en SQLite
@@ -31,6 +33,7 @@ class LocalPoint {
       'timestamp': timestamp,
       'state': state,
       'synced': synced ? 1 : 0,
+      'employeeId': employeeId,
     };
   }
 
@@ -45,6 +48,7 @@ class LocalPoint {
       timestamp: map['timestamp'] as int,
       state: map['state'] as String? ?? 'SIN_MOVIMIENTO',
       synced: (map['synced'] as int) == 1,
+      employeeId: map['employeeId'] as int?,
     );
   }
 
@@ -57,6 +61,7 @@ class LocalPoint {
       'accuracy': accuracy,
       'timestamp': timestamp,
       'state': state,
+      'employeeId': employeeId,
     };
   }
 

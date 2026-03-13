@@ -89,12 +89,20 @@ class ApiService {
 
   Future<bool> uploadBatch(List<Map<String, dynamic>> points) async {
     final token = await _storage.read(key: 'token');
-    if (token == null) return false;
+    final userIdStr = await _storage.read(key: 'user_id');
+    final employeeId = int.tryParse(userIdStr ?? '');
+    if (token == null || employeeId == null) return false;
     try {
       final dio = await _getDio();
+      // Asegura que cada punto tenga employeeId
+      final enrichedPoints = points.map((p) {
+        final copy = Map<String, dynamic>.from(p);
+        copy['employeeId'] = employeeId;
+        return copy;
+      }).toList();
       final res = await dio.post(
         '/api/locations/batch',
-        data: {'points': points},
+        data: {'points': enrichedPoints},
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
       return res.statusCode == 202;
