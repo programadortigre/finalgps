@@ -12,7 +12,7 @@ const History = ({ user }) => {
         return d.toISOString().split('T')[0];
     });
     const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
-    
+
     const [trips, setTrips] = useState([]);
     const [stops, setStops] = useState([]);
     const [activeTab, setActiveTab] = useState('trips'); // 'trips' | 'stops'
@@ -105,7 +105,7 @@ const History = ({ user }) => {
     // Vista de detalles del viaje
     if (selectedTrip && tripDetails) {
         const selectedEmployeeName = employees.find(e => e.id === selectedEmployee)?.name || 'Vendedor';
-        
+
         return (
             <div className="history-page">
                 <button className="btn-back" onClick={() => setSelectedTrip(null)}>
@@ -145,7 +145,7 @@ const History = ({ user }) => {
                     </div>
                 ) : (
                     <div className="trip-map-container">
-                        <MapView 
+                        <MapView
                             points={tripDetails.points}
                             stops={tripDetails.stops}
                             selectedTrip={tripDetails.trip}
@@ -186,52 +186,46 @@ const History = ({ user }) => {
         );
     }
 
-    // Vista principal de historial
+    // Vista principal de historial con mapa grande y filtros
     return (
-        <div className="history-page">
-            <header className="page-header">
-                <div>
-                    <h2><CalendarDays size={22} /> Historial de Actividades</h2>
-                    <p>Consulta paradas y recorridos de tus vendedores</p>
+        <div className="history-page" style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#f8fafc' }}>
+            <header className="page-header" style={{ marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <h2 style={{ fontSize: '22px', color: '#1e293b' }}><CalendarDays size={22} /> Historial de Actividades</h2>
+                    <div style={{ flex: 1 }}></div>
+                    {/* Filtros compactos */}
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                        <label>Vendedor</label>
+                        <select
+                            value={selectedEmployee || ''}
+                            onChange={(e) => setSelectedEmployee(parseInt(e.target.value))}
+                            className="filter-select"
+                            style={{ padding: '8px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                        >
+                            <option value="">Seleccionar vendedor...</option>
+                            {employees.map(emp => (
+                                <option key={emp.id} value={emp.id}>{emp.name}</option>
+                            ))}
+                        </select>
+                        <label>Desde</label>
+                        <input
+                            type="date"
+                            value={startDate}
+                            onChange={(e) => setStartDate(e.target.value)}
+                            className="filter-input"
+                            style={{ padding: '8px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                        />
+                        <label>Hasta</label>
+                        <input
+                            type="date"
+                            value={endDate}
+                            onChange={(e) => setEndDate(e.target.value)}
+                            className="filter-input"
+                            style={{ padding: '8px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                        />
+                    </div>
                 </div>
             </header>
-
-            {/* Filtros */}
-            <div className="filters-section">
-                <div className="filter-group">
-                    <label>Vendedor</label>
-                    <select 
-                        value={selectedEmployee || ''} 
-                        onChange={(e) => setSelectedEmployee(parseInt(e.target.value))}
-                        className="filter-select"
-                    >
-                        <option value="">Seleccionar vendedor...</option>
-                        {employees.map(emp => (
-                            <option key={emp.id} value={emp.id}>{emp.name}</option>
-                        ))}
-                    </select>
-                </div>
-
-                <div className="filter-group">
-                    <label>Desde</label>
-                    <input 
-                        type="date" 
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        className="filter-input"
-                    />
-                </div>
-
-                <div className="filter-group">
-                    <label>Hasta</label>
-                    <input 
-                        type="date" 
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        className="filter-input"
-                    />
-                </div>
-            </div>
 
             {error && (
                 <div className="error-box">
@@ -239,119 +233,130 @@ const History = ({ user }) => {
                 </div>
             )}
 
-            {/* Tabs */}
-            <div className="tabs-container">
-                <button 
-                    className={`tab ${activeTab === 'trips' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('trips')}
-                >
-                    <Clock size={18} /> Recorridos ({trips.length})
-                </button>
-                <button 
-                    className={`tab ${activeTab === 'stops' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('stops')}
-                >
-                    <MapPin size={18} /> Paradas ({stops.length})
-                </button>
+            {/* Mapa grande siempre visible */}
+            <div style={{ flex: '1 1 0', minHeight: '350px', height: '60vh', marginBottom: '24px', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
+                <MapView
+                    view="history"
+                    selectedEmployee={employees.find(e => e.id === selectedEmployee) || null}
+                    trips={trips}
+                    stops={stops}
+                />
             </div>
 
-            {/* Contenido */}
-            {loading ? (
-                <div className="loading-state">
-                    <Loader className="spin" size={32} /> Cargando historial...
+            {/* Tabla de viajes/paradas debajo del mapa */}
+            <div style={{ marginTop: '8px' }}>
+                <div className="tabs-container" style={{ marginBottom: '12px' }}>
+                    <button
+                        className={`tab ${activeTab === 'trips' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('trips')}
+                    >
+                        <Clock size={18} /> Recorridos ({trips.length})
+                    </button>
+                    <button
+                        className={`tab ${activeTab === 'stops' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('stops')}
+                    >
+                        <MapPin size={18} /> Paradas ({stops.length})
+                    </button>
                 </div>
-            ) : activeTab === 'trips' ? (
-                <div className="trips-grid">
-                    {trips.length === 0 ? (
-                        <div className="empty-state">
-                            <Clock size={48} /> No hay recorridos en este período
-                        </div>
-                    ) : (
-                        trips.map(trip => (
-                            <button
-                                key={trip.id}
-                                className="trip-card"
-                                onClick={() => handleTripClick(trip)}
-                            >
-                                <div className="trip-card-header">
-                                    <div className="trip-date">
-                                        {formatDate(trip.start_time)}
+
+                {loading ? (
+                    <div className="loading-state">
+                        <Loader className="spin" size={32} /> Cargando historial...
+                    </div>
+                ) : activeTab === 'trips' ? (
+                    <div className="trips-grid">
+                        {trips.length === 0 ? (
+                            <div className="empty-state">
+                                <Clock size={48} /> No hay recorridos en este período
+                            </div>
+                        ) : (
+                            trips.map(trip => (
+                                <button
+                                    key={trip.id}
+                                    className="trip-card"
+                                    onClick={() => handleTripClick(trip)}
+                                >
+                                    <div className="trip-card-header">
+                                        <div className="trip-date">
+                                            {formatDate(trip.start_time)}
+                                        </div>
+                                        <div className="trip-time">
+                                            {formatTime(trip.start_time)} - {formatTime(trip.end_time)}
+                                        </div>
                                     </div>
-                                    <div className="trip-time">
-                                        {formatTime(trip.start_time)} - {formatTime(trip.end_time)}
+                                    <div className="trip-card-body">
+                                        <div className="stat">
+                                            <span className="label">Distancia</span>
+                                            <span className="value">{(trip.distance_meters / 1000).toFixed(2)} km</span>
+                                        </div>
+                                        <div className="stat">
+                                            <span className="label">Duración</span>
+                                            <span className="value">{trip.duration_hours} h</span>
+                                        </div>
+                                        <div className="stat">
+                                            <span className="label">Paradas</span>
+                                            <span className="value">{trip.stop_count}</span>
+                                        </div>
                                     </div>
-                                </div>
-                                <div className="trip-card-body">
-                                    <div className="stat">
-                                        <span className="label">Distancia</span>
-                                        <span className="value">{(trip.distance_meters / 1000).toFixed(2)} km</span>
+                                    <div className="trip-card-footer">
+                                        <span className="view-btn">Ver detalles <ChevronRight size={16} /></span>
                                     </div>
-                                    <div className="stat">
-                                        <span className="label">Duración</span>
-                                        <span className="value">{trip.duration_hours} h</span>
-                                    </div>
-                                    <div className="stat">
-                                        <span className="label">Paradas</span>
-                                        <span className="value">{trip.stop_count}</span>
-                                    </div>
-                                </div>
-                                <div className="trip-card-footer">
-                                    <span className="view-btn">Ver detalles <ChevronRight size={16} /></span>
-                                </div>
-                            </button>
-                        ))
-                    )}
-                </div>
-            ) : (
-                <div className="stops-container">
-                    {stops.length === 0 ? (
-                        <div className="empty-state">
-                            <MapPin size={48} /> No hay paradas en este período
-                        </div>
-                    ) : (
-                        <div className="stops-table-wrapper">
-                            <table className="stops-table">
-                                <thead>
-                                    <tr>
-                                        <th>Fecha</th>
-                                        <th>Hora de inicio</th>
-                                        <th>Hora de fin</th>
-                                        <th>Duración</th>
-                                        <th>Ubicación</th>
-                                        <th>Viaje</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {stops.map((stop, idx) => (
-                                        <tr key={idx}>
-                                            <td>{formatDate(stop.start_time)}</td>
-                                            <td>{formatTime(stop.start_time)}</td>
-                                            <td>{formatTime(stop.end_time)}</td>
-                                            <td>{formatDuration(stop.duration_seconds)}</td>
-                                            <td>
-                                                <span className="coord-badge">
-                                                    {stop.latitude.toFixed(4)}, {stop.longitude.toFixed(4)}
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <button 
-                                                    className="btn-view-trip"
-                                                    onClick={() => {
-                                                        const trip = trips.find(t => t.id === stop.trip_id);
-                                                        if (trip) handleTripClick(trip);
-                                                    }}
-                                                >
-                                                    Ver
-                                                </button>
-                                            </td>
+                                </button>
+                            ))
+                        )}
+                    </div>
+                ) : (
+                    <div className="stops-container">
+                        {stops.length === 0 ? (
+                            <div className="empty-state">
+                                <MapPin size={48} /> No hay paradas en este período
+                            </div>
+                        ) : (
+                            <div className="stops-table-wrapper">
+                                <table className="stops-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Fecha</th>
+                                            <th>Hora de inicio</th>
+                                            <th>Hora de fin</th>
+                                            <th>Duración</th>
+                                            <th>Ubicación</th>
+                                            <th>Viaje</th>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
-                </div>
-            )}
+                                    </thead>
+                                    <tbody>
+                                        {stops.map((stop, idx) => (
+                                            <tr key={idx}>
+                                                <td>{formatDate(stop.start_time)}</td>
+                                                <td>{formatTime(stop.start_time)}</td>
+                                                <td>{formatTime(stop.end_time)}</td>
+                                                <td>{formatDuration(stop.duration_seconds)}</td>
+                                                <td>
+                                                    <span className="coord-badge">
+                                                        {stop.latitude.toFixed(4)}, {stop.longitude.toFixed(4)}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <button
+                                                        className="btn-view-trip"
+                                                        onClick={() => {
+                                                            const trip = trips.find(t => t.id === stop.trip_id);
+                                                            if (trip) handleTripClick(trip);
+                                                        }}
+                                                    >
+                                                        Ver
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
 
             <style>{`
                 .history-page {
