@@ -143,24 +143,24 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
         try {
             const allTripsData = [];
             const newAddresses = {};
-            
+
             for (const trip of trips) {
                 const { data } = await api.get(`/api/trips/${trip.id}?simplify=true`);
                 allTripsData.push({ ...trip, ...data });
-                
+
                 if (data.points && data.points.length > 0) {
                     const startPoint = data.points[0];
                     newAddresses[`start-${trip.id}`] = await getAddress(startPoint.lat, startPoint.lng);
                     const endPoint = data.points.at(-1);
                     newAddresses[`end-${trip.id}`] = await getAddress(endPoint.lat, endPoint.lng);
-                    
+
                     for (let i = 0; i < (data.stops || []).length; i++) {
                         const stop = data.stops[i];
                         newAddresses[`stop-${trip.id}-${i}`] = await getAddress(stop.lat, stop.lng);
                     }
                 }
             }
-            
+
             setRouteData({ isMulti: true, trips: allTripsData });
             setTrip({ id: 'all_day', distance_meters: trips.reduce((acc, t) => acc + (t.distance_meters || 0), 0) });
             setAddresses(prev => ({ ...prev, ...newAddresses }));
@@ -197,7 +197,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
         } catch (e) { console.error(e); }
     };
 
-    const livePositions = Object.values(activeLocations);
+    const livePositions = Array.isArray(activeLocations) ? activeLocations : Object.values(activeLocations || {});
 
     return (
         <div style={{ height: '100%', width: '100%', position: 'relative' }}>
@@ -261,21 +261,21 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                     routeData.trips.map((tInfo, idx) => (
                                         <div key={`multi-${idx}`} style={{ marginBottom: '16px' }}>
                                             <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#6C63FF', marginBottom: '8px' }}>Viaje {idx + 1}</div>
-                                            
+
                                             {/* Start Point */}
                                             <div className="timeline-item">
-                                                <div className="tl-icon start-icon" style={{width: '24px', height: '24px', fontSize: '12px'}}>🚀</div>
+                                                <div className="tl-icon start-icon" style={{ width: '24px', height: '24px', fontSize: '12px' }}>🚀</div>
                                                 <div className="tl-content">
                                                     <strong>Inicio</strong>
                                                     <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`start-${tInfo.id}`] || 'Cargando...'}</span>
                                                     <span>{dayjs(tInfo.start_time).format('hh:mm A')}</span>
                                                 </div>
                                             </div>
-                                            
+
                                             {/* End Point */}
                                             {tInfo.points && tInfo.points.length > 0 && (
                                                 <div className="timeline-item pb-0">
-                                                    <div className="tl-icon end-icon" style={{width: '24px', height: '24px', fontSize: '12px'}}>🏁</div>
+                                                    <div className="tl-icon end-icon" style={{ width: '24px', height: '24px', fontSize: '12px' }}>🏁</div>
                                                     <div className="tl-content">
                                                         <strong>Fin</strong>
                                                         <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`end-${tInfo.id}`] || 'Cargando...'}</span>
@@ -446,16 +446,15 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                     <>
                         {routeData.isMulti ? (
                             <>
-                                <FitBounds positions={routeData.trips.flatMap(t => t.points || [])} />
-                                {routeData.trips.map((tInfo, idx) => {
-                                    const pts = tInfo.points || [];
-                                    const stops = tInfo.stops || [];
+                                <FitBounds positions={Array.isArray(routeData.trips) ? routeData.trips.flatMap(t => t.points || []) : []} />
+                                {(Array.isArray(routeData.trips) ? routeData.trips : []).map((tInfo, idx) => {
+                                    const pts = Array.isArray(tInfo.points) ? tInfo.points : [];
+                                    const stops = Array.isArray(tInfo.stops) ? tInfo.stops : [];
                                     if (pts.length < 2) return null;
                                     return (
                                         <React.Fragment key={`multi-trip-${idx}`}>
                                             <Polyline positions={pts.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />
                                             <Polyline positions={pts.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />
-                                            
                                             {pts[0] && (
                                                 <Marker position={[pts[0].lat, pts[0].lng]}>
                                                     <Popup>
@@ -480,7 +479,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                                 <Marker key={`multi-stop-${idx}-${i}`} position={[s.lat, s.lng]} icon={stopIcon}>
                                                     <Popup>
                                                         <div style={{ fontSize: '12px', minWidth: '220px' }}>
-                                                            <strong>🛑 Parada {i + 1} (Trayecto {idx+1})</strong><br />
+                                                            <strong>🛑 Parada {i + 1} (Trayecto {idx + 1})</strong><br />
                                                             ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg
                                                         </div>
                                                     </Popup>
@@ -492,15 +491,15 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                             </>
                         ) : (
                             <>
-                                <FitBounds positions={routeData.points} />
-                                {(routeData.points || []).length > 1 && (
+                                <FitBounds positions={Array.isArray(routeData.points) ? routeData.points : []} />
+                                {(Array.isArray(routeData.points) && routeData.points.length > 1) && (
                                     <>
                                         <Polyline positions={routeData.points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />
                                         <Polyline positions={routeData.points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />
                                     </>
                                 )}
                                 {/* Start marker */}
-                                {(routeData.points || [])[0] && (
+                                {(Array.isArray(routeData.points) && routeData.points[0]) && (
                                     <Marker position={[routeData.points[0].lat, routeData.points[0].lng]}>
                                         <Popup>
                                             <div style={{ fontSize: '12px', minWidth: '220px' }}>
@@ -520,7 +519,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                     </Marker>
                                 )}
                                 {/* End marker */}
-                                {(routeData.points || []).length > 1 && (
+                                {(Array.isArray(routeData.points) && routeData.points.length > 1) && (
                                     <Marker position={[routeData.points.at(-1).lat, routeData.points.at(-1).lng]}>
                                         <Popup>
                                             <div style={{ fontSize: '12px', minWidth: '220px' }}>
@@ -540,7 +539,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                                     </Marker>
                                 )}
                                 {/* Stops */}
-                                {(routeData.stops || []).map((s, i) => (
+                                {(Array.isArray(routeData.stops) ? routeData.stops : []).map((s, i) => (
                                     <Marker key={i} position={[s.lat, s.lng]} icon={stopIcon}>
                                         <Popup>
                                             <div style={{ fontSize: '12px', minWidth: '220px' }}>
