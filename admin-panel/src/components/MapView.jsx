@@ -207,7 +207,7 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
     const noPoints = view === 'history' && routeData && points.length === 0;
 
     return (
-        <div style={{ minHeight: '350px', height: '50vh', width: '100%', position: 'relative' }}>
+        <div style={{ height: '100%', width: '100%', position: 'relative' }}>
             {/* ── HISTORY CONTROLS (Side Panel) ── */}
             {view === 'history' && selectedEmployee && (
                 <div className="history-sidepanel">
