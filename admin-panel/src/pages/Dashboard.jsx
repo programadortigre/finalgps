@@ -162,6 +162,7 @@ const Dashboard = ({ user, onLogout }) => {
                     view={view}
                     selectedEmployee={selectedEmployee}
                     activeLocations={Object.fromEntries(filteredLiveLocations.map(loc => [loc.employeeId, loc]))}
+                    allLocations={activeLocations}
                 />
             </div>
 
@@ -241,7 +242,10 @@ const Dashboard = ({ user, onLogout }) => {
                                     key={loc.employeeId}
                                     className="db-emp-card"
                                     style={{ borderLeftColor: colors.border }}
-                                    onClick={() => setSelectedEmployee({ id: loc.employeeId, name: loc.name })}
+                                    onClick={() => {
+                                        setSelectedEmployee({ id: loc.employeeId, name: loc.name });
+                                        setPanelOpen(false);
+                                    }}
                                 >
                                     <div className="db-emp-row">
                                         <span className="dot dot-active" />

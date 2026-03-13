@@ -52,6 +52,17 @@ const FitBounds = ({ positions }) => {
     return null;
 };
 
+// Vuela suavemente a la ubicación de un empleado seleccionado
+const FlyToEmployee = ({ lat, lng }) => {
+    const map = useMap();
+    useEffect(() => {
+        if (lat != null && lng != null) {
+            map.flyTo([lat, lng], 18, { animate: true, duration: 1.2 });
+        }
+    }, [lat, lng]);
+    return null;
+};
+
 // Componente de controles de zoom personalizado
 const ZoomControls = () => {
     const map = useMap();
@@ -103,7 +114,7 @@ const getAddress = async (lat, lng) => {
     }
 };
 
-const MapView = ({ view, selectedEmployee, activeLocations }) => {
+const MapView = ({ view, selectedEmployee, activeLocations, allLocations }) => {
     const [trips, setTrips] = useState([]);
     const [selectedTrip, setTrip] = useState(null);
     const [routeData, setRouteData] = useState(null);
@@ -205,6 +216,13 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
 
     // Si no hay puntos, mostrar mensaje amigable
     const noPoints = view === 'history' && routeData && points.length === 0;
+
+    // Posición del empleado seleccionado para centrar el mapa
+    // Busca primero en allLocations (sin filtrar) para no perder la referencia
+    const _allLocs = allLocations || activeLocations || {};
+    const flyTarget = selectedEmployee
+        ? (_allLocs[selectedEmployee.id] || Object.values(_allLocs).find(l => l.employeeId === selectedEmployee.id))
+        : null;
 
     return (
         <div style={{ height: '100%', width: '100%', position: 'relative' }}>
@@ -380,6 +398,11 @@ const MapView = ({ view, selectedEmployee, activeLocations }) => {
                     minZoom={19}
                     maxZoom={19}
                 />
+
+                {/* ── FLY TO SELECTED EMPLOYEE ── */}
+                {view === 'live' && flyTarget?.lat && (
+                    <FlyToEmployee lat={flyTarget.lat} lng={flyTarget.lng} />
+                )}
 
                 {/* ── LIVE MODE ── */}
                 {view === 'live' && livePositions.map(loc => {

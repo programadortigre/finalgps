@@ -9,6 +9,24 @@ const pool = new Pool({
 });
 
 /// ============================================================================
+/// FUNCIÓN: Calcular distancia Haversine en metros
+/// ============================================================================
+function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // Radio de la tierra en metros
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+        Math.cos(φ1) * Math.cos(φ2) *
+        Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;
+}
+
+/// ============================================================================
 /// FUNCIÓN: Compilar y simplificar ruta cuando viaje termina
 /// ============================================================================
 /// Usa ST_SimplifyPreserveTopology para reducir puntos manteniendo la topología
@@ -128,9 +146,26 @@ async function processBatch(employeeId, points) {
             tripId = res.rows[0].id;
         }
 
-        // ✅ VALIDACIÓN: Rechazar puntos con datos inválidos
+        // ✅ OBTENER EL ÚLTIMO PUNTO VÁLIDO (para filtrar saltos imposibles)
+        let lastValidPoint = null;
+        const lastPointRes = await client.query(
+            'SELECT latitude as lat, longitude as lng, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp DESC LIMIT 1',
+            [tripId]
+        );
+        if (lastPointRes.rows.length > 0) {
+            lastValidPoint = {
+                lat: parseFloat(lastPointRes.rows[0].lat),
+                lng: parseFloat(lastPointRes.rows[0].lng),
+                timestamp: parseInt(lastPointRes.rows[0].timestamp, 10)
+            };
+        }
+
+        // ✅ VALIDACIÓN: Rechazar puntos con datos inválidos o saltos
         let validPoints = 0;
         let invalidPoints = 0;
+
+        // Ordenar chronológicamente el batch para comparar bien
+        points.sort((a, b) => a.timestamp - b.timestamp);
 
         for (let p of points) {
             // Validar coordenadas
@@ -140,11 +175,33 @@ async function processBatch(employeeId, points) {
                 continue;
             }
 
-            // Validar timestamp (no puede ser futuro)
+            // Validar timestamp (no puede ser futuro + 1 min tolerancia)
             if (p.timestamp > Date.now() + 60000) {
                 console.warn(`[VALIDATION] Invalid timestamp: ${new Date(p.timestamp)}`);
                 invalidPoints++;
                 continue;
+            }
+
+            // Validar saltos imposibles (>150km/h o >41m/s)
+            if (lastValidPoint) {
+                const distanceMts = calculateDistanceMeters(lastValidPoint.lat, lastValidPoint.lng, p.lat, p.lng);
+                
+                // Cuidado: algunos timestamps vienen en ms, la DB puede devolver en ms o seg según la inserción.
+                // Asumimos que p.timestamp está en ms (Javascript standard)
+                const timeDiffMst = p.timestamp - lastValidPoint.timestamp;
+                const timeDiffSec = Math.abs(timeDiffMst / 1000.0);
+
+                if (timeDiffSec > 0 && distanceMts > 5) {
+                    const speedMps = distanceMts / timeDiffSec;
+                    const speedKmh = speedMps * 3.6;
+
+                    // Si la velocidad inferida es > 150 km/h, rechazar por salto de GPS
+                    if (speedKmh > 150) {
+                        console.warn(`[SIMPLIFY] Saltando punto GPS imposible: ${speedKmh.toFixed(1)} km/h. Distancia: ${distanceMts.toFixed(1)}m, Tiempo: ${timeDiffSec.toFixed(1)}s`);
+                        invalidPoints++;
+                        continue;
+                    }
+                }
             }
 
             // Insert point
@@ -155,10 +212,12 @@ async function processBatch(employeeId, points) {
                 [tripId, employeeId, p.lat, p.lng, p.speed, p.accuracy, p.state || 'SIN_MOVIMIENTO', p.timestamp]
             );
 
+            // Actualizar referencia al último punto insertado en la iteración
+            lastValidPoint = { lat: p.lat, lng: p.lng, timestamp: p.timestamp };
             validPoints++;
         }
 
-        console.log(`[BATCH] Trip ${tripId}: inserted ${validPoints} valid points, rejected ${invalidPoints}`);
+        console.log(`[BATCH] Trip ${tripId}: inserted ${validPoints} valid points, rejected ${invalidPoints} (jumps/invalid)`);
 
         // Update distance using efficient Window Function
         await client.query(`
