@@ -169,8 +169,8 @@ async function processBatch(employeeId, points) {
 
         for (let p of points) {
             // Validar coordenadas
-            if (p.lat < -90 || p.lat > 90 || p.lng < -180 || p.lng > 180) {
-                console.warn(`[VALIDATION] Invalid coordinates: lat=${p.lat}, lng=${p.lng}`);
+            if (p.lat < -90 || p.lat > 90 || p.lng < -180 || p.lng > 180 || (p.lat === 0 && p.lng === 0)) {
+                console.warn(`[VALIDATION] Invalid or zero coordinates: lat=${p.lat}, lng=${p.lng}`);
                 invalidPoints++;
                 continue;
             }

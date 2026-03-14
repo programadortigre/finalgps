@@ -1,27 +1,43 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.flutter_gps_tracker">
+
+    <!-- ── Permisos de red ─────────────────────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- ── Permisos de ubicación ──────────────────────────────────────── -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- ── Permisos de servicio en primer plano ───────────────────────── -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Requerido en Android 14+ para foreground services de tipo location -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <!-- ── Wake Lock (CPU despierta en segundo plano) ─────────────────── -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- ── FIX C4: Boot receiver ──────────────────────────────────────── -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Required for battery optimization exemption (Xiaomi/MIUI, Huawei, etc.) -->
+
+    <!-- Exención de optimización de batería (necesita justificación en Play Store) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- For reliable background alarms on Android 12+ -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" tools:ignore="ExactAlarm" />
-    <!-- For Activity Recognition -->
+
+    <!-- Alarmas exactas para flutter_background_service en Android 12+ -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        tools:ignore="ExactAlarm" />
+
+    <!-- ── Activity Recognition ───────────────────────────────────────── -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="com.google.android.gms.permission.ACTIVITY_RECOGNITION" />
 
-   <application
+    <application
         android:label="GPS Tracker"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
-        
+
+        <!-- ── Foreground Service de tracking GPS ─────────────────────── -->
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
             android:foregroundServiceType="location"
@@ -29,6 +45,20 @@
             android:exported="true"
             tools:replace="android:exported" />
 
+        <!-- ── FIX C4: BootReceiver para reinicio automático tras reboot ─ -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <!-- Boot estándar de Android -->
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- Reinicio rápido en Xiaomi MIUI / HyperOS -->
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ── Actividad principal ────────────────────────────────────── -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

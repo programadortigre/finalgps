@@ -55,11 +55,23 @@ const FitBounds = ({ positions }) => {
 // Vuela suavemente a la ubicación de un empleado seleccionado
 const FlyToEmployee = ({ lat, lng }) => {
     const map = useMap();
+    const lastPos = React.useRef(null);
+
     useEffect(() => {
         if (lat != null && lng != null) {
-            map.flyTo([lat, lng], 18, { animate: true, duration: 1.2 });
+            const currentCenter = map.getCenter();
+            const dist = L.latLng(lat, lng).distanceTo(currentCenter);
+            
+            // Si está lejos (>200m) o es la primera vez, vuela (FlyTo)
+            if (!lastPos.current || dist > 200) {
+                map.flyTo([lat, lng], 18, { animate: true, duration: 1.2 });
+            } else if (dist > 5) {
+                // Si está cerca but moved, solo panea suavemente (para seguimiento en tiempo real)
+                map.panTo([lat, lng], { animate: true });
+            }
+            lastPos.current = { lat, lng };
         }
-    }, [lat, lng]);
+    }, [lat, lng, map]);
     return null;
 };
 
@@ -217,11 +229,8 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations }) => {
     // Si no hay puntos, mostrar mensaje amigable
     const noPoints = view === 'history' && routeData && points.length === 0;
 
-    // Posición del empleado seleccionado para centrar el mapa
-    // Busca primero en allLocations (sin filtrar) para no perder la referencia
-    const _allLocs = allLocations || activeLocations || {};
-    const flyTarget = selectedEmployee
-        ? (_allLocs[selectedEmployee.id] || Object.values(_allLocs).find(l => l.employeeId === selectedEmployee.id))
+    const flyTarget = selectedEmployee && view === 'live'
+        ? (activeLocations[selectedEmployee.id])
         : null;
 
     return (
@@ -406,6 +415,8 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations }) => {
 
                 {/* ── LIVE MODE ── */}
                 {view === 'live' && livePositions.map(loc => {
+                    if (!loc.lat || !loc.lng || loc.lat === 0 || loc.lng === 0) return null; // FIX: Prevent Leaflet crash
+                    
                     const addr = addresses[`live-${loc.employeeId}`] || 'Obteniendo dirección...';
                     const displayState = (loc.state || 'Quieto').replaceAll('_', ' ');
                     const stateColors = {

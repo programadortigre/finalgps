@@ -210,8 +210,16 @@ const Dashboard = ({ user, onLogout }) => {
                         </div>
 
                         {/* Live List */}
-                        <div style={{ marginBottom: '8px', fontSize: '11px', color: '#64748b' }}>
-                            Mostrando {filteredLiveLocations.length} de {activeCount}
+                        <div style={{ marginBottom: '8px', fontSize: '11px', color: '#64748b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span>Mostrando {filteredLiveLocations.length} de {activeCount}</span>
+                            {selectedEmployee && view === 'live' && (
+                                <button 
+                                    onClick={() => setSelectedEmployee(null)}
+                                    style={{ background: '#2563eb', color: 'white', border: 'none', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', cursor: 'pointer' }}
+                                >
+                                    Ver todos
+                                </button>
+                            )}
                         </div>
                         <div style={{ flex: 1, overflowY: 'auto' }}>
                             {filteredLiveLocations.length === 0 ? (
@@ -220,21 +228,45 @@ const Dashboard = ({ user, onLogout }) => {
                                 filteredLiveLocations.map(loc => (
                                     <div
                                         key={loc.employeeId}
+                                        onClick={() => {
+                                            if (selectedEmployee?.id === loc.employeeId) {
+                                                setSelectedEmployee(null); // Unselect to see all
+                                            } else {
+                                                setSelectedEmployee({ id: loc.employeeId, name: loc.name });
+                                            }
+                                            if (isMobile) setSidebarOpen(false);
+                                        }}
                                         style={{
                                             padding: '10px 12px',
                                             marginBottom: '6px',
-                                            background: '#1e293b',
+                                            background: (selectedEmployee?.id === loc.employeeId && view === 'live') ? '#2563eb30' : '#1e293b',
                                             borderRadius: '6px',
                                             cursor: 'pointer',
                                             transition: 'all .15s',
-                                            borderLeft: '3px solid #2563eb'
+                                            borderLeft: (selectedEmployee?.id === loc.employeeId && view === 'live') 
+                                                ? '3px solid #60a5fa' 
+                                                : '3px solid #2563eb',
+                                            outline: (selectedEmployee?.id === loc.employeeId && view === 'live') ? '1px solid #60a5fa' : 'none'
                                         }}
-                                        onMouseEnter={(e) => e.currentTarget.style.background = '#334155'}
-                                        onMouseLeave={(e) => e.currentTarget.style.background = '#1e293b'}
+                                        onMouseEnter={(e) => {
+                                            if (!(selectedEmployee?.id === loc.employeeId && view === 'live')) {
+                                                e.currentTarget.style.background = '#334155';
+                                            }
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            if (!(selectedEmployee?.id === loc.employeeId && view === 'live')) {
+                                                e.currentTarget.style.background = '#1e293b';
+                                            }
+                                        }}
                                     >
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                                             <span className={`dot ${activeLocations[loc.employeeId] ? 'dot-active' : ''}`} />
-                                            <span style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: '600', flex: 1 }}>{loc.name || `Vendedor ${loc.employeeId}`}</span>
+                                            <span style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: '600', flex: 1 }}>
+                                                {loc.name || `Vendedor ${loc.employeeId}`}
+                                                {selectedEmployee?.id === loc.employeeId && view === 'live' && (
+                                                    <span style={{ marginLeft: '8px', fontSize: '10px', color: '#60a5fa', fontWeight: 'normal' }}>(siguiendo...)</span>
+                                                )}
+                                            </span>
                                             <span style={{
                                                 background: (loc.state === 'En auto' || loc.state === 'VEHICULO' || loc.state === 'DRIVING') ? '#6366f150' : (loc.state === 'A pie' || loc.state === 'CAMINANDO' || loc.state === 'WALKING') ? '#22c55e50' : (loc.state === 'Quieto' || loc.state === 'SIN_MOVIMIENTO' || loc.state === 'STOPPED' || loc.state === 'DEEP_SLEEP') ? '#94a3b850' : '#f59e0b50',
                                                 color: (loc.state === 'En auto' || loc.state === 'VEHICULO' || loc.state === 'DRIVING') ? '#6366f1' : (loc.state === 'A pie' || loc.state === 'CAMINANDO' || loc.state === 'WALKING') ? '#22c55e' : (loc.state === 'Quieto' || loc.state === 'SIN_MOVIMIENTO' || loc.state === 'STOPPED' || loc.state === 'DEEP_SLEEP') ? '#94a3b8' : '#f59e0b',

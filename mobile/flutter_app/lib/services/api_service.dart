@@ -79,11 +79,15 @@ class ApiService {
         return token;
       }
     } on DioException catch (e) {
+      final msg = e.response?.data?['message'] ?? e.message;
+      print('[ApiService] Error de Login (${e.type}): $msg');
       if (e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.receiveTimeout) {
         return '__timeout__';
       }
-    } catch (_) {}
+    } catch (e) {
+      print('[ApiService] Error inesperado en Login: $e');
+    }
     return null;
   }
 
@@ -105,8 +109,21 @@ class ApiService {
         data: {'points': enrichedPoints},
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
-      return res.statusCode == 202;
-    } catch (_) {
+      
+      if (res.statusCode == 202) {
+        print('[ApiService] Batch subido con éxito: ${enrichedPoints.length} puntos');
+        return true;
+      } else {
+        print('[ApiService] Error batch (${res.statusCode}): ${res.data}');
+        return false;
+      }
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      final error = e.response?.data?['message'] ?? e.message;
+      print('[ApiService] DioError en uploadBatch ($status): $error');
+      return false;
+    } catch (e) {
+      print('[ApiService] Error fatal en uploadBatch: $e');
       return false;
     }
   }

@@ -37,7 +37,8 @@ class LocalPoint {
     };
   }
 
-  /// Crear desde Map (lectura de SQLite)
+  /// Crear desde Map (lectura de SQLite).
+  /// Nota: SQLite usa snake_case (employee_id), JSON API usa camelCase (employeeId).
   factory LocalPoint.fromMap(Map<String, dynamic> map) {
     return LocalPoint(
       id: map['id'] as int?,
@@ -47,8 +48,9 @@ class LocalPoint {
       accuracy: (map['accuracy'] as num).toDouble(),
       timestamp: map['timestamp'] as int,
       state: map['state'] as String? ?? 'SIN_MOVIMIENTO',
-      synced: (map['synced'] as int) == 1,
-      employeeId: map['employeeId'] as int?,
+      synced: map['synced'] != null ? (map['synced'] as int) == 1 : false,
+      // SQLite column es snake_case; camelCase como fallback para compatibilidad
+      employeeId: (map['employee_id'] ?? map['employeeId']) as int?,
     );
   }
 

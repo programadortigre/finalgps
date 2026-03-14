@@ -6,6 +6,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import 'auth_wrapper.dart';
 import 'admin_monitoring_screen.dart';
@@ -109,6 +110,11 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
           if (event['lat'] != null && event['lng'] != null) {
             final ll = LatLng((event['lat'] as num).toDouble(), (event['lng'] as num).toDouble());
             
+            // Persistir sessionStart si no existe y estamos online
+            if (_isOnline && _sessionStart == null) {
+               _restoreOrStartSession();
+            }
+
             if (_position != null && _isOnline) {
               final dist = _distCalc.as(LengthUnit.Kilometer, _position!, ll);
               if (dist > 0.005) { // 5 metros
@@ -125,6 +131,17 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
         });
       }
     });
+  }
+
+  Future<void> _restoreOrStartSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getInt('session_start_ms');
+    if (saved != null) {
+      _sessionStart = DateTime.fromMillisecondsSinceEpoch(saved);
+    } else {
+      _sessionStart = DateTime.now();
+      await prefs.setInt('session_start_ms', _sessionStart!.millisecondsSinceEpoch);
+    }
   }
 
   Future<void> _loadTodayRoute() async {
@@ -186,8 +203,10 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
 
   // Locals removed: we react to events now instead of Geolocator.
 
-  void _startClock() {
-    _sessionStart = DateTime.now();
+  void _startClock() async {
+    if (_sessionStart == null) {
+      await _restoreOrStartSession();
+    }
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_sessionStart != null && mounted) {
         final diff = DateTime.now().difference(_sessionStart!);
@@ -200,9 +219,12 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
     });
   }
 
-  void _stopClock() {
+  void _stopClock() async {
     _clockTimer?.cancel();
     _clockTimer = null;
+    _sessionStart = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('session_start_ms');
   }
 
   Future<void> _toggleOnline() async {

@@ -300,15 +300,14 @@ router.post('/status', auth, async (req, res) => {
             io.to('admins').emit('location_update', updateData);
         }
 
-        // Podríamos encolar esto también si queremos guardar el evento "Offline"
-        await locationQueue.add('process-batch', {
-            employeeId,
-            points: [{
-                lat: 0, lng: 0, speed: 0, accuracy: 0, // Dummies, solo importa el estado
-                timestamp: Date.now(),
-                state: state
-            }]
-        });
+        // Actualizar base de datos para cerrar el viaje si es OFFLINE
+        if (state === 'OFFLINE') {
+            await db.query(`
+                UPDATE trips SET is_active = FALSE, end_time = NOW() 
+                WHERE employee_id = $1 AND is_active = TRUE
+            `, [employeeId]);
+            console.log(`[STATUS] Trip closed for employee ${employeeId} due to OFFLINE status`);
+        }
 
         res.json({ success: true, message: `Status updated to ${state}` });
     } catch (err) {
