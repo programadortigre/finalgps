@@ -51,6 +51,8 @@ void onStart(ServiceInstance service) async {
   final api = ApiService();
   final storage = LocalStorage();
   LocalPoint? lastValidPoint;
+  int lastUploadTime = 0;
+  int stationaryTicks = 0;
 
   // 🧠 Inicializar filtro Kalman para suavizar coordenadas
   LocationKalmanFilter? locationFilter;
@@ -67,8 +69,8 @@ void onStart(ServiceInstance service) async {
   Geolocator.getPositionStream(
     locationSettings: AndroidSettings(
       accuracy: LocationAccuracy.bestForNavigation,  // ✅ Máxima precisión
-      distanceFilter: 2,  // 🚀 MEJORADO: De 5m a 2m (más puntos)
-      intervalDuration: const Duration(seconds: 2),  // 🚀 MEJORADO: De 5s a 2s
+      distanceFilter: 0,  // 🚀 MEJORADO: Dependemos del tiempo y no de la distancia para no perder "estoy quieto"
+      intervalDuration: const Duration(seconds: 3),  // 🚀 MEJORADO: Emitir posición cada 3s base
       forceLocationManager: false,  // ✅ Usa Google Play Services (mejor)
       foregroundNotificationConfig: ForegroundNotificationConfig(
         notificationText: "Rastreando ubicación en tiempo real...",
@@ -78,8 +80,7 @@ void onStart(ServiceInstance service) async {
     ),
   ).listen((Position pos) async {
     try {
-      final token = await api.getToken();
-      if (token == null) return;
+      // Token check diferido: la lectura se guardará incondicionalmente en SQLite
 
       final double speedKmh = pos.speed * 3.6;
 
@@ -131,6 +132,33 @@ void onStart(ServiceInstance service) async {
 
       final state = calculateState(speedKmh);
 
+      // ✅ Adaptive Sampling: Wakelock management
+      if (state == "SIN_MOVIMIENTO") {
+        stationaryTicks++;
+        if (stationaryTicks > 40) { // Aprox 2 minutos
+          WakelockPlus.disable();
+        }
+      } else {
+        stationaryTicks = 0;
+        WakelockPlus.enable();
+      }
+
+      // ✅ NUEVO FILTRO DE FRECUENCIA DE ENVÍO BASADA EN ESTADO
+      if (lastValidPoint != null) {
+        int timeSinceLastSend = DateTime.now().millisecondsSinceEpoch - lastValidPoint!.timestamp;
+        if (state == "SIN_MOVIMIENTO") {
+          // Si está quieto, registrar/enviar cada 30 segundos
+          if (timeSinceLastSend < 30000) {
+            return; // Ignoramos este punto, esperar más tiempo
+          }
+        } else {
+          // Si está en movimiento, registrar/enviar cada 3 segundos
+          if (timeSinceLastSend < 3000) {
+            return; // Ignoramos este punto, esperar más tiempo
+          }
+        }
+      }
+
       // Obtener employeeId de la sesión
       final userIdStr = await api.getUserId();
       final employeeId = int.tryParse(userIdStr ?? '');
@@ -162,11 +190,25 @@ void onStart(ServiceInstance service) async {
         );
       }
 
-      // 🚀 SUBIDA REAL-TIME: Enviar inmediatamente al servidor
-      final ok = await api.uploadBatch([point.toJson()]);
-      if (ok) {
-        if (point.id != null) await storage.markPointsAsSynced([point.id!]);
-        print("[✅ GPS] Punto enviado: ${point.lat.toStringAsFixed(6)}, ${point.lng.toStringAsFixed(6)}");
+      // 🚀 MICRO-BATCHING Y ROBUSTEZ OFF-LINE
+      int now = DateTime.now().millisecondsSinceEpoch;
+      if (now - lastUploadTime > 15000) { // Procesar lote cada 15 segundos
+        final token = await api.getToken();
+        if (token != null) {
+          final batch = await storage.getUnsyncedPoints(limit: 15);
+          if (batch.isNotEmpty) {
+            final dataToUpload = batch.map((p) => p.toJson()).toList();
+            final ok = await api.uploadBatch(dataToUpload);
+            if (ok) {
+              final ids = batch.map((p) => p.id!).toList();
+              await storage.markPointsAsSynced(ids);
+              lastUploadTime = now;
+              print("[✅ GPS] Lote realtime enviado: ${ids.length} puntos");
+            }
+          }
+        } else {
+          print("[GPS] Sin token. Punto guardado para sincronización futura.");
+        }
       }
 
       // 🧹 Limpiar datos antiguos cada 1 hora
@@ -178,14 +220,12 @@ void onStart(ServiceInstance service) async {
     }
   });
 
-  /// Timer de reintento: Intentar enviar puntos no sincronizados cada 5 minutos
-  /// Esto permite offset automático cuando se recupera la conexión
-  Timer.periodic(const Duration(minutes: 5), (timer) async {
+  Future<void> flushOfflineQueue() async {
     try {
       final token = await api.getToken();
       if (token == null) return;  // Sin conexión o logout
 
-      final unsyncedPoints = await storage.getUnsyncedPoints(limit: 100);
+      final unsyncedPoints = await storage.getUnsyncedPoints(limit: 500); // Límite más agresivo
       if (unsyncedPoints.isEmpty) return;  // Nada que enviar
 
       final data = unsyncedPoints.map((p) => {
@@ -202,11 +242,25 @@ void onStart(ServiceInstance service) async {
         // Éxito: marcar como sincronizados
         final ids = unsyncedPoints.map((p) => p.id!).toList();
         await storage.markPointsAsSynced(ids);
+        print("[✅ GPS] Recuperación offline: ${ids.length} puntos sincronizados");
+
+        // BACKPRESSURE: Si trajimos el buffer lleno, es probable que haya más.
+        // Llamar recursivamente para drenar rápido.
+        if (unsyncedPoints.length == 500) {
+          await Future.delayed(const Duration(seconds: 2));
+          await flushOfflineQueue();
+        }
       }
       // Si falla: reintentar en 5 minutos más
     } catch (e) {
       // Reintentar la próxima vez
     }
+  }
+
+  /// Timer de reintento: Intentar enviar puntos no sincronizados cada 5 minutos
+  /// Esto permite offset automático cuando se recupera la conexión
+  Timer.periodic(const Duration(minutes: 5), (timer) async {
+    await flushOfflineQueue();
   });
 
   service.on('stopService').listen((_) {
