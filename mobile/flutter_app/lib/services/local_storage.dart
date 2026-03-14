@@ -64,6 +64,19 @@ class LocalStorage {
   /// Insertar un punto GPS
   Future<int> insertPoint(LocalPoint point) async {
     final database = await db;
+    
+    // BACKPRESSURE: max 5000 points
+    final countResult = await database.rawQuery('SELECT COUNT(*) as total FROM $_tableName');
+    final total = (countResult.first['total'] as int?) ?? 0;
+    if (total >= 5000) {
+      // Delete 500 oldest
+      await database.execute('''
+        DELETE FROM $_tableName WHERE id IN (
+          SELECT id FROM $_tableName ORDER BY timestamp ASC LIMIT 500
+        )
+      ''');
+    }
+
     return database.insert(
       _tableName,
       {

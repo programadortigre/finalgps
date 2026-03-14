@@ -31,7 +31,8 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   List<List<LatLng>> _segments = [[]];
   bool _isOnline = false;
   bool _followMe = true;
-  StreamSubscription<Position>? _locationSub;
+  StreamSubscription<Map<String, dynamic>?>? _stateSub;
+  StreamSubscription<Map<String, dynamic>?>? _locationEventSub;
 
   // ─ User info ─
   String _userName = '';
@@ -53,6 +54,7 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   @override
   void initState() {
     super.initState();
+    _setupServiceListeners();
     _pulseCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat(reverse: true);
     _pulseAnim = Tween<double>(begin: 0.6, end: 1.0).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
 
@@ -62,7 +64,67 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
 
     _loadUserInfo();
     _loadTodayRoute();
-    _startListening();
+  }
+
+  void _setupServiceListeners() {
+    final service = FlutterBackgroundService();
+    
+    // Check initial state
+    service.isRunning().then((isRunning) {
+      if (mounted) {
+        setState(() => _isOnline = isRunning);
+        if (isRunning) _startClock();
+      }
+    });
+
+    _stateSub = service.on('trackingState').listen((event) {
+      if (event != null && mounted) {
+        final active = event['is_active'] == true;
+        setState(() {
+          _isOnline = active;
+        });
+        if (active && _clockTimer == null) {
+          _startClock();
+        } else if (!active) {
+          _stopClock();
+        }
+      }
+    });
+
+    _locationEventSub = service.on('trackingLocation').listen((event) {
+      if (event != null && mounted) {
+        setState(() {
+          _speed = (event['speed'] as num?)?.toDouble() ?? 0.0;
+          _accuracy = (event['accuracy'] as num?)?.toDouble() ?? 0.0;
+          
+          // Mapeo amigable para UI
+          final rawState = event['state'] ?? 'STOPPED';
+          if (rawState == 'STOPPED' || rawState == 'DEEP_SLEEP') _state = 'Quieto';
+          else if (rawState == 'IDLE_ENGINE') _state = 'En Tráfico';
+          else if (rawState == 'WALKING') _state = 'A pie';
+          else if (rawState == 'DRIVING') _state = 'En auto';
+          else if (rawState == 'NO_SIGNAL') _state = 'Sin Señal';
+          else _state = rawState;
+
+          if (event['lat'] != null && event['lng'] != null) {
+            final ll = LatLng((event['lat'] as num).toDouble(), (event['lng'] as num).toDouble());
+            
+            if (_position != null && _isOnline) {
+              final dist = _distCalc.as(LengthUnit.Kilometer, _position!, ll);
+              if (dist > 0.005) { // 5 metros
+                _distanceToday += dist;
+                if (_segments.isEmpty) _segments.add([]);
+                if (_segments.last.isEmpty) _segments.last.add(_position!);
+                _segments.last.add(ll);
+              }
+            }
+            
+            _position = ll;
+            if (_followMe) _mapCtrl.move(ll, _mapCtrl.camera.zoom);
+          }
+        });
+      }
+    });
   }
 
   Future<void> _loadTodayRoute() async {
@@ -114,68 +176,15 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
 
   @override
   void dispose() {
-    _locationSub?.cancel();
+    _stateSub?.cancel();
+    _locationEventSub?.cancel();
     _clockTimer?.cancel();
     _pulseCtrl.dispose();
     _slideCtrl.dispose();
     super.dispose();
   }
 
-  void _startListening() {
-    _locationSub = Geolocator.getPositionStream(
-      locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 5,
-        intervalDuration: const Duration(seconds: 5),
-      ),
-    ).listen((pos) {
-      final ll = LatLng(pos.latitude, pos.longitude);
-      if (mounted) {
-        setState(() {
-          _speed    = pos.speed * 3.6;
-          _accuracy = pos.accuracy;
-          
-          // Detección simple para la UI con textos cortos amigables
-          if (_speed < 0.8) {
-            _state = "Quieto";
-          } else if (_speed < 4.0) {
-            _state = "A pie";
-          } else if (_speed < 12.0) {
-            _state = "Lento";
-          } else {
-            _state = "En auto";
-          }
-
-
-if (_position != null &&
-    _isOnline &&
-    _speed > 0.8 &&
-    _accuracy < 20) {
-
-  final dist = _distCalc.as(LengthUnit.Kilometer, _position!, ll);
-
-  if (dist > 0.005) {
-    _distanceToday += dist;
-
-    if (_segments.isEmpty) {
-      _segments.add([]);
-    }
-
-    if (_segments.last.isEmpty) {
-      _segments.last.add(_position!);
-    }
-
-    _segments.last.add(ll);
-  }
-}
-
-
-          _position = ll;
-        });
-        if (_followMe) _mapCtrl.move(ll, _mapCtrl.camera.zoom);
-      }
-    });
-  }
+  // Locals removed: we react to events now instead of Geolocator.
 
   void _startClock() {
     _sessionStart = DateTime.now();
@@ -197,17 +206,20 @@ if (_position != null &&
   }
 
   Future<void> _toggleOnline() async {
-    setState(() => _isOnline = !_isOnline);
-    if (_isOnline) {
-      _startClock();
+    final service = FlutterBackgroundService();
+    var isRunning = await service.isRunning();
+    
+    if (!isRunning) {
       if (_segments.isEmpty || _segments.last.isNotEmpty) {
-        _segments.add([]); // Start a new disconnected segment
+        setState(() => _segments.add([])); // Start a new disconnected segment
       }
-      await FlutterBackgroundService().startService();
+      await service.startService();
+      // Update optimism (events will confirm)
+      setState(() => _isOnline = true);
     } else {
-      _stopClock();
-      FlutterBackgroundService().invoke('stopService');
-      // 🛑 FIX: Explicitly notify server that tracking stopped
+      service.invoke('stopService');
+      // Update optimism
+      setState(() => _isOnline = false);
       try {
         await _api.updateStatus('OFFLINE'); 
       } catch (e) {

@@ -17,10 +17,10 @@ L.Icon.Default.mergeOptions({
 // Base Active Icon function to handle dynamic color
 const getActiveIcon = (state) => {
     let color = '#94a3b8'; // Default color (Slate/Gray)
-    if (state === 'Quieto' || state === 'SIN_MOVIMIENTO') color = '#94a3b8';
-    if (state === 'A pie' || state === 'CAMINANDO') color = '#22c55e';
-    if (state === 'Lento' || state === 'MOVIMIENTO_LENTO') color = '#f59e0b';
-    if (state === 'En auto' || state === 'VEHICULO') color = '#6366f1';
+    if (state === 'Quieto' || state === 'SIN_MOVIMIENTO' || state === 'STOPPED' || state === 'DEEP_SLEEP') color = '#94a3b8';
+    if (state === 'A pie' || state === 'CAMINANDO' || state === 'WALKING') color = '#22c55e';
+    if (state === 'Lento' || state === 'MOVIMIENTO_LENTO' || state === 'BATT_SAVER' || state === 'NO_SIGNAL') color = '#f59e0b';
+    if (state === 'En auto' || state === 'VEHICULO' || state === 'DRIVING') color = '#6366f1';
 
     return L.divIcon({
         className: '',
@@ -411,12 +411,18 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations }) => {
                     const stateColors = {
                         'Quieto': { bg: '#f1f5f9', color: '#475569' },
                         'SIN_MOVIMIENTO': { bg: '#f1f5f9', color: '#475569' },
+                        'STOPPED': { bg: '#f1f5f9', color: '#475569' },
+                        'DEEP_SLEEP': { bg: '#e2e8f0', color: '#334155' },
                         'A pie': { bg: '#dcfce7', color: '#166534' },
                         'CAMINANDO': { bg: '#dcfce7', color: '#166534' },
+                        'WALKING': { bg: '#dcfce7', color: '#166534' },
                         'Lento': { bg: '#fef3c7', color: '#b45309' },
                         'MOVIMIENTO_LENTO': { bg: '#fef3c7', color: '#b45309' },
+                        'BATT_SAVER': { bg: '#fef3c7', color: '#b45309' },
+                        'NO_SIGNAL': { bg: '#fee2e2', color: '#991b1b' },
                         'En auto': { bg: '#dbeafe', color: '#0c4a6e' },
-                        'VEHICULO': { bg: '#dbeafe', color: '#0c4a6e' }
+                        'VEHICULO': { bg: '#dbeafe', color: '#0c4a6e' },
+                        'DRIVING': { bg: '#dbeafe', color: '#0c4a6e' }
                     };
                     const stateColor = stateColors[loc.state] || stateColors['Quieto'];
 

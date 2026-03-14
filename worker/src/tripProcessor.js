@@ -209,7 +209,7 @@ async function processBatch(employeeId, points) {
                 `INSERT INTO locations (trip_id, employee_id, latitude, longitude, speed, accuracy, state, timestamp, geom) 
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)
                  ON CONFLICT DO NOTHING`,
-                [tripId, employeeId, p.lat, p.lng, p.speed, p.accuracy, p.state || 'SIN_MOVIMIENTO', p.timestamp]
+                [tripId, employeeId, p.lat, p.lng, p.speed, p.accuracy, p.state || 'STOPPED', p.timestamp]
             );
 
             // Actualizar referencia al último punto insertado en la iteración

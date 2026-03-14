@@ -85,10 +85,10 @@ const Dashboard = ({ user, onLogout }) => {
 
     // Estadísticas por estado
     const statusStats = {
-        'Quieto': Object.values(activeLocations).filter(l => l.state === 'Quieto' || l.state === 'SIN_MOVIMIENTO').length,
-        'A pie': Object.values(activeLocations).filter(l => l.state === 'A pie' || l.state === 'CAMINANDO').length,
-        'Lento': Object.values(activeLocations).filter(l => l.state === 'Lento' || l.state === 'MOVIMIENTO_LENTO').length,
-        'En auto': Object.values(activeLocations).filter(l => l.state === 'En auto' || l.state === 'VEHICULO').length,
+        'Quieto': Object.values(activeLocations).filter(l => l.state === 'Quieto' || l.state === 'SIN_MOVIMIENTO' || l.state === 'STOPPED' || l.state === 'DEEP_SLEEP').length,
+        'A pie': Object.values(activeLocations).filter(l => l.state === 'A pie' || l.state === 'CAMINANDO' || l.state === 'WALKING').length,
+        'Lento': Object.values(activeLocations).filter(l => l.state === 'Lento' || l.state === 'MOVIMIENTO_LENTO' || l.state === 'BATT_SAVER' || l.state === 'NO_SIGNAL').length,
+        'En auto': Object.values(activeLocations).filter(l => l.state === 'En auto' || l.state === 'VEHICULO' || l.state === 'DRIVING').length,
     };
 
     return (
@@ -236,8 +236,8 @@ const Dashboard = ({ user, onLogout }) => {
                                             <span className={`dot ${activeLocations[loc.employeeId] ? 'dot-active' : ''}`} />
                                             <span style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: '600', flex: 1 }}>{loc.name || `Vendedor ${loc.employeeId}`}</span>
                                             <span style={{
-                                                background: (loc.state === 'En auto' || loc.state === 'VEHICULO') ? '#6366f150' : (loc.state === 'A pie' || loc.state === 'CAMINANDO') ? '#22c55e50' : '#f59e0b50',
-                                                color: (loc.state === 'En auto' || loc.state === 'VEHICULO') ? '#6366f1' : (loc.state === 'A pie' || loc.state === 'CAMINANDO') ? '#22c55e' : '#f59e0b',
+                                                background: (loc.state === 'En auto' || loc.state === 'VEHICULO' || loc.state === 'DRIVING') ? '#6366f150' : (loc.state === 'A pie' || loc.state === 'CAMINANDO' || loc.state === 'WALKING') ? '#22c55e50' : (loc.state === 'Quieto' || loc.state === 'SIN_MOVIMIENTO' || loc.state === 'STOPPED' || loc.state === 'DEEP_SLEEP') ? '#94a3b850' : '#f59e0b50',
+                                                color: (loc.state === 'En auto' || loc.state === 'VEHICULO' || loc.state === 'DRIVING') ? '#6366f1' : (loc.state === 'A pie' || loc.state === 'CAMINANDO' || loc.state === 'WALKING') ? '#22c55e' : (loc.state === 'Quieto' || loc.state === 'SIN_MOVIMIENTO' || loc.state === 'STOPPED' || loc.state === 'DEEP_SLEEP') ? '#94a3b8' : '#f59e0b',
                                                 padding: '2px 8px',
                                                 borderRadius: '4px',
                                                 fontSize: '10px',

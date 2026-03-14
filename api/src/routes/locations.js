@@ -231,7 +231,7 @@ router.post('/batch', auth, async (req, res) => {
                 speed: p.speed,
                 accuracy: p.accuracy,
                 timestamp: p.timestamp,
-                state: p.state || 'SIN_MOVIMIENTO'
+                state: p.state || 'STOPPED'
             }))
         });
 
@@ -246,7 +246,7 @@ router.post('/batch', auth, async (req, res) => {
                 lng: lastPoint.lng,
                 speed: lastPoint.speed,
                 accuracy: lastPoint.accuracy,
-                state: lastPoint.state || 'SIN_MOVIMIENTO',
+                state: lastPoint.state || 'STOPPED',
                 timestamp: lastPoint.timestamp
             });
         }
