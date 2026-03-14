@@ -146,11 +146,30 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
             _state = "En auto";
           }
 
-          if (_position != null && _isOnline) {
-            _distanceToday += _distCalc.as(LengthUnit.Kilometer, _position!, ll);
-            if (_segments.isEmpty) _segments.add([]);
-            _segments.last.add(ll);
-          }
+
+if (_position != null &&
+    _isOnline &&
+    _speed > 0.8 &&
+    _accuracy < 20) {
+
+  final dist = _distCalc.as(LengthUnit.Kilometer, _position!, ll);
+
+  if (dist > 0.005) {
+    _distanceToday += dist;
+
+    if (_segments.isEmpty) {
+      _segments.add([]);
+    }
+
+    if (_segments.last.isEmpty) {
+      _segments.last.add(_position!);
+    }
+
+    _segments.last.add(ll);
+  }
+}
+
+
           _position = ll;
         });
         if (_followMe) _mapCtrl.move(ll, _mapCtrl.camera.zoom);
