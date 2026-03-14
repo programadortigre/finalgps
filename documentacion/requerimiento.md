@@ -529,4 +529,7 @@ Genera **todo el código del proyecto completo**, incluyendo:
 * panel admin
 * app flutter
 
-El código debe ser **limpio, modular, documentado y listo para producción**.
+El código debe ser **limpio, modular, documentado y listo para producción**. 
+
+
+ultimos cambios
