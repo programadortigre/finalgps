@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MapPin, Eye, EyeOff, Lock, Mail, ArrowRight } from 'lucide-react';
+import { MapPin, Eye, EyeOff, Lock, Mail, ArrowRight, Zap } from 'lucide-react';
 import api from '../services/api';
 
 const Login = ({ onLogin }) => {
@@ -11,7 +11,8 @@ const Login = ({ onLogin }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setLoading(true); setError('');
+        setLoading(true);
+        setError('');
         try {
             const { data } = await api.post('/api/auth/login', { email, password });
             if (data.user.role !== 'admin') {
@@ -28,259 +29,106 @@ const Login = ({ onLogin }) => {
     };
 
     return (
-        <div className="login-container">
-            <div className="login-glow"></div>
-            <div className="login-card">
-                <div className="brand-section">
-                    <div className="brand-logo">
-                        <MapPin size={32} color="#fff" fill="#3b82f6" />
-                    </div>
-                    <h1>GPS Tracking <span className="text-gradient">Pro</span></h1>
-                    <p>Panel de Administración de Flota</p>
-                </div>
-
-                {error && <div className="login-error">{error}</div>}
-
-                <form onSubmit={handleSubmit} className="login-form">
-                    <div className="input-field">
-                        <label><Mail size={14} /> Correo Electrónico</label>
-                        <input
-                            type="email" required autoFocus
-                            value={email} onChange={e => setEmail(e.target.value)}
-                            placeholder="nombre@empresa.com"
-                        />
-                    </div>
-
-                    <div className="input-field">
-                        <label><Lock size={14} /> Contraseña</label>
-                        <div className="pass-row">
-                            <input
-                                type={showPass ? 'text' : 'password'} required
-                                value={password} onChange={e => setPassword(e.target.value)}
-                                placeholder="••••••••"
-                            />
-                            <button type="button" onClick={() => setShowPass(!showPass)}>
-                                {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
-                            </button>
-                        </div>
-                    </div>
-
-                    <button type="submit" className="login-submit-btn" disabled={loading}>
-                        {loading ? 'Verificando...' : (
-                            <>
-                                INICIAR SESIÓN <ArrowRight size={18} />
-                            </>
-                        )}
-                    </button>
-                </form>
-
-                <div className="login-footer">
-                    &copy; {new Date().getFullYear()} GPS para Fuerza de Ventas. Todos los derechos reservados.
-                </div>
+        <div className="min-h-screen w-full bg-dark-950 flex items-center justify-center relative overflow-hidden p-4">
+            {/* Gradient background effect */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-r from-primary-500 to-blue-600 rounded-full opacity-5 blur-3xl"></div>
+                <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-b from-primary-500 to-transparent opacity-3 blur-3xl"></div>
             </div>
 
-            <style>{`
-                .login-container {
-                    min-height: 100vh;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    background: #020617;
-                    padding: 20px;
-                    position: relative;
-                    overflow: hidden;
-                    font-family: 'Inter', sans-serif;
-                }
+            {/* Login Card */}
+            <div className="w-full max-w-md relative z-10 animate-in fade-in-up duration-500">
+                <div className="glass-dark border border-white/10 rounded-2xl p-8 md:p-10">
+                    {/* Brand Section */}
+                    <div className="text-center mb-10">
+                        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500/20 to-blue-600/20 border border-primary-500/20 mb-4 shadow-lg">
+                            <MapPin className="w-8 h-8 text-primary-400" strokeWidth={1.5} />
+                        </div>
+                        <h1 className="text-3xl md:text-4xl font-bold text-white mb-2 tracking-tight">
+                            GPS Tracking <span className="text-gradient">Pro</span>
+                        </h1>
+                        <p className="text-slate-400 text-sm">Panel de Administración de Flota</p>
+                    </div>
 
-                .login-glow {
-                    position: absolute;
-                    top: 50%;
-                    left: 50%;
-                    transform: translate(-50%, -50%);
-                    width: 600px;
-                    height: 600px;
-                    background: radial-gradient(circle, rgba(37, 99, 235, 0.15) 0%, rgba(37, 99, 235, 0) 70%);
-                    pointer-events: none;
-                }
+                    {/* Error Alert */}
+                    {error && (
+                        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex gap-3">
+                            <Zap className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                            <p className="text-red-300 text-sm font-medium">{error}</p>
+                        </div>
+                    )}
 
-                .login-card {
-                    width: 100%;
-                    max-width: 440px;
-                    background: rgba(15, 23, 42, 0.6);
-                    backdrop-filter: blur(20px) saturate(180%);
-                    -webkit-backdrop-filter: blur(20px) saturate(180%);
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    border-radius: 28px;
-                    padding: 48px 40px;
-                    box-shadow: 0 40px 100px rgba(0, 0, 0, 0.6);
-                    z-index: 10;
-                    animation: cardSlideUp 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
-                }
+                    {/* Form */}
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                        {/* Email Field */}
+                        <div className="space-y-2">
+                            <label className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                <Mail className="w-3.5 h-3.5" />
+                                Correo Electrónico
+                            </label>
+                            <input
+                                type="email"
+                                required
+                                autoFocus
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="nombre@empresa.com"
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white/10 transition-all duration-200 text-sm"
+                            />
+                        </div>
 
-                @keyframes cardSlideUp {
-                    from { opacity: 0; transform: translateY(40px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
+                        {/* Password Field */}
+                        <div className="space-y-2">
+                            <label className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                <Lock className="w-3.5 h-3.5" />
+                                Contraseña
+                            </label>
+                            <div className="relative">
+                                <input
+                                    type={showPass ? 'text' : 'password'}
+                                    required
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="••••••••"
+                                    className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent focus:bg-white/10 transition-all duration-200 text-sm pr-12"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPass(!showPass)}
+                                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                                >
+                                    {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
+                                </button>
+                            </div>
+                        </div>
 
-                .brand-section {
-                    text-align: center;
-                    margin-bottom: 40px;
-                }
+                        {/* Submit Button */}
+                        <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full mt-8 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-all duration-200 shadow-lg hover:shadow-primary-500/20 hover:shadow-xl"
+                        >
+                            {loading ? (
+                                <>
+                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    Verificando...
+                                </>
+                            ) : (
+                                <>
+                                    INICIAR SESIÓN
+                                    <ArrowRight size={18} />
+                                </>
+                            )}
+                        </button>
+                    </form>
 
-                .brand-logo {
-                    width: 64px;
-                    height: 64px;
-                    background: rgba(37, 99, 235, 0.1);
-                    border: 1px solid rgba(37, 99, 235, 0.2);
-                    border-radius: 18px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    margin: 0 auto 20px;
-                    box-shadow: 0 10px 20px rgba(0,0,0,0.2);
-                }
-
-                .brand-section h1 {
-                    font-family: 'Outfit', sans-serif;
-                    font-size: 28px;
-                    font-weight: 800;
-                    color: #fff;
-                    margin: 0;
-                    letter-spacing: -0.02em;
-                }
-
-                .text-gradient {
-                    background: linear-gradient(135deg, #60a5fa 0%, #2563eb 100%);
-                    -webkit-background-clip: text;
-                    -webkit-text-fill-color: transparent;
-                }
-
-                .brand-section p {
-                    color: #64748b;
-                    font-size: 15px;
-                    margin-top: 8px;
-                }
-
-                .login-error {
-                    background: rgba(239, 68, 68, 0.1);
-                    border: 1px solid rgba(239, 68, 68, 0.2);
-                    color: #f87171;
-                    padding: 14px;
-                    border-radius: 12px;
-                    font-size: 13px;
-                    font-weight: 600;
-                    margin-bottom: 24px;
-                    text-align: center;
-                }
-
-                .login-form {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 20px;
-                }
-
-                .input-field {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 8px;
-                }
-
-                .input-field label {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    font-size: 12px;
-                    font-weight: 700;
-                    color: #94a3b8;
-                    text-transform: uppercase;
-                    letter-spacing: 0.05em;
-                }
-
-                .input-field input {
-                    width: 100%;
-                    background: rgba(255, 255, 255, 0.05);
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    border-radius: 14px;
-                    padding: 14px 18px;
-                    color: #fff;
-                    font-size: 15px;
-                    outline: none;
-                    transition: all 0.2s;
-                }
-
-                .input-field input:focus {
-                    background: rgba(255, 255, 255, 0.08);
-                    border-color: #3b82f6;
-                    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
-                }
-
-                .pass-row {
-                    position: relative;
-                }
-
-                .pass-row button {
-                    position: absolute;
-                    right: 14px;
-                    top: 50%;
-                    transform: translateY(-50%);
-                    background: none;
-                    border: none;
-                    color: #64748b;
-                    cursor: pointer;
-                    transition: color 0.2s;
-                }
-
-                .pass-row button:hover {
-                    color: #fff;
-                }
-
-                .login-submit-btn {
-                    margin-top: 10px;
-                    background: #2563eb;
-                    color: white;
-                    border: none;
-                    border-radius: 14px;
-                    padding: 16px;
-                    font-size: 15px;
-                    font-weight: 800;
-                    cursor: pointer;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 10px;
-                    transition: all 0.2s;
-                    box-shadow: 0 10px 20px rgba(37, 99, 235, 0.2);
-                }
-
-                .login-submit-btn:hover {
-                    background: #1d4ed8;
-                    transform: translateY(-2px);
-                    box-shadow: 0 15px 30px rgba(37, 99, 235, 0.3);
-                }
-
-                .login-submit-btn:disabled {
-                    opacity: 0.6;
-                    cursor: not-allowed;
-                    transform: none;
-                }
-
-                .login-footer {
-                    margin-top: 40px;
-                    text-align: center;
-                    font-size: 11px;
-                    color: #475569;
-                    line-height: 1.6;
-                }
-
-                @media (max-width: 480px) {
-                    .login-card {
-                        padding: 32px 24px;
-                    }
-                    .brand-section h1 {
-                        font-size: 24px;
-                    }
-                }
-            `}</style>
+                    {/* Footer */}
+                    <p className="text-center text-xs text-slate-500 mt-8">
+                        &copy; {new Date().getFullYear()} GPS para Fuerza de Ventas. <br />
+                        Todos los derechos reservados.
+                    </p>
+                </div>
+            </div>
         </div>
     );
 };

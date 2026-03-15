@@ -1,37 +1,99 @@
-:root {
-    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-    line-height: 1.5;
-    font-weight: 400;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-    color-scheme: light dark;
-    color: rgba(255, 255, 255, 0.87);
-    background-color: #242424;
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
 
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+  body {
+    @apply bg-dark-950 text-white font-sans;
+    @apply antialiased;
+  }
+
+  button {
+    @apply transition-all duration-200;
+  }
+
+  input,
+  textarea,
+  select {
+    @apply transition-colors duration-200;
+  }
 }
 
-body {
-    margin: 0;
-    display: flex;
-    place-items: center;
-    min-width: 320px;
-    min-height: 100vh;
+@layer components {
+  /* Glass morphism effect */
+  .glass {
+    @apply bg-opacity-10 backdrop-blur-md bg-white border border-white border-opacity-10;
+    @apply rounded-2xl shadow-lg;
+  }
+
+  .glass-dark {
+    @apply bg-dark-900 bg-opacity-50 backdrop-blur-md border border-white border-opacity-5;
+    @apply rounded-xl shadow-card;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white bg-opacity-10 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-opacity-20;
+  }
+
+  /* Smooth transitions */
+  .transition-smooth {
+    @apply transition-all duration-300 ease-out;
+  }
+
+  /* Text gradients */
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary-500 to-blue-500 bg-clip-text text-transparent;
+  }
+
+  /* Glow effect */
+  .glow-effect {
+    @apply shadow-glow;
+  }
 }
 
-/* Mobile viewport */
-@media (max-width: 768px) {
-    body {
-        min-height: 100dvh;
-    }
+@layer utilities {
+  .center {
+    @apply flex items-center justify-center;
+  }
+
+  .flex-center-col {
+    @apply flex flex-col items-center justify-center;
+  }
 }
 
-/* Touch device optimizations */
-@media (hover: none) and (pointer: coarse) {
-    button, a {
-        min-height: 44px;
-        min-width: 44px;
-    }
+/* Leaflet customization */
+.leaflet-container {
+  @apply bg-dark-900 h-full w-full;
+}
+
+.leaflet-control-attribution {
+  @apply hidden;
+}
+
+/* Mobile viewport optimization */
+@media (max-width: 640px) {
+  html {
+    font-size: 14px;
+  }
+
+  button, a {
+    @apply min-h-[44px] min-w-[44px];
+  }
 }
