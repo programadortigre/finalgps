@@ -1,12 +1,19 @@
 async function detectStops(client, tripId, employeeId) {
-    const DISTANCE_THRESHOLD = 30;      // metros - máxima dispersión para agrupar
-    const MIN_DURATION_MS = 3 * 60 * 1000; // 3 minutos mínimo
+    const DISTANCE_THRESHOLD = 20;      // 20 metros (Requisito Producción)
+    const SPEED_THRESHOLD = 2.0 / 3.6;  // 2 km/h en m/s
+    const MIN_DURATION_MS = 90 * 1000;  // 90 segundos mínimo
+    const MAX_SPREAD = 25;              // 25 metros máxima dispersión
 
-    // ✅ Obtener todos los puntos ordenados cronológicamente
-    const res = await client.query(
-        'SELECT id, latitude, longitude, speed, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp ASC',
-        [tripId]
-    );
+    // ✅ Usar puntos MATCHED si existen, si no, usar RAW
+    const matchedCount = await client.query('SELECT count(*) FROM matched_locations WHERE trip_id = $1', [tripId]);
+    let query;
+    if (parseInt(matchedCount.rows[0].count) > 0) {
+        query = 'SELECT id, latitude, longitude, speed, timestamp FROM matched_locations WHERE trip_id = $1 ORDER BY timestamp ASC';
+    } else {
+        query = 'SELECT id, latitude, longitude, speed, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp ASC';
+    }
+
+    const res = await client.query(query, [tripId]);
 
     const points = res.rows;
     if (points.length < 5) {

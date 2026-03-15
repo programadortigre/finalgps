@@ -1,4 +1,5 @@
 const stopDetector = require('./stopDetector');
+const osrmService = require('./osrmService');
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -75,10 +76,24 @@ async function updateTripRoute(client, tripId) {
             ) q
         `);
 
-        // Más simple: usar Window Functions con ST_SimplifyPreserveTopology
+        // 3. Reconstruir ruta usando puntos MATCHED (Ajustada a carretera)
+        await client.query(`
+            WITH matched_route AS (
+                SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) AS geom_line
+                FROM matched_locations
+                WHERE trip_id = $1
+            )
+            INSERT INTO trip_routes (trip_id, geom_matched, updated_at)
+            SELECT $1, geom_line::geography, CURRENT_TIMESTAMP
+            FROM matched_route
+            ON CONFLICT (trip_id) DO UPDATE SET
+                geom_matched = EXCLUDED.geom_matched,
+                updated_at = CURRENT_TIMESTAMP
+        `, [tripId]);
+
         const result = await client.query(`
             WITH route AS (
-                SELECT ST_MakeLine(ARRAY_AGG(geom ORDER BY timestamp)) AS geom_line,
+                SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) AS geom_line,
                        COUNT(*) AS full_count
                 FROM locations
                 WHERE trip_id = $1
@@ -235,7 +250,68 @@ async function processBatch(employeeId, points) {
             ) WHERE id = $1
         `, [tripId]);
 
-        // Detect stops
+        // ✅ ENLAZAR CON MAP MATCHING (Segmentos de 20-50 puntos)
+        // Buscamos puntos no procesados para este viaje
+        const unmatchedResult = await client.query(
+            'SELECT id, latitude as lat, longitude as lng, speed, accuracy, timestamp FROM locations WHERE trip_id = $1 AND is_matched = FALSE ORDER BY timestamp ASC',
+            [tripId]
+        );
+
+        if (unmatchedResult.rows.length >= 20) {
+            console.log(`[OSRM] Trip ${tripId}: procesando segmento de ${unmatchedResult.rows.length} puntos...`);
+            const rawPoints = unmatchedResult.rows.map(r => ({
+                id: r.id,
+                lat: parseFloat(r.lat),
+                lng: parseFloat(r.lng),
+                speed: parseFloat(r.speed),
+                accuracy: parseFloat(r.accuracy),
+                timestamp: parseInt(r.timestamp)
+            }));
+
+            // 1. Gap Detection & Interpolation
+            const processedPoints = osrmService.interpolateGaps(rawPoints);
+
+            // 2. OSRM Match
+            const matchData = await osrmService.matchSegment(processedPoints);
+
+            if (matchData && matchData.tracepoints) {
+                for (let i = 0; i < matchData.tracepoints.length; i++) {
+                    const tp = matchData.tracepoints[i];
+                    const originalP = processedPoints[i];
+
+                    if (tp && tp.location) {
+                        await client.query(
+                            `INSERT INTO matched_locations 
+                            (location_id, trip_id, latitude, longitude, geom, timestamp, speed, heading, match_confidence, waypoint_index, road_name, road_type, is_interpolated)
+                            VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $5, $6, $7, $8, $9, $10, $11, $12)`,
+                            [
+                                originalP.id || null, // null si es interpolado
+                                tripId,
+                                tp.location[1], // OSRM devuelve [lng, lat]
+                                tp.location[0],
+                                originalP.timestamp,
+                                originalP.speed,
+                                tp.waypoint_index, // waypoint index
+                                matchData.matchings[tp.matchings_index] ? matchData.matchings[tp.matchings_index].confidence : 0,
+                                tp.waypoint_index,
+                                tp.name || 'Unknown Road',
+                                '', // road type (annotations requeridas para más detalle)
+                                originalP.is_interpolated || false
+                            ]
+                        );
+                    }
+                }
+                
+                // Marcar puntos originales como procesados
+                const originalIds = rawPoints.map(p => p.id);
+                await client.query(
+                    'UPDATE locations SET is_matched = TRUE WHERE id = ANY($1)',
+                    [originalIds]
+                );
+            }
+        }
+
+        // Detect stops using matched locations if available
         await stopDetector.detectStops(client, tripId, employeeId);
 
         await client.query('COMMIT');

@@ -236,19 +236,26 @@ router.post('/batch', auth, async (req, res) => {
         });
 
         // Real-time update for admins (solo último punto válido)
-        const io = getIO();
-        if (io) {
-            const lastPoint = filteredPoints[filteredPoints.length - 1];
-            io.to('admins').emit('location_update', {
-                employeeId,
-                name: req.user.name, // ✅ FIX: Usar 'name' en lugar de 'employeeName'
-                lat: lastPoint.lat,
-                lng: lastPoint.lng,
-                speed: lastPoint.speed,
-                accuracy: lastPoint.accuracy,
-                state: lastPoint.state || 'STOPPED',
-                timestamp: lastPoint.timestamp
-            });
+        // ✅ USAR REDIS PUB/SUB para escalabilidad cross-instance
+        const lastPoint = filteredPoints[filteredPoints.length - 1];
+        const updateData = {
+            employeeId,
+            name: req.user.name,
+            lat: lastPoint.lat,
+            lng: lastPoint.lng,
+            speed: lastPoint.speed,
+            accuracy: lastPoint.accuracy,
+            state: lastPoint.state || 'STOPPED',
+            timestamp: lastPoint.timestamp
+        };
+
+        try {
+            await redis.publish('location_updates', JSON.stringify(updateData));
+        } catch (err) {
+            console.error('[Redis] Failed to publish location update:', err);
+            // Fallback al socket local si redis falla
+            const io = getIO();
+            if (io) io.to('admins').emit('location_update', updateData);
         }
 
         res.status(202).json({
@@ -286,18 +293,16 @@ router.post('/status', auth, async (req, res) => {
                 ORDER BY timestamp DESC LIMIT 1
             `, [employeeId]);
 
-            let updateData = {
-                employeeId,
-                name: req.user.name,
-                state: state,
-                timestamp: Date.now()
-            };
-
             if (lastLoc.rows.length > 0) {
                 updateData = { ...updateData, ...lastLoc.rows[0] };
             }
 
-            io.to('admins').emit('location_update', updateData);
+            try {
+                await redis.publish('location_updates', JSON.stringify(updateData));
+            } catch (err) {
+                console.error('[Redis] Failed to publish status update:', err);
+                io.to('admins').emit('location_update', updateData);
+            }
         }
 
         // Actualizar base de datos para cerrar el viaje si es OFFLINE

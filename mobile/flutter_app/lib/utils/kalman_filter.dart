@@ -21,7 +21,7 @@ class KalmanFilter {
   // ---------------------------------------------------------------------------
   static double _qFromSpeed(double? speedKmh) {
     final v = speedKmh ?? 0;
-    if (v < 3) return 0.001;     // parado
+    if (v < 3) return 0.005;     // FIX V3: parado (suavizado menos agresivo para asentar rápido)
     if (v < 15) return 0.01;     // caminando
     if (v < 60) return 0.05;     // ciudad
     if (v < 120) return 0.2;     // autopista

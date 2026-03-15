@@ -181,11 +181,45 @@ class ApiService {
     return null;
   }
 
-  Future<String?> getToken() => _storage.read(key: 'token');
-  Future<String?> getUserName() => _storage.read(key: 'user_name');
-  Future<String?> getUserRole() => _storage.read(key: 'user_role');
-  Future<String?> getUserEmail() => _storage.read(key: 'user_email');
-  Future<String?> getUserId() => _storage.read(key: 'user_id');
+  Future<String?> getToken() async {
+    try {
+      return await _storage.read(key: 'token');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> getUserName() async {
+    try {
+      return await _storage.read(key: 'user_name');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> getUserRole() async {
+    try {
+      return await _storage.read(key: 'user_role');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> getUserEmail() async {
+    try {
+      return await _storage.read(key: 'user_email');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> getUserId() async {
+    try {
+      return await _storage.read(key: 'user_id');
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// 📍 Obtener historial de viajes por rango de fechas (NUEVO ENDPOINT)
   Future<List<Map<String, dynamic>>?> fetchTripHistory(int employeeId, String startDate, String endDate) async {

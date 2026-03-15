@@ -1,13 +1,11 @@
 const { Server } = require('socket.io');
+const Redis = require('ioredis');
 
 let io;
+let redisSub;
 
 /**
- * Inicializar Socket.io para actualizaciones en tiempo real
- * Sistema de salas:
- * - 'admins': reciben actualizaciones de todas las ubicaciones
- * - 'trip:{tripId}': reciben actualizaciones específicas de cada viaje
- * - 'user:{userId}': notificaciones personales
+ * Inicializar Socket.io con REDIS PUB/SUB para soporte multi-instancia
  */
 const initSocket = (server) => {
     io = new Server(server, {
@@ -15,6 +13,31 @@ const initSocket = (server) => {
             origin: ['http://localhost:5173', 'http://admin-panel:80', 'http://admin-panel'],
             methods: ["GET", "POST"],
             credentials: true
+        }
+    });
+
+    // ✅ CONFIGURAR REDIS SUBSCRIBER
+    const redisConfig = {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: process.env.REDIS_PORT || 6379,
+    };
+    
+    redisSub = new Redis(redisConfig);
+    
+    redisSub.subscribe('location_updates', (err) => {
+        if (err) console.error('[Redis] Error subscribing to location_updates:', err.message);
+        else console.log('[Redis] Subscribed to location_updates channel ✅');
+    });
+
+    redisSub.on('message', (channel, message) => {
+        if (channel === 'location_updates') {
+            try {
+                const data = JSON.parse(message);
+                // Broadcast a todos los admins conectados a ESTA instancia
+                io.to('admins').emit('location_update', data);
+            } catch (e) {
+                console.error('[Redis] Error parsing pub/sub message:', e);
+            }
         }
     });
 

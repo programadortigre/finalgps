@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../services/api_service.dart';
 import 'auth_wrapper.dart';
 import 'admin_monitoring_screen.dart';
@@ -25,15 +26,22 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   LatLng? _position;
   double  _speed = 0;
   double  _accuracy = 0;
-  String  _state = "SIN_MOVIMIENTO";
+  String  _state = "Quieto";
+  
+  void _log(String tag, String msg) => debugPrint('[$tag] $msg');
   double  _distanceToday = 0;
   final Distance _distCalc = const Distance();
 
   List<List<LatLng>> _segments = [[]];
   bool _isOnline = false;
+  bool _isProcessing = false; // Bloqueo de UI durante cambios de estado
   bool _followMe = true;
+  DateTime? _lastHeartbeat;    // Último pulso recibido del servicio
+  bool _serviceConnected = true; 
   StreamSubscription<Map<String, dynamic>?>? _stateSub;
   StreamSubscription<Map<String, dynamic>?>? _locationEventSub;
+  StreamSubscription<Map<String, dynamic>?>? _heartbeatSub;
+  Timer? _healthCheckTimer;    // Monitor de heartbeat
 
   // ─ User info ─
   String _userName = '';
@@ -73,8 +81,38 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
     // Check initial state
     service.isRunning().then((isRunning) {
       if (mounted) {
-        setState(() => _isOnline = isRunning);
+        setState(() {
+          _isOnline = isRunning;
+          if (isRunning) _lastHeartbeat = DateTime.now();
+        });
         if (isRunning) _startClock();
+      }
+    });
+
+    // Monitor de salud de la conexión con el servicio
+    _healthCheckTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (_isOnline && _lastHeartbeat != null) {
+        final diff = DateTime.now().difference(_lastHeartbeat!).inSeconds;
+        if (diff > 60) { // Timeout de 60s
+           if (mounted && _serviceConnected) {
+             setState(() => _serviceConnected = false);
+             debugPrint('[UI] Heartbeat perdido > 60s. Posible servicio muerto.');
+           }
+        } else if (mounted && !_serviceConnected) {
+          setState(() => _serviceConnected = true);
+        }
+      }
+    });
+
+    _heartbeatSub = service.on('heartbeat').listen((event) {
+      if (mounted) {
+        setState(() {
+          _lastHeartbeat = DateTime.now();
+          _serviceConnected = true;
+          if (event != null && event['distance'] != null) {
+             _distanceToday = (event['distance'] as num).toDouble();
+          }
+        });
       }
     });
 
@@ -83,6 +121,8 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
         final active = event['is_active'] == true;
         setState(() {
           _isOnline = active;
+          _isProcessing = false; // Liberar bloqueo
+          if (active) _lastHeartbeat = DateTime.now();
         });
         if (active && _clockTimer == null) {
           _startClock();
@@ -110,34 +150,85 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
           if (event['lat'] != null && event['lng'] != null) {
             final ll = LatLng((event['lat'] as num).toDouble(), (event['lng'] as num).toDouble());
             
+            // Sincronizar distancia si viene del servicio (Source of Truth)
+            if (event['total_distance'] != null) {
+               _distanceToday = (event['total_distance'] as num).toDouble();
+            }
+
             // Persistir sessionStart si no existe y estamos online
             if (_isOnline && _sessionStart == null) {
                _restoreOrStartSession();
             }
 
-            if (_position != null && _isOnline) {
-              final dist = _distCalc.as(LengthUnit.Kilometer, _position!, ll);
-              if (dist > 0.005) { // 5 metros
-                _distanceToday += dist;
-                if (_segments.isEmpty) _segments.add([]);
-                if (_segments.last.isEmpty) _segments.last.add(_position!);
+            if (_isOnline) {
+              // Optimización de segmentos: evitar múltiples vacíos y limitar puntos
+              if (_segments.isEmpty) _segments.add([]);
+              
+              // Límite de puntos totales (2000 - FIX V3)
+              int totalPoints = _segments.fold(0, (sum, seg) => sum + seg.length);
+              if (totalPoints > 2000) {
+                 _trimPoints(totalPoints - 2000 + 1);
+              }
+
+              if (_segments.last.isEmpty) {
                 _segments.last.add(ll);
+              } else {
+                final lastPoint = _segments.last.last;
+                // Solo agregar si hay movimiento real (> 5m) para no saturar 1500 pts con ruido
+                if (_distCalc.as(LengthUnit.Meter, lastPoint, ll) > 5) {
+                  _segments.last.add(ll);
+                }
               }
             }
             
             _position = ll;
-            if (_followMe) _mapCtrl.move(ll, _mapCtrl.camera.zoom);
+            // Validar MapController antes de mover
+            if (_followMe) {
+               try {
+                  // zoom actual
+                  final currentZoom = _mapCtrl.camera.zoom;
+                  _mapCtrl.move(ll, currentZoom);
+               } catch(e) {
+                  debugPrint('MapController not ready: $e');
+               }
+            }
           }
         });
       }
     });
   }
 
+  // Elimina puntos antiguos para mantener rendimiento (Límite 2000 pts)
+  void _trimPoints(int countToBlob) {
+    int removed = 0;
+    while (removed < countToBlob && _segments.isNotEmpty) {
+      if (_segments.first.isNotEmpty) {
+        _segments.first.removeAt(0);
+        removed++;
+      } else {
+        _segments.removeAt(0);
+        if (_segments.isEmpty) _segments.add([]);
+      }
+    }
+  }
+
   Future<void> _restoreOrStartSession() async {
+    // No restaurar si no estamos online realmente
+    if (!_isOnline) return;
+
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getInt('session_start_ms');
+    
     if (saved != null) {
-      _sessionStart = DateTime.fromMillisecondsSinceEpoch(saved);
+      final startTime = DateTime.fromMillisecondsSinceEpoch(saved);
+      // TTL de 12 horas: Si la sesión es más vieja, se limpia.
+      if (DateTime.now().difference(startTime).inHours < 12) {
+        _sessionStart = startTime;
+      } else {
+        await prefs.remove('session_start_ms');
+        _sessionStart = DateTime.now();
+        await prefs.setInt('session_start_ms', _sessionStart!.millisecondsSinceEpoch);
+      }
     } else {
       _sessionStart = DateTime.now();
       await prefs.setInt('session_start_ms', _sessionStart!.millisecondsSinceEpoch);
@@ -145,49 +236,53 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   }
 
   Future<void> _loadTodayRoute() async {
-    final routes = await _api.fetchTodayRoutes();
-    if (routes != null && mounted) {
-      setState(() {
-        _distanceToday = 0;
-        _segments.clear();
-        for (var r in routes) {
-           _distanceToday += (r['distance_meters'] as num? ?? 0).toDouble() / 1000.0;
-           final pts = r['points'] as List;
-           if (pts.isNotEmpty) {
-             _segments.add(pts.map((p) => LatLng(
-                 (p['lat'] as num).toDouble(), 
-                 (p['lng'] as num).toDouble()
-             )).toList());
-           }
-        }
-        
-        // Ensure there is at least one active segment
-        if (_segments.isEmpty) {
-          _segments.add([]);
-        }
+    try {
+      final routes = await _api.fetchTodayRoutes();
+      if (routes != null && mounted) {
+        setState(() {
+          _distanceToday = 0;
+          _segments.clear();
+          for (var r in routes) {
+             _distanceToday += (r['distance_meters'] as num? ?? 0).toDouble() / 1000.0;
+             final pts = r['points'] as List;
+             if (pts.isNotEmpty) {
+               _segments.add(pts.map((p) => LatLng(
+                   (p['lat'] as num).toDouble(), 
+                   (p['lng'] as num).toDouble()
+               )).toList());
+             }
+          }
+          
+          if (_segments.isEmpty) _segments.add([]);
 
-        // Move map to the last known point if available
-        if (_segments.isNotEmpty && _segments.last.isNotEmpty && _followMe) {
-           _mapCtrl.move(_segments.last.last, 16);
-        }
-      });
+          if (_segments.isNotEmpty && _segments.last.isNotEmpty && _followMe) {
+             _mapCtrl.move(_segments.last.last, 16);
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error cargando ruta de hoy: $e');
     }
   }
 
   Future<void> _loadUserInfo() async {
-    final name = await _api.getUserName() ?? 'Usuario';
-    final role = await _api.getUserRole() ?? '';
-    final parts = name.trim().split(' ');
-    final initials = parts.length >= 2
-        ? '${parts[0][0]}${parts[1][0]}'.toUpperCase()
-        : name.isNotEmpty ? name[0].toUpperCase() : 'U';
-    if (mounted) {
-      setState(() {
-        _userName = name;
-        _userRole = role;
-        _userInitials = initials;
-        _isAdmin = role.toLowerCase() == 'admin';
-      });
+    try {
+      final name = await _api.getUserName() ?? 'Usuario';
+      final role = await _api.getUserRole() ?? '';
+      final parts = name.trim().split(' ');
+      final initials = parts.length >= 2
+          ? '${parts[0][0]}${parts[1][0]}'.toUpperCase()
+          : name.isNotEmpty ? name[0].toUpperCase() : 'U';
+      if (mounted) {
+        setState(() {
+          _userName = name;
+          _userRole = role;
+          _userInitials = initials;
+          _isAdmin = role.toLowerCase() == 'admin';
+        });
+      }
+    } catch (e) {
+      debugPrint('Error cargando info de usuario: $e');
     }
   }
 
@@ -195,6 +290,8 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   void dispose() {
     _stateSub?.cancel();
     _locationEventSub?.cancel();
+    _heartbeatSub?.cancel();
+    _healthCheckTimer?.cancel();
     _clockTimer?.cancel();
     _pulseCtrl.dispose();
     _slideCtrl.dispose();
@@ -228,20 +325,59 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   }
 
   Future<void> _toggleOnline() async {
+    if (_isProcessing) return; // Protección contra double-tap
+
     final service = FlutterBackgroundService();
     var isRunning = await service.isRunning();
     
+    setState(() => _isProcessing = true);
+
     if (!isRunning) {
-      if (_segments.isEmpty || _segments.last.isNotEmpty) {
-        setState(() => _segments.add([])); // Start a new disconnected segment
+      if (_segments.isEmpty || (_segments.isNotEmpty && _segments.last.isNotEmpty)) {
+        setState(() => _segments.add([])); // New segment only if last is not empty
       }
-      await service.startService();
-      // Update optimism (events will confirm)
-      setState(() => _isOnline = true);
+      
+      // Permiso de notificaciones (Android 13+)
+      await Permission.notification.request();
+
+      // Solicitar permisos críticos antes de arrancar el servicio (No se puede hacer en el isolate)
+      if (await Permission.locationAlways.request().isDenied) {
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(content: Text('Se requiere permiso de ubicación "Siempre" para el rastreo.'))
+           );
+        }
+        setState(() => _isProcessing = false);
+        return;
+      }
+
+      if (await Permission.activityRecognition.request().isDenied) {
+        _log('ACTIVITY', 'Permiso de actividad denegado — el ahorro de batería será menos agresivo');
+      }
+
+      final success = await service.startService();
+      if (success) {
+        _startClock();
+        // Recordatorio de optimización de batería
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Recomendado: Desactiva "Optimización de batería" para este app en Ajustes.'),
+              duration: Duration(seconds: 5),
+              backgroundColor: Color(0xFF6C63FF),
+            )
+          );
+        }
+      } else {
+        setState(() {
+          _isOnline = false;
+          _isProcessing = false;
+        });
+      }
     } else {
       service.invoke('stopService');
-      // Update optimism
-      setState(() => _isOnline = false);
+      _stopClock();
+      // No cambiamos _isOnline aquí, esperamos al evento 'trackingState'
       try {
         await _api.updateStatus('OFFLINE'); 
       } catch (e) {
