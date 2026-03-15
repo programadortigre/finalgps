@@ -92,194 +92,198 @@ const Dashboard = ({ user, onLogout }) => {
     };
 
     return (
-        <div className="dashboard-layout">
+        <div className="dashboard-layout" style={{ background: '#020617' }}>
             {/* Overlay para cerrar sidebar en mobile */}
             {isMobile && sidebarOpen && (
                 <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
             )}
 
-            <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
-                <header className="sidebar-header">
-                    <div className="sidebar-logo">📍</div>
-                    <div>
-                        <h2>GPS Tracker</h2>
-                        <span>{user.user?.name || user.name || 'Admin'}</span>
+            <aside className={`sidebar glass ${sidebarOpen ? 'open' : ''}`} style={{ borderRight: '1px solid rgba(255,255,255,0.05)' }}>
+                <header className="sidebar-header" style={{ padding: '24px 20px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div style={{ 
+                        width: '40px', height: '40px', background: 'hsl(221, 83%, 53%)', 
+                        borderRadius: '10px', display: 'flex', alignItems: 'center', 
+                        justifyContent: 'center', fontSize: '20px', boxShadow: '0 0 20px rgba(37, 99, 235, 0.3)'
+                    }}>📍</div>
+                    <div style={{ marginLeft: '12px' }}>
+                        <h2 style={{ fontFamily: 'Outfit', letterSpacing: '-0.02em', fontSize: '18px' }}>Tracker Pro</h2>
+                        <span style={{ color: '#94a3b8', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{user.user?.name || user.name || 'Admin'}</span>
                     </div>
                 </header>
 
-                <nav className="sidebar-nav">
+                <nav className="sidebar-nav" style={{ padding: '20px 12px' }}>
                     <button
                         onClick={() => { setView('live'); if (isMobile) setSidebarOpen(false); }}
-                        className={view === 'live' ? 'active' : ''}
+                        className={`transition-all ${view === 'live' ? 'active' : ''}`}
+                        style={{
+                            background: view === 'live' ? 'rgba(37, 99, 235, 0.15)' : 'transparent',
+                            color: view === 'live' ? '#60a5fa' : '#94a3b8',
+                            marginBottom: '4px'
+                        }}
                     >
-                        <Activity size={20} />
-                        <span>En Vivo</span>
-                        {activeCount > 0 && <span className="badge-count">{activeCount}</span>}
+                        <Activity size={18} />
+                        <span style={{ fontWeight: view === 'live' ? '600' : '500' }}>Mapa en Vivo</span>
+                        {activeCount > 0 && <span className="badge-count" style={{ background: '#2563eb', boxShadow: '0 0 10px rgba(37,99,235,0.5)' }}>{activeCount}</span>}
                     </button>
                     <button
                         onClick={() => { setView('history'); if (isMobile) setSidebarOpen(false); }}
-                        className={view === 'history' ? 'active' : ''}
+                        className={`transition-all ${view === 'history' ? 'active' : ''}`}
+                        style={{
+                            background: view === 'history' ? 'rgba(37, 99, 235, 0.15)' : 'transparent',
+                            color: view === 'history' ? '#60a5fa' : '#94a3b8',
+                            marginBottom: '4px'
+                        }}
                     >
-                        <History size={20} />
-                        <span>Historial</span>
+                        <History size={18} />
+                        <span style={{ fontWeight: view === 'history' ? '600' : '500' }}>Historial</span>
                     </button>
                     <button
                         onClick={() => { setView('vendors'); if (isMobile) setSidebarOpen(false); }}
-                        className={view === 'vendors' ? 'active' : ''}
+                        className={`transition-all ${view === 'vendors' ? 'active' : ''}`}
+                        style={{
+                            background: view === 'vendors' ? 'rgba(37, 99, 235, 0.15)' : 'transparent',
+                            color: view === 'vendors' ? '#60a5fa' : '#94a3b8'
+                        }}
                     >
-                        <UserCog size={20} />
-                        <span>Vendedores</span>
+                        <UserCog size={18} />
+                        <span style={{ fontWeight: view === 'vendors' ? '600' : '500' }}>Vendedores</span>
                     </button>
                 </nav>
 
                 {view === 'history' && (
-                    <div className="employee-list">
-                        <h3><Users size={14} /> Vendedores</h3>
-                        {employees.map(e => (
-                            <div
-                                key={e.id}
-                                className={`employee-item ${selectedEmployee?.id === e.id ? 'selected' : ''}`}
-                                onClick={() => { setSelectedEmployee(e); if (isMobile) setSidebarOpen(false); }}
-                            >
-                                <span className={`dot ${activeLocations[e.id] ? 'dot-active' : ''}`} />
-                                {e.name}
-                            </div>
-                        ))}
-                        {employees.length === 0 && <p className="empty-msg">Sin vendedores</p>}
+                    <div className="employee-list" style={{ padding: '0 12px' }}>
+                        <h3 style={{ fontSize: '10px', color: '#475569', marginBottom: '12px', fontWeight: '700' }}><Users size={12} /> LISTA DE VENDEDORES</h3>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            {employees.map(e => (
+                                <div
+                                    key={e.id}
+                                    className={`employee-item transition-all ${selectedEmployee?.id === e.id ? 'selected' : ''}`}
+                                    onClick={() => { setSelectedEmployee(e); if (isMobile) setSidebarOpen(false); }}
+                                    style={{
+                                        background: selectedEmployee?.id === e.id ? 'hsl(var(--primary) / 0.2)' : 'transparent',
+                                        border: '1px solid',
+                                        borderColor: selectedEmployee?.id === e.id ? 'hsl(var(--primary) / 0.3)' : 'transparent',
+                                        borderRadius: '10px',
+                                        padding: '10px 12px'
+                                    }}
+                                >
+                                    <span style={{ 
+                                        width: '8px', height: '8px', borderRadius: '50%', 
+                                        background: activeLocations[e.id] ? '#22c55e' : '#475569',
+                                        boxShadow: activeLocations[e.id] ? '0 0 8px #22c55e' : 'none'
+                                    }} />
+                                    <span style={{ fontSize: '13.5px' }}>{e.name}</span>
+                                </div>
+                            ))}
+                        </div>
+                        {employees.length === 0 && <p className="empty-msg">Sin vendedores registrados</p>}
                     </div>
                 )}
 
                 {view === 'live' && (
-                    <div className="employee-list">
-                        <h3 style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span style={{ color: isConnected ? '#22c55e' : '#ef4444', fontSize: '10px' }}>●</span>
-                            {isConnected ? 'Conectado' : 'Desconectado'}
-                        </h3>
+                    <div className="employee-list" style={{ padding: '0 12px' }}>
+                        <div style={{ 
+                            padding: '8px 12px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', 
+                            border: '1px solid rgba(255,255,255,0.05)', marginBottom: '16px',
+                            display: 'flex', alignItems: 'center', gap: '8px'
+                        }}>
+                             <span style={{ 
+                                width: '8px', height: '8px', borderRadius: '50%', 
+                                background: isConnected ? '#22c55e' : '#ef4444',
+                                animation: isConnected ? 'pulse-green 2s infinite' : 'none'
+                             }} />
+                             <span style={{ fontSize: '11px', fontWeight: '600', color: isConnected ? '#22c55e' : '#ef4444' }}>
+                                {isConnected ? 'SISTEMA EN LÍNEA' : 'SIN CONEXIÓN'}
+                             </span>
+                        </div>
                         
                         {/* Search Box */}
-                        <div style={{ position: 'relative', marginBottom: '12px' }}>
-                            <Search size={16} style={{ position: 'absolute', left: '8px', top: '10px', color: '#64748b', pointerEvents: 'none' }} />
+                        <div style={{ position: 'relative', marginBottom: '16px' }}>
+                            <Search size={14} style={{ position: 'absolute', left: '12px', top: '11px', color: '#64748b' }} />
                             <input
                                 type="text"
                                 placeholder="Buscar vendedor..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
+                                className="transition-all"
                                 style={{
-                                    width: '100%',
-                                    paddingLeft: '32px',
-                                    paddingRight: '8px',
-                                    paddingTop: '8px',
-                                    paddingBottom: '8px',
-                                    border: '1px solid #334155',
-                                    borderRadius: '6px',
-                                    background: '#1e293b',
-                                    color: '#e2e8f0',
-                                    fontSize: '13px',
-                                    outline: 'none',
+                                    width: '100%', padding: '10px 12px 10px 36px',
+                                    border: '1px solid rgba(255,255,255,0.05)', borderRadius: '10px',
+                                    background: 'rgba(255,255,255,0.03)', color: '#f1f5f9',
+                                    fontSize: '13px', outline: 'none'
                                 }}
-                                onFocus={(e) => e.target.style.borderColor = '#64748b'}
-                                onBlur={(e) => e.target.style.borderColor = '#334155'}
                             />
                         </div>
 
-                        {/* Status Filters */}
-                        <div style={{ marginBottom: '12px' }}>
-                            <div style={{ fontSize: '11px', color: '#475569', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <Filter size={12} /> Filtrar por estado
-                            </div>
+                        {/* Status Filters - Styled properly */}
+                        <div style={{ marginBottom: '16px' }}>
                             <select
                                 value={selectedStatus}
                                 onChange={(e) => setSelectedStatus(e.target.value)}
+                                className="transition-all"
                                 style={{
-                                    width: '100%',
-                                    padding: '8px 10px',
-                                    border: '1px solid #334155',
-                                    borderRadius: '6px',
-                                    background: '#1e293b',
-                                    color: '#e2e8f0',
-                                    fontSize: '12px',
-                                    cursor: 'pointer',
+                                    width: '100%', padding: '10px',
+                                    border: '1px solid rgba(255,255,255,0.05)', borderRadius: '10px',
+                                    background: 'rgba(255,255,255,0.03)', color: '#f1f5f9',
+                                    fontSize: '12px', cursor: 'pointer', outline: 'none'
                                 }}
                             >
-                                <option value="all">Todos ({activeCount})</option>
-                                <option value="En auto">🚗 En auto ({statusStats['En auto']})</option>
+                                <option value="all">Filtro: Todos los estados</option>
+                                <option value="En auto">🚙 En auto ({statusStats['En auto']})</option>
                                 <option value="A pie">🚶 A pie ({statusStats['A pie']})</option>
-                                <option value="Lento">🐢 Lento ({statusStats['Lento']})</option>
-                                <option value="Quieto">⏸️ Quieto ({statusStats['Quieto']})</option>
+                                <option value="Lento">🚲 Lento ({statusStats['Lento']})</option>
+                                <option value="Quieto">⏸️ Detenido ({statusStats['Quieto']})</option>
                             </select>
                         </div>
 
                         {/* Live List */}
-                        <div style={{ marginBottom: '8px', fontSize: '11px', color: '#64748b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span>Mostrando {filteredLiveLocations.length} de {activeCount}</span>
-                            {selectedEmployee && view === 'live' && (
-                                <button 
-                                    onClick={() => setSelectedEmployee(null)}
-                                    style={{ background: '#2563eb', color: 'white', border: 'none', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', cursor: 'pointer' }}
-                                >
-                                    Ver todos
-                                </button>
-                            )}
-                        </div>
-                        <div style={{ flex: 1, overflowY: 'auto' }}>
+                        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             {filteredLiveLocations.length === 0 ? (
-                                <p className="empty-msg">{activeCount === 0 ? 'Sin empleados activos' : 'Sin resultados'}</p>
+                                <p className="empty-msg" style={{ textAlign: 'center', color: '#475569' }}>{activeCount === 0 ? 'No hay rastreos activos' : 'Sin coincidencias'}</p>
                             ) : (
                                 filteredLiveLocations.map(loc => (
                                     <div
                                         key={loc.employeeId}
                                         onClick={() => {
-                                            if (selectedEmployee?.id === loc.employeeId) {
-                                                setSelectedEmployee(null); // Unselect to see all
-                                            } else {
-                                                setSelectedEmployee({ id: loc.employeeId, name: loc.name });
-                                            }
+                                            setSelectedEmployee(selectedEmployee?.id === loc.employeeId ? null : { id: loc.employeeId, name: loc.name });
                                             if (isMobile) setSidebarOpen(false);
                                         }}
+                                        className="transition-all"
                                         style={{
-                                            padding: '10px 12px',
-                                            marginBottom: '6px',
-                                            background: (selectedEmployee?.id === loc.employeeId && view === 'live') ? '#2563eb30' : '#1e293b',
-                                            borderRadius: '6px',
+                                            padding: '12px',
+                                            background: (selectedEmployee?.id === loc.employeeId && view === 'live') ? 'hsl(var(--primary) / 0.15)' : 'rgba(255,255,255,0.02)',
+                                            borderRadius: '12px',
                                             cursor: 'pointer',
-                                            transition: 'all .15s',
-                                            borderLeft: (selectedEmployee?.id === loc.employeeId && view === 'live') 
-                                                ? '3px solid #60a5fa' 
-                                                : '3px solid #2563eb',
-                                            outline: (selectedEmployee?.id === loc.employeeId && view === 'live') ? '1px solid #60a5fa' : 'none'
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            if (!(selectedEmployee?.id === loc.employeeId && view === 'live')) {
-                                                e.currentTarget.style.background = '#334155';
-                                            }
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            if (!(selectedEmployee?.id === loc.employeeId && view === 'live')) {
-                                                e.currentTarget.style.background = '#1e293b';
-                                            }
+                                            border: '1px solid',
+                                            borderColor: (selectedEmployee?.id === loc.employeeId && view === 'live') ? 'hsl(var(--primary) / 0.3)' : 'rgba(255,255,255,0.05)',
+                                            position: 'relative',
+                                            overflow: 'hidden'
                                         }}
                                     >
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                            <span className={`dot ${activeLocations[loc.employeeId] ? 'dot-active' : ''}`} />
-                                            <span style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: '600', flex: 1 }}>
+                                        {(selectedEmployee?.id === loc.employeeId && view === 'live') && (
+                                            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '3px', background: 'hsl(var(--primary))' }} />
+                                        )}
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+                                            <div style={{ 
+                                                width: '6px', height: '6px', borderRadius: '50%', 
+                                                background: '#22c55e', 
+                                                boxShadow: '0 0 10px #22c55e'
+                                            }} />
+                                            <span style={{ color: '#f1f5f9', fontSize: '13px', fontWeight: '600', flex: 1 }}>
                                                 {loc.name || `Vendedor ${loc.employeeId}`}
-                                                {selectedEmployee?.id === loc.employeeId && view === 'live' && (
-                                                    <span style={{ marginLeft: '8px', fontSize: '10px', color: '#60a5fa', fontWeight: 'normal' }}>(siguiendo...)</span>
-                                                )}
                                             </span>
                                             <span style={{
-                                                background: (loc.state === 'En auto' || loc.state === 'VEHICULO' || loc.state === 'DRIVING') ? '#6366f150' : (loc.state === 'A pie' || loc.state === 'CAMINANDO' || loc.state === 'WALKING') ? '#22c55e50' : (loc.state === 'Quieto' || loc.state === 'SIN_MOVIMIENTO' || loc.state === 'STOPPED' || loc.state === 'DEEP_SLEEP') ? '#94a3b850' : '#f59e0b50',
-                                                color: (loc.state === 'En auto' || loc.state === 'VEHICULO' || loc.state === 'DRIVING') ? '#6366f1' : (loc.state === 'A pie' || loc.state === 'CAMINANDO' || loc.state === 'WALKING') ? '#22c55e' : (loc.state === 'Quieto' || loc.state === 'SIN_MOVIMIENTO' || loc.state === 'STOPPED' || loc.state === 'DEEP_SLEEP') ? '#94a3b8' : '#f59e0b',
-                                                padding: '2px 8px',
-                                                borderRadius: '4px',
-                                                fontSize: '10px',
-                                                fontWeight: '600'
+                                                background: (loc.state === 'En auto' || loc.state === 'VEHICULO' || loc.state === 'DRIVING') ? 'rgba(99, 102, 241, 0.15)' : (loc.state === 'A pie' || loc.state === 'CAMINANDO' || loc.state === 'WALKING') ? 'rgba(34, 197, 94, 0.15)' : (loc.state === 'Quieto' || loc.state === 'SIN_MOVIMIENTO' || loc.state === 'STOPPED' || loc.state === 'DEEP_SLEEP') ? 'rgba(148, 163, 184, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                                                color: (loc.state === 'En auto' || loc.state === 'VEHICULO' || loc.state === 'DRIVING') ? '#818cf8' : (loc.state === 'A pie' || loc.state === 'CAMINANDO' || loc.state === 'WALKING') ? '#4ade80' : (loc.state === 'Quieto' || loc.state === 'SIN_MOVIMIENTO' || loc.state === 'STOPPED' || loc.state === 'DEEP_SLEEP') ? '#94a3b8' : '#fbbf24',
+                                                padding: '2px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase'
                                             }}>
-                                                {loc.state?.replace(/_/g, ' ') || 'Desconocido'}
+                                                {loc.state?.replace(/_/g, ' ') || 'STOPPED'}
                                             </span>
                                         </div>
-                                        <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                                            📍 {loc.speed ? (loc.speed.toFixed(1) + ' km/h') : 'Detenido'}
+                                        <div style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <span>⚡ {loc.speed ? (loc.speed.toFixed(1) + ' km/h') : 'Inmóvil'}</span>
+                                            <span style={{ opacity: 0.3 }}>|</span>
+                                            <span>🕒 {loc.lastUpdate ? new Date(loc.lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '---'}</span>
                                         </div>
                                     </div>
                                 ))
@@ -288,17 +292,20 @@ const Dashboard = ({ user, onLogout }) => {
                     </div>
                 )}
 
-                <footer className="sidebar-footer">
-                    <button onClick={onLogout} className="logout-btn">
-                        <LogOut size={18} /> Cerrar Sesión
+                <footer className="sidebar-footer" style={{ padding: '16px 12px', marginTop: 'auto' }}>
+                    <button onClick={onLogout} className="logout-btn transition-all" style={{ 
+                        opacity: 0.8, borderRadius: '10px', padding: '12px', background: 'rgba(239, 68, 68, 0.1)',
+                        color: '#ef4444', fontWeight: '600', border: '1px solid rgba(239, 68, 68, 0.2)'
+                    }}>
+                        <LogOut size={16} /> Salir del sistema
                     </button>
                 </footer>
             </aside>
 
             <main className="main-content">
                 {isMobile && (
-                    <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <button className="mobile-menu-btn glass" style={{ top: '16px', left: '16px', background: 'rgba(15, 23, 42, 0.8)', padding: '10px' }} onClick={() => setSidebarOpen(!sidebarOpen)}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                             <line x1="3" y1="6" x2="21" y2="6"></line>
                             <line x1="3" y1="12" x2="21" y2="12"></line>
                             <line x1="3" y1="18" x2="21" y2="18"></line>
@@ -320,77 +327,39 @@ const Dashboard = ({ user, onLogout }) => {
 
             <style>{`
         .dashboard-layout { display: flex; height: 100vh; overflow: hidden; font-family: 'Inter', system-ui, sans-serif; }
-
-        /* Sidebar */
-        .sidebar { width: 260px; background: #0f172a; color: white; display: flex; flex-direction: column; flex-shrink: 0; transition: all .3s ease; }
-        .sidebar-header { padding: 20px 16px; border-bottom: 1px solid #1e293b; display: flex; align-items: center; gap: 12px; }
-        .sidebar-logo { font-size: 28px; }
-        .sidebar-header h2 { margin: 0; font-size: 17px; font-weight: 700; color: #f1f5f9; }
-        .sidebar-header span { font-size: 12px; color: #64748b; }
-
-        /* Nav */
-        .sidebar-nav { padding: 12px 10px; display: flex; flex-direction: column; gap: 4px; }
-        .sidebar-nav button {
-          display: flex; align-items: center; gap: 12px; padding: 11px 12px; width: 100%;
-          background: transparent; border: none; color: #94a3b8; cursor: pointer;
-          border-radius: 8px; text-align: left; font-size: 14px; font-weight: 500;
-          transition: background .15s, color .15s;
+        
+        @keyframes pulse-green {
+            0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
         }
-        .sidebar-nav button.active  { background: #1e3a5f; color: #60a5fa; }
-        .sidebar-nav button:hover:not(.active) { background: #1e293b; color: #e2e8f0; }
-        .badge-count { margin-left: auto; background: #2563eb; color: white; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 99px; }
 
-        /* Employee list */
-        .employee-list { flex: 1; padding: 12px 10px; overflow-y: auto; }
-        .employee-list h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #475569; padding: 0 4px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
-        .employee-item { padding: 9px 12px; cursor: pointer; border-radius: 8px; margin-bottom: 4px; font-size: 14px; color: #cbd5e1; display: flex; align-items: center; gap: 8px; transition: background .15s; }
-        .employee-item:hover   { background: #1e293b; }
-        .employee-item.selected { background: #1d4ed8; color: white; }
-        .dot       { width: 8px; height: 8px; border-radius: 50%; background: #475569; flex-shrink: 0; }
-        .dot-active { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
-        .empty-msg { font-size: 13px; color: #475569; padding: 8px 4px; }
+        /* Sidebar Glassmorphism override */
+        .sidebar { 
+          width: 280px; background: rgba(15, 23, 42, 0.95) !important; color: white; display: flex; 
+          flex-direction: column; flex-shrink: 0; transition: all .4s cubic-bezier(0.4, 0, 0.2, 1); 
+          backdrop-filter: blur(20px) !important;
+        }
+        
+        .sidebar-nav button.active { color: white !important; }
+        
+        .badge-count { margin-left: auto; color: white; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 6px; }
 
-        /* Footer */
-        .sidebar-footer { padding: 16px 10px; border-top: 1px solid #1e293b; }
-        .logout-btn { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 12px; background: #7f1d1d; border: none; color: #fca5a5; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background .15s; }
-        .logout-btn:hover { background: #991b1b; }
+        .employee-item:hover { background: rgba(255,255,255,0.05); }
+        .employee-item.selected { border-color: hsl(var(--primary)) !important; }
 
-        /* Main content */
         .main-content { flex: 1; overflow: hidden; position: relative; }
+        .sidebar-overlay { 
+            display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
+            background: rgba(0,0,0,.6); z-index: 998; backdrop-filter: blur(4px);
+        }
 
-        /* Mobile menu button */
-        .mobile-menu-btn { display: none; position: absolute; top: 12px; left: 12px; z-index: 999; background: #0f172a; border: none; color: white; padding: 8px; border-radius: 8px; cursor: pointer; }
-        .mobile-menu-btn:hover { background: #1e293b; }
-
-        /* Sidebar Overlay */
-        .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.5); z-index: 998; }
-
-        /* Mobile Responsive */
         @media (max-width: 767px) {
-          .dashboard-layout { flex-direction: column; }
           .sidebar { 
-            position: fixed; left: 0; top: 0; bottom: 0; width: 260px; 
+            position: fixed; left: 0; top: 0; bottom: 0; width: 280px; 
             z-index: 999; transform: translateX(-100%); 
           }
-          .sidebar.open { transform: translateX(0); box-shadow: 2px 0 8px rgba(0,0,0,.3); }
-          .mobile-menu-btn { display: flex; }
-          .sidebar-overlay { display: block; }
-          .main-content { padding-top: 44px; }
-          .sidebar-header span { display: none; }
-          .sidebar-header h2 { font-size: 16px; }
-          .sidebar-logo { font-size: 24px; }
-          .sidebar-nav button span:last-of-type { font-size: 13px; }
-          .employee-item { font-size: 13px; padding: 8px 10px; }
-          .employee-list h3 { font-size: 10px; }
-        }
-
-        @media (max-width: 480px) {
-          .sidebar { width: calc(100% - 40px); max-width: 260px; }
-          .sidebar-header { padding: 16px 12px; }
-          .sidebar-nav { padding: 8px 8px; gap: 2px; }
-          .sidebar-nav button { padding: 9px 10px; font-size: 13px; gap: 10px; }
-          .sidebar-nav svg { width: 18px; height: 18px; }
-          .mobile-menu-btn { width: 40px; height: 40px; padding: 8px; }
+          .sidebar.open { transform: translateX(0); box-shadow: 20px 0 50px rgba(0,0,0,0.5); }
         }
       `}</style>
         </div>

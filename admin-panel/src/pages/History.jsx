@@ -259,9 +259,23 @@ const History = ({ user }) => {
                                                 <td>{formatTime(stop.end_time)}</td>
                                                 <td><span className="hist-duration">{formatDuration(stop.duration_seconds)}</span></td>
                                                 <td>
-                                                    <span className="hist-coord">
-                                                        {stop.lat.toFixed(4)}, {stop.lng.toFixed(4)}
-                                                    </span>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                        <span className="hist-coord" style={{ fontSize: '11px', opacity: 0.7 }}>
+                                                            {stop.lat.toFixed(5)}, {stop.lng.toFixed(5)}
+                                                        </span>
+                                                        <a 
+                                                            href={`https://www.google.com/maps?q=${stop.lat},${stop.lng}`}
+                                                            target="_blank" rel="noopener noreferrer" 
+                                                            className="gmaps-link-small"
+                                                            style={{ 
+                                                                padding: '4px 8px', fontSize: '10px', background: 'rgba(255,255,255,0.05)', 
+                                                                border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px',
+                                                                color: '#60a5fa', textDecoration: 'none', fontWeight: '600'
+                                                            }}
+                                                        >
+                                                            🗺️ Ver Maps
+                                                        </a>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}
@@ -417,161 +431,78 @@ const History = ({ user }) => {
                 /* ─── Filter Bar ─── */
                 .hist-filterbar {
                     position: absolute;
-                    top: 12px;
+                    top: 20px;
                     left: 50%;
                     transform: translateX(-50%);
                     z-index: 50;
-                    background: rgba(15,23,42,0.92);
-                    backdrop-filter: blur(14px);
-                    -webkit-backdrop-filter: blur(14px);
-                    border: 1px solid rgba(255,255,255,0.08);
-                    border-radius: 16px;
-                    padding: 12px 18px;
-                    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
-                    max-width: calc(100vw - 24px);
-                    min-width: min(700px, calc(100vw - 24px));
+                    background: rgba(15, 23, 42, 0.7) !important;
+                    backdrop-filter: blur(16px) saturate(180%) !important;
+                    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+                    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                    border-radius: 20px;
+                    padding: 16px 24px;
+                    box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+                    max-width: calc(100vw - 40px);
+                    min-width: min(800px, calc(100vw - 40px));
                 }
-
-                .hist-filters {}
 
                 .hist-filter-row {
                     display: flex;
                     align-items: center;
-                    gap: 12px;
+                    gap: 20px;
                     flex-wrap: wrap;
                 }
 
                 .hist-filter-label {
-                    font-size: 14px;
+                    font-size: 16px;
                     font-weight: 700;
-                    color: #f1f5f9;
-                    flex-shrink: 0;
+                    color: #fff;
+                    font-family: 'Outfit', sans-serif;
+                    letter-spacing: -0.02em;
                 }
 
                 .hist-filter-group {
                     display: flex;
                     align-items: center;
-                    gap: 6px;
-                    flex-shrink: 0;
+                    gap: 10px;
                 }
 
                 .hist-field-label {
-                    font-size: 12px;
-                    color: #64748b;
-                    font-weight: 500;
-                    white-space: nowrap;
+                    font-size: 11px;
+                    color: #94a3b8;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    letter-spacing: 0.05em;
                 }
 
                 .hist-select, .hist-input {
-                    padding: 7px 10px;
-                    background: rgba(255,255,255,0.07);
-                    border: 1px solid rgba(255,255,255,0.1);
-                    border-radius: 9px;
-                    color: #e2e8f0;
+                    padding: 10px 14px;
+                    background: rgba(255, 255, 255, 0.05);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 12px;
+                    color: #fff;
                     font-size: 13px;
                     outline: none;
-                    transition: border-color 0.15s;
-                    cursor: pointer;
+                    transition: all 0.2s;
                 }
                 .hist-select:focus, .hist-input:focus {
                     border-color: #3b82f6;
-                    background: rgba(255,255,255,0.1);
+                    background: rgba(255, 255, 255, 0.1);
                 }
-                .hist-select option { background: #1e293b; }
 
                 .hist-refresh-btn {
-                    padding: 7px 16px;
+                    padding: 10px 20px;
                     background: #2563eb;
                     border: none;
-                    border-radius: 9px;
+                    border-radius: 12px;
                     color: white;
                     font-size: 13px;
-                    font-weight: 600;
-                    cursor: pointer;
-                    transition: background 0.15s;
-                    white-space: nowrap;
-                    margin-left: auto;
-                }
-                .hist-refresh-btn:hover { background: #1d4ed8; }
-
-                .hist-error {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    margin-top: 8px;
-                    padding: 8px 12px;
-                    background: rgba(239,68,68,0.15);
-                    border: 1px solid rgba(239,68,68,0.3);
-                    border-radius: 8px;
-                    color: #f87171;
-                    font-size: 12px;
-                }
-
-                /* ─── Detail Bar ─── */
-                .hist-detail-bar {
-                    display: flex;
-                    align-items: center;
-                    gap: 14px;
-                    flex-wrap: wrap;
-                }
-
-                .hist-back-btn {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    padding: 7px 14px;
-                    background: rgba(255,255,255,0.07);
-                    border: 1px solid rgba(255,255,255,0.1);
-                    border-radius: 9px;
-                    color: #93c5fd;
-                    font-size: 13px;
-                    font-weight: 600;
-                    cursor: pointer;
-                    transition: all 0.15s;
-                    flex-shrink: 0;
-                }
-                .hist-back-btn:hover { background: rgba(255,255,255,0.12); }
-
-                .hist-detail-info {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 2px;
-                    flex: 1;
-                    min-width: 0;
-                }
-                .hist-detail-title {
-                    font-size: 14px;
                     font-weight: 700;
-                    color: #f1f5f9;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
                 }
-                .hist-detail-meta {
-                    font-size: 12px;
-                    color: #64748b;
-                }
-
-                .hist-mini-stats {
-                    display: flex;
-                    gap: 16px;
-                    flex-shrink: 0;
-                }
-                .hist-mini-stat {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    gap: 1px;
-                }
-                .hist-mini-label {
-                    font-size: 10px;
-                    color: #64748b;
-                    text-transform: uppercase;
-                    font-weight: 600;
-                    letter-spacing: 0.05em;
-                }
-                .hist-mini-value {
-                    font-size: 14px;
-                    font-weight: 700;
-                    color: #e2e8f0;
-                }
+                .hist-refresh-btn:hover { background: #1d4ed8; transform: translateY(-1px); }
 
                 /* ─── Bottom Drawer ─── */
                 .hist-drawer {
@@ -580,58 +511,46 @@ const History = ({ user }) => {
                     left: 0;
                     right: 0;
                     z-index: 50;
-                    background: rgba(15,23,42,0.96);
-                    backdrop-filter: blur(16px);
-                    -webkit-backdrop-filter: blur(16px);
-                    border-top: 1px solid rgba(255,255,255,0.06);
-                    border-radius: 20px 20px 0 0;
-                    box-shadow: 0 -8px 32px rgba(0,0,0,0.4);
+                    background: rgba(15, 23, 42, 0.8) !important;
+                    backdrop-filter: blur(20px) saturate(180%) !important;
+                    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+                    border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+                    border-radius: 30px 30px 0 0;
+                    box-shadow: 0 -20px 50px rgba(0,0,0,0.5);
                     display: flex;
                     flex-direction: column;
-                    transition: height 0.35s cubic-bezier(0.4,0,0.2,1);
-                    overflow: hidden;
+                    transition: height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
                 }
 
-                .hist-drawer.open { height: 48%; min-height: 280px; max-height: 55vh; }
-                .hist-drawer.collapsed { height: 52px; }
+                .hist-drawer.open { height: 50%; }
+                .hist-drawer.collapsed { height: 60px; }
 
                 .hist-drawer-handle {
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    gap: 8px;
-                    padding: 10px 16px;
+                    gap: 12px;
+                    padding: 15px 24px;
                     background: transparent;
                     border: none;
                     color: #94a3b8;
                     cursor: pointer;
-                    flex-shrink: 0;
-                    font-size: 13px;
-                    font-weight: 600;
-                    border-bottom: 1px solid rgba(255,255,255,0.05);
-                    transition: background 0.15s;
-                    min-height: 52px;
+                    min-height: 60px;
                 }
-                .hist-drawer-handle:hover { background: rgba(255,255,255,0.04); }
 
                 .hist-handle-bar {
-                    width: 36px;
+                    width: 40px;
                     height: 4px;
-                    background: rgba(255,255,255,0.15);
+                    background: rgba(255, 255, 255, 0.2);
                     border-radius: 2px;
                     position: absolute;
-                    top: 8px;
-                }
-
-                .hist-drawer-title {
-                    color: #e2e8f0;
+                    top: 10px;
                 }
 
                 .hist-drawer-body {
                     flex: 1;
                     overflow-y: auto;
-                    overflow-x: hidden;
-                    padding: 12px 16px;
+                    padding: 20px 30px;
                 }
 
                 /* ─── Tabs ─── */

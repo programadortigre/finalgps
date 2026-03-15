@@ -293,31 +293,43 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations }) => {
                             <div className="timeline">
                                 {routeData.isMulti ? (
                                     routeData.trips.map((tInfo, idx) => (
-                                        <div key={`multi-${idx}`} style={{ marginBottom: '16px' }}>
-                                            <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#6C63FF', marginBottom: '8px' }}>Viaje {idx + 1}</div>
+                                        <div key={`multi-${idx}`} style={{ marginBottom: '24px' }}>
+                                            <div style={{ fontSize: '11px', fontWeight: '800', color: '#60a5fa', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '1px' }}>Viaje {idx + 1}</div>
 
                                             {/* Start Point */}
                                             <div className="timeline-item">
-                                                <div className="tl-icon start-icon" style={{ width: '24px', height: '24px', fontSize: '12px' }}>🚀</div>
+                                                <div className="tl-icon start-icon">🚀</div>
                                                 <div className="tl-content">
-                                                    <strong>Inicio</strong>
-                                                    <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`start-${tInfo.id}`] || 'Cargando...'}</span>
-                                                    <span>{dayjs(tInfo.start_time).format('hh:mm A')}</span>
+                                                    <strong>Inicio de viaje</strong>
+                                                    <span>{addresses[`start-${tInfo.id}`] || 'Cargando...'}</span>
+                                                    <span style={{ color: '#fff', fontWeight: '600' }}>{dayjs(tInfo.start_time).format('hh:mm A')}</span>
+                                                    <a 
+                                                        href={`https://www.google.com/maps?q=${tInfo.points?.[0]?.lat},${tInfo.points?.[0]?.lng}`}
+                                                        target="_blank" rel="noopener noreferrer" className="gmaps-link"
+                                                    >
+                                                        🗺️ Google Maps
+                                                    </a>
                                                 </div>
                                             </div>
 
                                             {/* End Point */}
                                             {tInfo.points && tInfo.points.length > 0 && (
-                                                <div className="timeline-item pb-0">
-                                                    <div className="tl-icon end-icon" style={{ width: '24px', height: '24px', fontSize: '12px' }}>🏁</div>
+                                                <div className="timeline-item" style={{ paddingBottom: 0 }}>
+                                                    <div className="tl-icon end-icon">🏁</div>
                                                     <div className="tl-content">
-                                                        <strong>Fin</strong>
-                                                        <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`end-${tInfo.id}`] || 'Cargando...'}</span>
-                                                        <span>
+                                                        <strong>Fin de viaje</strong>
+                                                        <span>{addresses[`end-${tInfo.id}`] || 'Cargando...'}</span>
+                                                        <span style={{ color: '#fff', fontWeight: '600' }}>
                                                             {tInfo.points.at(-1)?.timestamp
                                                                 ? dayjs(Number(tInfo.points.at(-1).timestamp)).format('hh:mm A')
                                                                 : dayjs(tInfo.end_time || new Date()).format('hh:mm A')}
                                                         </span>
+                                                        <a 
+                                                            href={`https://www.google.com/maps?q=${tInfo.points.at(-1).lat},${tInfo.points.at(-1).lng}`}
+                                                            target="_blank" rel="noopener noreferrer" className="gmaps-link"
+                                                        >
+                                                            🗺️ Google Maps
+                                                        </a>
                                                     </div>
                                                 </div>
                                             )}
@@ -330,43 +342,60 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations }) => {
                                             <div className="tl-icon start-icon">🚀</div>
                                             <div className="tl-content">
                                                 <strong>Inicio de jornada</strong>
-                                                <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`start-${selectedTrip?.id}`] || 'Cargando dirección...'}</span>
-                                                <span>{dayjs(selectedTrip.start_time).format('hh:mm A')}</span>
+                                                <span>{addresses[`start-${selectedTrip?.id}`] || 'Cargando dirección...'}</span>
+                                                <span style={{ color: '#fff', fontWeight: '600' }}>{dayjs(selectedTrip.start_time).format('hh:mm A')}</span>
+                                                <a 
+                                                    href={`https://www.google.com/maps?q=${points[0]?.lat},${points[0]?.lng}`}
+                                                    target="_blank" rel="noopener noreferrer" className="gmaps-link"
+                                                >
+                                                    🗺️ Ver en Google Maps
+                                                </a>
                                             </div>
                                         </div>
 
                                         {/* Stops */}
                                         {(routeData.stops || []).map((s, i) => (
-                                            <div key={i} className="timeline-item check">
+                                            <div key={i} className="timeline-item">
                                                 <div className="tl-line"></div>
                                                 <div className="tl-icon stop-icon">🛑</div>
                                                 <div className="tl-content">
                                                     <strong>Parada {i + 1}</strong>
-                                                    <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`stop-${selectedTrip?.id}-${i}`] || 'Cargando...'}</span>
-                                                    <span style={{ color: '#f59e0b', fontWeight: 600 }}>
-                                                        ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg
-                                                    </span>
-                                                    <span className="tl-time text-muted">{dayjs(s.start_time).format('hh:mm A')} – {dayjs(s.end_time).format('hh:mm A')}</span>
+                                                    <span>{addresses[`stop-${selectedTrip?.id}-${i}`] || 'Cargando...'}</span>
+                                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                                                        <span style={{ background: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>
+                                                            ⏱ {Math.floor(s.duration_seconds / 60)}m {s.duration_seconds % 60}s
+                                                        </span>
+                                                        <span style={{ fontSize: '11px', color: '#94a3b8' }}>{dayjs(s.start_time).format('hh:mm A')} – {dayjs(s.end_time).format('hh:mm A')}</span>
+                                                    </div>
+                                                    <a 
+                                                        href={`https://www.google.com/maps?q=${s.lat},${s.lng}`}
+                                                        target="_blank" rel="noopener noreferrer" className="gmaps-link"
+                                                    >
+                                                        🗺️ Ver en Google Maps
+                                                    </a>
                                                 </div>
                                             </div>
                                         ))}
 
                                         {/* End Point */}
-                                        {routeData.points && routeData.points.length > 0 && (
-                                            <div className="timeline-item">
-                                                <div className="tl-line"></div>
-                                                <div className="tl-icon end-icon">🏁</div>
-                                                <div className="tl-content">
-                                                    <strong>Fin de jornada</strong>
-                                                    <span style={{ fontSize: '11px', color: '#666', display: 'block', marginTop: '2px' }}>📍 {addresses[`end-${selectedTrip?.id}`] || 'Cargando dirección...'}</span>
-                                                    <span>
-                                                        {routeData.points.at(-1)?.timestamp
-                                                            ? dayjs(Number(routeData.points.at(-1).timestamp)).format('hh:mm A')
-                                                            : dayjs(selectedTrip.end_time || new Date()).format('hh:mm A')}
-                                                    </span>
-                                                </div>
+                                        <div className="timeline-item" style={{ paddingBottom: 0 }}>
+                                            <div className="tl-icon end-icon">🏁</div>
+                                            <div className="tl-content">
+                                                <strong>Fin de jornada</strong>
+                                                <span>{addresses[`end-${selectedTrip?.id}`] || 'Cargando dirección...'}</span>
+                                                <span style={{ color: '#fff', fontWeight: '600' }}>
+                                                    {points.at(-1)?.timestamp
+                                                        ? dayjs(Number(points.at(-1).timestamp)).format('hh:mm A')
+                                                        : dayjs(selectedTrip.end_time || new Date()).format('hh:mm A')}
+                                                </span>
+                                                <a 
+                                                    href={`https://www.google.com/maps?q=${points.at(-1)?.lat},${points.at(-1)?.lng}`}
+                                                    target="_blank" rel="noopener noreferrer" className="gmaps-link"
+                                                >
+                                                    🗺️ Ver en Google Maps
+                                                </a>
                                             </div>
-                                        )}
+                                        </div>
                                     </>
                                 )}
                             </div>
@@ -598,18 +627,36 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations }) => {
                                 {stops.map((s, i) => (
                                     <Marker key={i} position={[s.lat, s.lng]} icon={stopIcon}>
                                         <Popup>
-                                            <div style={{ fontSize: '12px', minWidth: '220px' }}>
-                                                <strong>🛑 Parada {i + 1}</strong><br />
-                                                📍 {addresses[`stop-${selectedTrip.id}-${i}`] || 'Cargando...'}<br />
-                                                ⏱ {Math.floor(s.duration_seconds / 60)} min {s.duration_seconds % 60} seg<br />
-                                                🕐 {dayjs(s.start_time).format('HH:mm')} – {dayjs(s.end_time).format('HH:mm')}<br />
+                                            <div className="modern-popup">
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                                                    <span style={{ fontSize: '18px' }}>🛑</span>
+                                                    <strong style={{ fontSize: '15px' }}>Parada {i + 1}</strong>
+                                                </div>
+                                                <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '10px', lineHeight: '1.4' }}>
+                                                    {addresses[`stop-${selectedTrip.id}-${i}`] || 'Obteniendo dirección...'}
+                                                </div>
+                                                <div style={{ 
+                                                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', 
+                                                    padding: '10px', background: 'rgba(255,255,255,0.05)', 
+                                                    borderRadius: '10px', marginBottom: '12px' 
+                                                }}>
+                                                    <div>
+                                                        <div style={{ fontSize: '9px', color: '#64748b', textTransform: 'uppercase' }}>Duración</div>
+                                                        <div style={{ fontSize: '12px', fontWeight: '600' }}>{Math.floor(s.duration_seconds / 60)}m {s.duration_seconds % 60}s</div>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ fontSize: '9px', color: '#64748b', textTransform: 'uppercase' }}>Horario</div>
+                                                        <div style={{ fontSize: '12px', fontWeight: '600' }}>{dayjs(s.start_time).format('HH:mm')} - {dayjs(s.end_time).format('HH:mm')}</div>
+                                                    </div>
+                                                </div>
                                                 <a
                                                     href={`https://www.google.com/maps?q=${s.lat},${s.lng}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
+                                                    className="gmaps-link"
+                                                    style={{ width: '100%', justifyContent: 'center', padding: '10px' }}
                                                 >
-                                                    🗺️ Ver en Google Maps
+                                                    📍 Navegar con Google Maps
                                                 </a>
                                             </div>
                                         </Popup>
@@ -630,88 +677,132 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations }) => {
             </MapContainer>
 
             <style>{`
-        @keyframes pulse { 0% { transform:scale(1); opacity:.6 } 100% { transform:scale(2.5); opacity:0 } }
+        @keyframes animate-pulse { 0% { transform:scale(1); opacity:.6 } 100% { transform:scale(2.5); opacity:0 } }
 
         .history-sidepanel {
-          position: absolute; top: 12px; left: 56px; z-index: 1000;
-          background: #ffffff; padding: 20px; border-radius: 12px;
-          box-shadow: 0 10px 30px rgba(0,0,0,.15); width: 340px;
-          display: flex; flex-direction: column; max-height: 85vh;
+          position: absolute; top: 20px; left: 20px; z-index: 1000;
+          background: rgba(15, 23, 42, 0.8) !important;
+          backdrop-filter: blur(16px) saturate(180%) !important;
+          -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+          border: 1px solid rgba(255, 255, 255, 0.1) !important;
+          padding: 24px; border-radius: 20px;
+          box-shadow: 0 20px 50px rgba(0,0,0,.4); width: 360px;
+          display: flex; flex-direction: column; max-height: calc(100vh - 40px);
+          color: #f1f5f9;
         }
-        .hs-title { margin: 0; font-size: 18px; font-weight: 700; color: #0f172a; }
-        .hs-employee { font-size: 13px; color: #64748b; margin-top: 6px; margin-bottom: 16px; font-weight: 500; }
-        .hs-date-picker { margin-bottom: 16px; width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 14px; background: #f8fafc; outline: none; cursor: pointer; }
-        .hs-date-picker:focus { border-color: #6C63FF; background: white; }
+        .hs-title { margin: 0; font-size: 20px; font-weight: 700; color: #fff; font-family: 'Outfit', sans-serif; letter-spacing: -0.02em; }
+        .hs-employee { font-size: 13px; color: #94a3b8; margin-top: 6px; margin-bottom: 20px; display: flex; alignItems: center; gap: 6px; }
+        .hs-date-picker { 
+            margin-bottom: 20px; width: 100%; padding: 12px; border-radius: 12px; 
+            border: 1px solid rgba(255,255,255,0.1); font-size: 14px; 
+            background: rgba(255,255,255,0.05); color: #fff; outline: none; transition: all 0.2s;
+        }
+        .hs-date-picker:focus { border-color: #3b82f6; background: rgba(255,255,255,0.1); }
         
-        .trip-list-overlay { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; }
-        .no-trips { font-size: 13px; color: #94a3b8; padding: 20px 0; text-align: center; }
+        .trip-list-overlay { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; flex: 1; padding-right: 4px; }
+        .no-trips { font-size: 14px; color: #64748b; padding: 40px 0; text-align: center; }
         .trip-pill {
-          display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 10px; cursor: pointer;
-          background: #f8fafc; font-size: 13px; border: 1px solid #e2e8f0; transition: all .2s ease;
+          display: flex; flex-direction: column; gap: 6px; padding: 16px; border-radius: 14px; cursor: pointer;
+          background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
         }
-        .trip-pill:hover { border-color: #6C63FF; background: #f1f5f9; box-shadow: 0 2px 8px rgba(108, 99, 255, 0.1); }
-        .trip-time { font-weight: 600; color: #0f172a; }
-        .trip-dist { font-size: 12px; color: #64748b; }
+        .trip-pill:hover { background: rgba(255,255,255,0.08); border-color: #3b82f6; transform: translateY(-2px); }
+        .trip-time { font-weight: 600; color: #f1f5f9; font-size: 14px; }
+        .trip-dist { font-size: 12px; color: #94a3b8; }
 
         .trip-details { display: flex; flex-direction: column; overflow-y: auto; padding-right: 4px; flex: 1; }
-        .back-btn { background: none; border: none; padding: 0 0 12px 0; color: #6C63FF; font-size: 14px; font-weight: 600; cursor: pointer; text-align: left; margin-bottom: 8px; transition: color .2s; }
-        .back-btn:hover { color: #5651d9; }
+        .back-btn { 
+            background: none; border: none; padding: 0 0 16px 0; color: #60a5fa; 
+            font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; 
+            display: flex; align-items: center; gap: 6px;
+        }
+        .back-btn:hover { color: #93c5fd; }
         
-        .trip-stats-row { display: flex; gap: 10px; margin-bottom: 16px; }
-        .stat-box { flex: 1; background: #f8fafc; border: 1px solid #e2e8f0; padding: 14px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; transition: all .2s; }
-        .stat-box:hover { border-color: #cbd5e1; }
-        .stat-box span { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-        .stat-box strong { font-size: 18px; color: #0f172a; }
+        .trip-stats-row { display: flex; gap: 12px; margin-bottom: 20px; }
+        .stat-box { 
+            flex: 1; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); 
+            padding: 16px; border-radius: 14px; display: flex; flex-direction: column; align-items: center;
+        }
+        .stat-box span { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+        .stat-box strong { font-size: 18px; color: #fff; font-family: 'Outfit'; }
 
         .map-action-btn {
-          flex: 1; padding: 12px; background: #f1f5f9; border: none; border-radius: 10px;
-          cursor: pointer; font-size: 14px; font-weight: 600; color: #0f172a; transition: all 0.2s;
+          flex: 1; padding: 14px; background: #2563eb; border: none; border-radius: 12px;
+          cursor: pointer; font-size: 14px; font-weight: 600; color: #fff; transition: all 0.2s;
+          box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
         }
-        .map-action-btn:hover { background: #e2e8f0; }
-        .map-action-btn.active { background: #6C63FF; color: white; box-shadow: 0 4px 12px rgba(108,99,255,0.3); }
+        .map-action-btn:hover { background: #1d4ed8; transform: translateY(-1px); }
+        .map-action-btn.active { background: #ef4444; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3); }
 
-        .timeline-title { font-size: 12px; text-transform: uppercase; color: #94a3b8; letter-spacing: 1px; margin-bottom: 12px; margin-top: 8px; font-weight: 600; }
+        .timeline-title { font-size: 11px; text-transform: uppercase; color: #475569; letter-spacing: 1.5px; margin-bottom: 16px; font-weight: 800; }
         .timeline { display: flex; flex-direction: column; gap: 0; position: relative; margin-left: 10px; }
-        .timeline-item { display: flex; gap: 16px; position: relative; padding-bottom: 20px; }
+        .timeline-item { display: flex; gap: 20px; position: relative; padding-bottom: 24px; }
         .timeline-item:last-child { padding-bottom: 0; }
         
-        .tl-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; z-index: 2; position: relative; flex-shrink: 0; }
-        .start-icon { background: #e0e7ff; color: #4f46e5; border: 2px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,.1); }
-        .stop-icon { background: #fef3c7; color: #d97706; border: 2px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,.1); }
-        .end-icon { background: #e0e7ff; color: #4f46e5; border: 2px solid #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,.1); }
+        .tl-icon { width: 36px; height: 36px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 16px; z-index: 2; position: relative; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.1); }
+        .start-icon { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+        .stop-icon { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+        .end-icon { background: rgba(37, 99, 235, 0.1); color: #3b82f6; }
         
-        .tl-line { position: absolute; left: 15px; top: 32px; bottom: 0; width: 2px; background: #e2e8f0; z-index: 1; }
+        .tl-line { position: absolute; left: 18px; top: 36px; bottom: 0; width: 2px; background: rgba(255,255,255,0.05); z-index: 1; }
         .timeline-item:last-child .tl-line { display: none; }
         
-        .tl-content { display: flex; flex-direction: column; gap: 3px; padding-top: 2px; }
-        .tl-content strong { font-size: 14px; color: #0f172a; }
-        .tl-content span { font-size: 12px; color: #64748b; }
-        .text-muted { font-size: 11px !important; opacity: 0.8; }
+        .tl-content { display: flex; flex-direction: column; gap: 4px; }
+        .tl-content strong { font-size: 14px; color: #f1f5f9; }
+        .tl-content span { font-size: 12px; color: #94a3b8; }
+        .gmaps-link { 
+            color: #60a5fa; text-decoration: none; font-size: 11px; font-weight: 700; 
+            margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; 
+            padding: 6px 10px; background: rgba(37, 99, 235, 0.1); border-radius: 6px;
+            width: fit-content; transition: background 0.2s;
+        }
+        .gmaps-link:hover { background: rgba(37, 99, 235, 0.2); }
 
         .map-legend {
-          position: absolute; top: 12px; right: 12px; z-index: 1000;
-          background: white; padding: 14px 16px; border-radius: 12px;
-          box-shadow: 0 4px 12px rgba(0,0,0,.15); font-size: 13px; color: #0f172a;
+          position: absolute; bottom: 30px; left: 400px; z-index: 1000;
+          background: rgba(15, 23, 42, 0.8) !important;
+          backdrop-filter: blur(12px) !important;
+          padding: 16px 20px; border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.1) !important;
+          box-shadow: 0 10px 30px rgba(0,0,0,.3); color: #fff;
         }
-        .legend-items { display: flex; flex-direction: column; gap: 8px; }
-        .legend-item { display: flex; align-items: center; gap: 10px; font-weight: 500; }
-        .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,.1); }
-        .legend-divider { height: 1px; background: #e2e8f0; margin: 2px 0; }
+        .legend-items { display: flex; align-items: center; gap: 20px; }
+        .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: #94a3b8; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .legend-divider { width: 1px; height: 20px; background: rgba(255,255,255,0.1); }
 
         /* Zoom Controls */
-        .zoom-controls { position: fixed !important; }
+        .zoom-controls { position: absolute; bottom: 30px; right: 30px; z-index: 1000; display: flex; flex-direction: column; gap: 10px; }
         .zoom-btn {
-          width: 44px; height: 44px; border: none; border-radius: 8px;
-          background: white; color: #0f172a; font-size: 20px; font-weight: bold;
-          cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2);
-          transition: all 0.2s; display: flex; align-items: center; justify-content: center;
+          width: 50px; height: 50px; border: 1px solid rgba(255,255,255,0.1); border-radius: 15px;
+          background: rgba(15, 23, 42, 0.8) !important;
+          backdrop-filter: blur(12px) !important;
+          color: white; font-size: 24px; font-weight: 400;
+          cursor: pointer; box-shadow: 0 10px 25px rgba(0,0,0,.3);
+          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+          display: flex; align-items: center; justify-content: center; font-family: 'Outfit';
         }
-        .zoom-btn:hover { background: #f1f5f9; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+        .zoom-btn:hover { background: #2563eb !important; transform: scale(1.05); }
         .zoom-btn:active { transform: scale(0.95); }
+
+        /* Leaflet Popup Premium */
+        .leaflet-popup-content-wrapper { 
+            background: rgba(15, 23, 42, 0.9) !important; 
+            backdrop-filter: blur(12px) !important;
+            color: white !important;
+            border-radius: 16px !important;
+            border: 1px solid rgba(255,255,255,0.1) !important;
+            box-shadow: 0 10px 30px rgba(0,0,0,.4) !important;
+        }
+        .leaflet-popup-content { margin: 16px !important; }
+        .leaflet-popup-tip { background: rgba(15, 23, 42, 0.9) !important; }
 
         /* Responsive Design */
         @media (max-width: 768px) {
-          .history-sidepanel { width: calc(100vw - 32px); max-width: 340px; left: 16px; top: 16px; }
+          .history-sidepanel { width: calc(100vw - 40px); left: 20px; top: 20px; }
+          .map-legend { left: 20px; bottom: 100px; padding: 10px; }
+          .legend-items { flex-wrap: wrap; gap: 10px; }
+        }
+tory-sidepanel { width: calc(100vw - 32px); max-width: 340px; left: 16px; top: 16px; }
           .map-legend { top: auto; bottom: 80px; }
           .zoom-btn { width: 40px; height: 40px; font-size: 18px; }
         }

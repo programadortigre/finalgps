@@ -1,98 +1,103 @@
 :root {
-  --primary: #2563eb;
-  --secondary: #64748b;
-  --dark: #0f172a;
-  --light: #f8fafc;
+  --primary: 221 83% 53%; /* #2563eb */
+  --primary-foreground: 210 40% 98%;
+  
+  --background: 222 47% 11%;
+  --foreground: 210 40% 98%;
+  
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 98%;
+  
+  --popover: 222 47% 11%;
+  --popover-foreground: 210 40% 98%;
+  
+  --border: 217 32% 17%;
+  --input: 217 32% 17%;
+  
+  --ring: 224 76% 48%;
+  
+  --radius: 0.75rem;
+  
+  /* Glassmorphism Tokens */
+  --glass-bg: rgba(15, 23, 42, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-blur: 12px;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
   margin: 0;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background-color: var(--light);
-  color: var(--dark);
-  -webkit-user-select: none;
-  user-select: none;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
 }
 
 .app-container {
   height: 100vh;
   width: 100vw;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+/* Glassmorphism Utility */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.glass-card {
+  background: rgba(30, 41, 59, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius);
 }
 
 .leaflet-container {
   height: 100% !important;
   width: 100% !important;
+  background-color: #0f172a !important;
 }
 
-.sidebar {
-  width: 320px;
-  background: white;
-  border-right: 1px solid #e2e8f0;
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
+/* Hide standard Leaflet attribution for cleaner look */
+.leaflet-control-attribution {
+  display: none !important;
 }
 
-.main-content {
-  flex: 1;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
-.btn {
-  background: var(--primary);
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 500;
+/* Transitions */
+.transition-all {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.btn:hover {
-  opacity: 0.9;
-}
-
-/* Mobile Responsive */
+/* Mobile Adjustments */
 @media (max-width: 768px) {
-  body {
-    -webkit-user-select: auto;
-    user-select: auto;
-  }
-
   .app-container {
     height: 100dvh;
-    width: 100dvw;
-  }
-
-  .sidebar {
-    width: 100%;
-    height: 100dvh;
-  }
-
-  .main-content {
-    height: 100dvh;
-  }
-}
-
-@media (max-width: 480px) {
-  .app-container {
-    height: 100dvh;
-    width: 100dvw;
-    font-size: 14px;
-  }
-
-  button {
-    min-height: 44px;
-    min-width: 44px;
-  }
-
-  input {
-    font-size: 16px;
   }
 }

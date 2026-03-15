@@ -194,30 +194,70 @@ const Vendors = () => {
         .badge-employee { background: #dbeafe; color: #1d4ed8; }
         .actions-cell { display: flex; gap: 8px; }
         .btn-icon { padding: 6px; border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-        .btn-icon.edit   { background: #eff6ff; color: #2563eb; }
-        .btn-icon.delete { background: #fef2f2; color: #dc2626; }
-        .btn-icon:hover  { opacity: 0.8; }
-        .btn-primary   { display: flex; align-items: center; gap: 8px; padding: 10px 18px; background: #2563eb; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; }
-        .btn-secondary { padding: 10px 18px; background: #f1f5f9; color: #475569; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
-        .loading-state { text-align: center; padding: 60px; color: #94a3b8; }
-
-        /* Modal */
-        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-        .modal-card    { background: white; border-radius: 16px; width: 100%; max-width: 440px; box-shadow: 0 20px 60px rgba(0,0,0,.15); }
-        .modal-header  { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid #f1f5f9; }
-        .modal-header h3 { margin: 0; font-size: 18px; color: #1e293b; }
-        .modal-header button { background: none; border: none; cursor: pointer; color: #64748b; }
-        .modal-body    { padding: 24px; display: flex; flex-direction: column; gap: 14px; }
-        .modal-body label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: #475569; }
-        .modal-body input, .modal-body select { 
-          padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; outline: none;
+        .vendor-table th { background: rgba(255,255,255,0.03); padding: 16px 20px; text-align: left; font-size: 11px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; }
+        .vendor-table td { padding: 18px 20px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 14px; color: #e2e8f0; }
+        .vendor-table tr:hover td { background: rgba(255,255,255,0.02); }
+        
+        .badge { padding: 4px 12px; border-radius: 99px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+        .badge-admin { background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.2); }
+        .badge-employee { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2); }
+        
+        .actions-cell { display: flex; gap: 12px; }
+        .btn-icon { width: 36px; height: 36px; border: none; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
+        .btn-icon.edit { background: rgba(59, 130, 246, 0.1); color: #60a5fa; }
+        .btn-icon.delete { background: rgba(239, 68, 68, 0.1); color: #f87171; }
+        .btn-icon:hover { transform: translateY(-2px); opacity: 1; }
+        .btn-icon.edit:hover { background: #2563eb; color: #fff; }
+        .btn-icon.delete:hover { background: #dc2626; color: #fff; }
+        
+        .btn-primary { 
+            display: flex; align-items: center; gap: 10px; padding: 12px 24px; 
+            background: #2563eb; color: white; border: none; border-radius: 12px; 
+            cursor: pointer; font-size: 14px; font-weight: 700; transition: all 0.2s;
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3);
         }
-        .modal-body input:focus { border-color: #2563eb; }
-        .pass-row      { display: flex; gap: 8px; }
+        .btn-primary:hover { background: #1d4ed8; transform: translateY(-2px); box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4); }
+        .btn-secondary { 
+            padding: 12px 24px; background: rgba(255,255,255,0.05); color: #e2e8f0; 
+            border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; cursor: pointer; 
+            font-size: 14px; font-weight: 600; transition: all 0.2s;
+        }
+        .btn-secondary:hover { background: rgba(255,255,255,0.1); }
+        
+        .loading-state { text-align: center; padding: 100px; color: #64748b; font-size: 16px; font-weight: 500; }
+
+        /* Modal Glassmorphism */
+        .modal-overlay { 
+            position: fixed; inset: 0; background: rgba(15, 23, 42, 0.8); 
+            backdrop-filter: blur(8px); display: flex; align-items: center; 
+            justify-content: center; z-index: 1000; animation: fadeIn 0.3s ease;
+        }
+        .modal-card { 
+            background: rgba(30, 41, 59, 0.9); backdrop-filter: blur(20px); 
+            border-radius: 24px; width: 100%; max-width: 480px; 
+            border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 30px 100px rgba(0,0,0,0.5); 
+            animation: slideUp 0.3s ease;
+        }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 24px 32px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .modal-header h3 { margin: 0; font-size: 20px; color: #fff; font-family: 'Outfit', sans-serif; }
+        .modal-header button { background: none; border: none; cursor: pointer; color: #94a3b8; transition: color 0.2s; }
+        .modal-header button:hover { color: #fff; }
+        .modal-body { padding: 32px; display: flex; flex-direction: column; gap: 20px; }
+        .modal-body label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+        .modal-body input, .modal-body select { 
+            padding: 12px 16px; background: rgba(255, 255, 255, 0.05); 
+            border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; 
+            font-size: 14px; color: #fff; outline: none; transition: all 0.2s;
+        }
+        .modal-body input:focus, .modal-body select:focus { border-color: #3b82f6; background: rgba(255, 255, 255, 0.08); }
+        .pass-row { display: flex; gap: 10px; }
         .pass-row input { flex: 1; }
-        .pass-row button { padding: 10px 12px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px; cursor: pointer; color: #64748b; }
-        .form-error    { padding: 10px 14px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; color: #dc2626; font-size: 13px; }
-        .modal-footer  { display: flex; justify-content: flex-end; gap: 10px; padding-top: 8px; }
+        .pass-row button { padding: 12px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; cursor: pointer; color: #94a3b8; }
+        .form-error { padding: 12px 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 12px; color: #f87171; font-size: 14px; font-weight: 500; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 12px; padding-top: 12px; }
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
         </div>
     );
