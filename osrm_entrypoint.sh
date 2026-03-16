@@ -40,7 +40,7 @@ else
     RETRY=0
     
     while [ $RETRY -lt $MAX_RETRIES ]; do
-        if curl --progress-bar -L -o "$OSM_FILE" \
+        if wget -O "$OSM_FILE" \
             "https://download.geofabrik.de/south-america/peru-latest.osm.pbf" 2>&1; then
             echo ""
             echo "[OSRM] ✅ Descarga completada"
