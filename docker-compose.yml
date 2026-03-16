@@ -11,7 +11,8 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./database/migration_v5.sql:/docker-entrypoint-initdb.d/02-migration_v5.sql
       - postgres_data:/var/lib/postgresql/data
     networks: [ tracking-net ]
     healthcheck:
