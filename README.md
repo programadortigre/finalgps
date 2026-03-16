@@ -26,6 +26,7 @@ bash setup-deploy.sh  # Linux/Mac
 - Docker & Docker Compose
 - Flutter SDK (for mobile app)
 - Android Emulator or physical device
+- **IMPORTANT**: [OSRM Map Data for Peru](OSRM_FIX.md) - Run `bash setup-osrm.sh` before deploying
 
 ## 2. Quick Start
 

@@ -117,8 +117,8 @@ class TrackingEngine {
         }
       });
 
-      // 4. Batch Uploader — FIX C3: guardamos referencia
-      _batchTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      // 4. Batch Uploader — ⚡ REDUCIDO a 10s (fue 15s) para detección rápida de paradas
+      _batchTimer = Timer.periodic(const Duration(seconds: 10), (_) {
         try {
           _flushPoints();
         } catch (e) {
@@ -411,7 +411,7 @@ class TrackingEngine {
           accuracy = LocationAccuracy.best; // Mejor precisión que low
           break;
         case TrackingState.STOPPED:
-          intervalSec = 10; // RECOMENDADO: 10s
+          intervalSec = 5;  // ⚡ REDUCIDO de 10s a 5s - detecta reanudación más rápido
           distanceFilter = 3; // RECOMENDADO: 3m
           accuracy = LocationAccuracy.high; // SUBIDO a high
           break;

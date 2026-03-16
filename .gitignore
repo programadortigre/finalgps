@@ -42,6 +42,10 @@ logs/
 .dockerignore
 docker-compose.override.yml
 
+# OSRM Data (very large, compiled locally)
+osrm_data/
+*.osm.pbf
+
 # Flutter
 .dart_tool/
 .flutter-plugins

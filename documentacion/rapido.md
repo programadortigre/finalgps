@@ -53,9 +53,5 @@ sudo docker-compose up -d --build
 
 
 docker-compose down -v
-docker-compose up -d --build
-docker-compose logs -f gps-api
-
-flutter clean 
-flutter pub get
-flutter build apk --release
+docker-compose up -d --build   
+docker-compose logs -f gps-                  i
