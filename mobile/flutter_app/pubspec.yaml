@@ -27,7 +27,6 @@ dependencies:
   flutter_launcher_icons: ^0.14.4
   socket_io_client: ^3.0.0
   url_launcher: ^6.2.0
-  wakelock_plus: ^1.2.8
   sensors_plus: ^7.0.0
   flutter_activity_recognition: ^4.0.0
   battery_plus: ^7.0.0

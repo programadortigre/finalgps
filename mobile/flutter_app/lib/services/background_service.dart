@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:battery_plus/battery_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart' as ar;
@@ -199,10 +198,6 @@ class TrackingEngine {
       'is_active': false,
       'state': 'STOPPED',
     });
-
-    try {
-      WakelockPlus.disable();
-    } catch (_) {}
   }
 
   // ---------------------------------------------------------------------------
@@ -244,23 +239,11 @@ class TrackingEngine {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // FIX A2: Wake Lock adaptativo según estado
-  // ---------------------------------------------------------------------------
+  // FIX A2: Wake Lock se mantiene automáticamente por flutter_background_service
+  // El servicio de foreground mantiene la CPU despierta, no es necesario wakelock_plus
   void _applyWakelock() {
-    try {
-      final needsWakelock = _currentState == TrackingState.DRIVING ||
-          _currentState == TrackingState.WALKING ||
-          _currentState == TrackingState.NO_SIGNAL;
-
-      if (needsWakelock) {
-        WakelockPlus.enable();
-      } else {
-        WakelockPlus.disable();
-      }
-    } catch (e) {
-      _log('SYS', 'Wakelock error: $e');
-    }
+    // Wakelock management moved to foreground service
+    // No action needed here
   }
 
   // ---------------------------------------------------------------------------
@@ -745,18 +728,19 @@ TrackingEngine? _engine;
 
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
+  
   await service.configure(
     androidConfiguration: AndroidConfiguration(
       onStart: onStart,
-      autoStart: true,
+      autoStart: false,  // Iniciar manualmente desde la pantalla de tracking
       isForegroundMode: true,
       notificationChannelId: 'gps_tracking_channel',
-      initialNotificationTitle: 'GPS Tracking Activo',
-      initialNotificationContent: 'Iniciando sistema...',
+      initialNotificationTitle: 'GPS Tracker Pro',
+      initialNotificationContent: 'Rastreando ubicación en tiempo real...',
       foregroundServiceNotificationId: 888,
     ),
     iosConfiguration: IosConfiguration(
-      autoStart: true,
+      autoStart: false,
       onForeground: onStart,
       onBackground: onIosBackground,
     ),
@@ -771,38 +755,42 @@ bool onIosBackground(ServiceInstance service) {
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
+  // ⚠️ PASO CRÍTICO 1: Notificar a Android INMEDIATAMENTE (dentro de 5 segundos)
+  if (service is AndroidServiceInstance) {
+    service.setAsForegroundService();
+    
+    // ✅ CONFIGURAR NOTIFICACIÓN BÁSICA INMEDIATAMENTE
+    service.setForegroundNotificationInfo(
+      title: "GPS Tracker Pro",
+      content: "Iniciando servicio de rastreo...",
+    );
+  }
+
+  // AHORA sí, el resto de la inicialización (después de la notificación)
   DartPluginRegistrant.ensureInitialized();
   _log('ISOLATE', '>>> onStart() [ENTER]');
 
   try {
-    // Log de arranque de isolate (SRE telemetry)
-    // ignore: avoid_print
-    print('[SYS] Background Isolate onStart — Iniciando motor de tracking');
+    final api = ApiService();
+    final storage = LocalStorage();
 
-  if (service is AndroidServiceInstance) {
-    service.on('setAsForeground').listen((_) => service.setAsForegroundService());
-    service.on('setAsBackground').listen((_) => service.setAsBackgroundService());
-    
-    // FIX V3: Forzar modo foreground inmediatamente para evitar que Android mate el isolate a los 30s
-    service.setAsForegroundService();
-  }
+    _engine = TrackingEngine(api: api, storage: storage);
+    await _engine!.start(service);
 
-  // FIX C2: inicialización explícita sin `late` peligroso
-  final api = ApiService();
-  final storage = LocalStorage();
+    // Escuchar eventos del servicio
+    if (service is AndroidServiceInstance) {
+      service.on('setAsForeground').listen((_) => service.setAsForegroundService());
+      service.on('setAsBackground').listen((_) => service.setAsBackgroundService());
+    }
 
-  // FIX C1 + C2: estado en instancia de clase, no en globales
-  _engine = TrackingEngine(api: api, storage: storage);
-  await _engine!.start(service);
-
-  // FIX C3: parada limpia con cancelación de todos los recursos
-  service.on('stopService').listen((_) {
-    _log('SYS', 'stopService recibido — deteniendo motor...');
-    _engine?.stop();
-    _engine = null;
-    service.stopSelf();
-  });
+    service.on('stopService').listen((_) {
+      _log('SYS', 'stopService recibido — deteniendo motor...');
+      _engine?.stop();
+      _engine = null;
+      service.stopSelf();
+    });
   } catch (e, stack) {
     _log('CRITICAL', 'Fallo letal en isolate onStart: $e\n$stack');
+    rethrow;
   }
 }

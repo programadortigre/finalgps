@@ -28,25 +28,62 @@ router.get('/', auth, async (req, res) => {
 
     try {
         // Query para obtener el registro más reciente por cada employee_id
+        // Cambio crítico: LEFT JOIN (no INNER) para devolver empleados aunque sin ubicaciones recientes
         const result = await db.query(`
             SELECT DISTINCT ON (e.id)
                 e.id as "employeeId",
                 e.name,
-                l.latitude as lat,
-                l.longitude as lng,
-                l.speed,
-                l.accuracy,
-                l.timestamp,
-                l.created_at as "lastUpdate"
+                COALESCE(l.latitude, 0) as lat,
+                COALESCE(l.longitude, 0) as lng,
+                COALESCE(l.speed, 0) as speed,
+                COALESCE(l.accuracy, 99) as accuracy,
+                COALESCE(l.timestamp, EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000) as timestamp,
+                COALESCE(l.created_at, CURRENT_TIMESTAMP) as "lastUpdate",
+                COALESCE(l.state, 'OFFLINE') as state
             FROM employees e
-            INNER JOIN locations l ON e.id = l.employee_id
+            LEFT JOIN locations l ON e.id = l.employee_id
             WHERE e.role = 'employee'
-            ORDER BY e.id, l.timestamp DESC
+            ORDER BY e.id, l.timestamp DESC NULLS LAST
         `);
 
         res.json(result.rows);
     } catch (err) {
         console.error('[ERROR] Failed to fetch latest locations:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+/// ============================================================================
+/// ENDPOINT: GET /active - Obtener solo empleados ACTIVOS (últimas 5 minutos)
+/// ============================================================================
+router.get('/active', auth, async (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    try {
+        // Solo empleados que hayan enviado ubicación en los últimos 5 minutos
+        const result = await db.query(`
+            SELECT DISTINCT ON (e.id)
+                e.id as "employeeId",
+                e.name,
+                COALESCE(l.latitude, 0) as lat,
+                COALESCE(l.longitude, 0) as lng,
+                COALESCE(l.speed, 0) as speed,
+                COALESCE(l.accuracy, 99) as accuracy,
+                COALESCE(l.timestamp, EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000) as timestamp,
+                COALESCE(l.created_at, CURRENT_TIMESTAMP) as "lastUpdate",
+                COALESCE(l.state, 'OFFLINE') as state
+            FROM employees e
+            INNER JOIN locations l ON e.id = l.employee_id
+            WHERE e.role = 'employee' 
+                AND l.timestamp > (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000) - (5 * 60 * 1000)
+            ORDER BY e.id, l.timestamp DESC
+        `);
+
+        res.json(result.rows);
+    } catch (err) {
+        console.error('[ERROR] Failed to fetch active locations:', err);
         res.status(500).json({ error: 'Internal server error' });
     }
 });

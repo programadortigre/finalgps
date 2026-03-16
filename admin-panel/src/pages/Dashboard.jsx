@@ -10,6 +10,7 @@ const Dashboard = ({ user, onLogout }) => {
     const [employees, setEmployees] = useState([]);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [activeLocations, setActiveLocations] = useState({});
+    const [liveActiveIds, setLiveActiveIds] = useState(new Set()); // Empleados activos last 5 min
     const [view, setView] = useState('live');
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -30,6 +31,8 @@ const Dashboard = ({ user, onLogout }) => {
                 ...prev,
                 [data.employeeId]: { ...data, lastUpdate: new Date().toISOString() }
             }));
+            // Mark as live active when receiving real-time update
+            setLiveActiveIds(prev => new Set([...prev, data.employeeId]));
         });
 
         socket.on('disconnect', () => setIsConnected(false));
@@ -44,6 +47,7 @@ const Dashboard = ({ user, onLogout }) => {
 
         const fetchLatestLocations = async () => {
             try {
+                // Get ALL locations (includes inactive employees)
                 const { data } = await api.get('/api/locations');
                 const initialLocations = {};
                 data.forEach(loc => {
@@ -53,8 +57,21 @@ const Dashboard = ({ user, onLogout }) => {
             } catch (e) { console.error('Error fetching latest locations', e); }
         };
 
+        const fetchLiveActive = async () => {
+            try {
+                // Get ONLY employees active in last 5 minutes
+                const { data } = await api.get('/api/locations/active');
+                const activeIds = new Set(data.map(loc => loc.employeeId));
+                setLiveActiveIds(activeIds);
+            } catch (e) { console.error('Error fetching live active locations', e); }
+        };
+
         fetchEmployees();
         fetchLatestLocations();
+        fetchLiveActive(); // Initial live status
+
+        // Refresh live status every 30 seconds
+        const liveInterval = setInterval(fetchLiveActive, 30000);
 
         const handleResize = () => setIsMobile(window.innerWidth < 768);
         window.addEventListener('resize', handleResize);
@@ -64,24 +81,31 @@ const Dashboard = ({ user, onLogout }) => {
             socket.off('disconnect');
             socket.off('connect');
             disconnectSocket();
+            clearInterval(liveInterval);
             window.removeEventListener('resize', handleResize);
         };
     }, []);
 
-    const activeCount = Object.keys(activeLocations).length;
+    const activeCount = liveActiveIds.size; // COUNT ONLY LIVE ACTIVE users (last 5 min)
 
     const filteredLiveLocations = Object.values(activeLocations).filter(loc => {
+        // In LIVE view, only show users active in last 5 minutes
+        const isLiveActive = liveActiveIds.has(loc.employeeId);
+        if (view === 'live' && !isLiveActive) return false;
+        
         const matchesSearch = loc.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
                               `Vendedor ${loc.employeeId}`.toLowerCase().includes(searchQuery.toLowerCase());
         const matchesStatus = selectedStatus === 'all' || loc.state === selectedStatus;
         return matchesSearch && matchesStatus;
     });
 
+    // Calculate stats only for LIVE active users
+    const liveActiveLocations = Object.values(activeLocations).filter(loc => liveActiveIds.has(loc.employeeId));
     const statusStats = {
-        'Quieto': Object.values(activeLocations).filter(l => l.state === 'Quieto' || l.state === 'SIN_MOVIMIENTO' || l.state === 'STOPPED' || l.state === 'DEEP_SLEEP').length,
-        'A pie': Object.values(activeLocations).filter(l => l.state === 'A pie' || l.state === 'CAMINANDO' || l.state === 'WALKING').length,
-        'Lento': Object.values(activeLocations).filter(l => l.state === 'Lento' || l.state === 'MOVIMIENTO_LENTO' || l.state === 'BATT_SAVER' || l.state === 'NO_SIGNAL').length,
-        'En auto': Object.values(activeLocations).filter(l => l.state === 'En auto' || l.state === 'VEHICULO' || l.state === 'DRIVING').length,
+        'Quieto': liveActiveLocations.filter(l => l.state === 'Quieto' || l.state === 'SIN_MOVIMIENTO' || l.state === 'STOPPED' || l.state === 'DEEP_SLEEP').length,
+        'A pie': liveActiveLocations.filter(l => l.state === 'A pie' || l.state === 'CAMINANDO' || l.state === 'WALKING').length,
+        'Lento': liveActiveLocations.filter(l => l.state === 'Lento' || l.state === 'MOVIMIENTO_LENTO' || l.state === 'BATT_SAVER' || l.state === 'NO_SIGNAL').length,
+        'En auto': liveActiveLocations.filter(l => l.state === 'En auto' || l.state === 'VEHICULO' || l.state === 'DRIVING').length,
     };
 
     const NavLink = ({ icon: Icon, label, isActive, onClick, badge }) => (
