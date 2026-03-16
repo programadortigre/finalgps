@@ -126,23 +126,58 @@ const getAddress = async (lat, lng) => {
     }
 };
 
-const MapView = ({ view, selectedEmployee, activeLocations, allLocations }) => {
+const MapView = ({ view, selectedEmployee, activeLocations, allLocations, selectedTrip: propSelectedTrip, tripDetails: propTripDetails }) => {
     const [trips, setTrips] = useState([]);
-    const [selectedTrip, setTrip] = useState(null);
-    const [routeData, setRouteData] = useState(null);
+    const [selectedTrip, setTrip] = useState(propSelectedTrip || null);
+    const [routeData, setRouteData] = useState(propTripDetails ? { isMulti: false, ...propTripDetails } : null);
     const [date, setDate] = useState(dayjs().format('YYYY-MM-DD'));
     const [playbackMode, setPlayback] = useState(false);
     const [addresses, setAddresses] = useState({});
 
+    // Cargar direcciones cuando se reciben tripDetails como prop
+    useEffect(() => {
+        if (propTripDetails && propSelectedTrip) {
+            console.log('[MapView] Recibido tripDetails como prop:', {
+                trip: propSelectedTrip,
+                pointsCount: propTripDetails.points?.length,
+                stopsCount: propTripDetails.stops?.length
+            });
+            setTrip(propSelectedTrip);
+            setRouteData({ isMulti: false, ...propTripDetails });
+            
+            // Cargar direcciones
+            const loadAddresses = async () => {
+                const newAddresses = {};
+                const data = propTripDetails;
+                
+                if (data.points && data.points.length > 0) {
+                    const startPoint = data.points[0];
+                    newAddresses[`start-${propSelectedTrip.id}`] = await getAddress(startPoint.lat, startPoint.lng);
+
+                    const endPoint = data.points.at(-1);
+                    newAddresses[`end-${propSelectedTrip.id}`] = await getAddress(endPoint.lat, endPoint.lng);
+
+                    for (let i = 0; i < (data.stops || []).length; i++) {
+                        const stop = data.stops[i];
+                        newAddresses[`stop-${propSelectedTrip.id}-${i}`] = await getAddress(stop.lat, stop.lng);
+                    }
+                }
+                setAddresses(newAddresses);
+            };
+            
+            loadAddresses();
+        }
+    }, [propTripDetails, propSelectedTrip]);
+
     // Fetch trips when employee/date changes
     useEffect(() => {
-        if (view === 'history' && selectedEmployee) {
+        if (view === 'history' && selectedEmployee && !propTripDetails) {
             setRouteData(null); setTrip(null); setPlayback(false);
             api.get(`/api/trips?employeeId=${selectedEmployee.id}&date=${date}`)
                 .then(r => setTrips(r.data))
                 .catch(console.error);
         }
-    }, [selectedEmployee, date, view]);
+    }, [selectedEmployee, date, view, propTripDetails]);
 
     // Cargar direcciones para ubicaciones en vivo
     useEffect(() => {
@@ -236,7 +271,7 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations }) => {
     return (
         <div style={{ height: '100%', width: '100%', position: 'relative' }}>
             {/* ── HISTORY CONTROLS (Side Panel) ── */}
-            {view === 'history' && selectedEmployee && (
+            {view === 'history' && selectedEmployee && !propTripDetails && (
                 <div className="history-sidepanel">
                     <h3 className="hs-title">Historial de Ruta</h3>
                     <div className="hs-employee">👤 {selectedEmployee.name}</div>

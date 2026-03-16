@@ -100,6 +100,8 @@ router.get('/history/:employeeId', auth, async (req, res) => {
     }
 
     try {
+        console.log(`[TRIPS] History request: employeeId=${employeeId}, dates=${startDate} to ${endDate}, role=${req.user.role}`);
+        
         const result = await db.query(`
             SELECT 
                 t.id,
@@ -116,6 +118,8 @@ router.get('/history/:employeeId', auth, async (req, res) => {
             AND DATE(t.start_time) <= $3
             ORDER BY t.start_time DESC
         `, [employeeId, startDate, endDate]);
+
+        console.log(`[TRIPS] Found ${result.rows.length} trips for employee ${employeeId}`);
 
         const trips = result.rows.map(trip => ({
             ...trip,
@@ -150,92 +154,16 @@ router.get('/:id', auth, async (req, res) => {
             return res.status(404).json({ error: 'Trip not found' });
         }
 
-        // 2. Get route points (simplificados o completos según parámetro)
-        let pointsResult;
-        let isSimplified = false;
-        
-        if (simplify) {
-            // ✅ OPTIMIZADO: Usar ruta simplificada de trip_routes
-            // (~120 puntos en lugar de 1920 = 88% reducción en tamaño)
-            try {
-                pointsResult = await db.query(`
-                    SELECT 
-                        ST_AsGeoJSON(geom_simplified)::json as geom,
-                        point_count_simplified as point_count,
-                        TRUE as is_simplified
-                    FROM trip_routes
-                    WHERE trip_id = $1
-                `, [tripId]);
-            } catch (tableError) {
-                // Si la tabla no existe, pasar al fallback directo
-                if (tableError.message.includes('trip_routes') || tableError.message.includes('does not exist')) {
-                    console.warn(`[WARNING] Trip ${tripId}: trip_routes table does not exist, using full route fallback`);
-                    pointsResult = { rows: [] };
-                } else {
-                    throw tableError; // Re-throw otros errores
-                }
-            }
+        // 2. Get route points - SIEMPRE desde locations (más confiable)
+        console.log(`[API] Trip ${tripId}: Fetching locations...`);
+        const pointsResult = await db.query(`
+            SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp, state
+            FROM locations 
+            WHERE trip_id = $1 
+            ORDER BY timestamp ASC
+        `, [tripId]);
 
-            if (pointsResult.rows.length === 0) {
-                // Fallback: si no existe ruta compilada, retornar completa
-                console.warn(`[WARNING] Trip ${tripId}: No simplified route found, using full route`);
-                pointsResult = await db.query(`
-                    SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp
-                    FROM locations 
-                    WHERE trip_id = $1 
-                    ORDER BY timestamp ASC
-                `, [tripId]);
-                isSimplified = false;
-            } else {
-                try {
-                    // Transformar el resultado para mantener compatibilidad con frontend
-                    const row = pointsResult.rows[0];
-                    
-                    // Validar que geom es un objeto válido con coordinates
-                    if (row.geom && row.geom.coordinates && Array.isArray(row.geom.coordinates)) {
-                        // Extraer coordenadas de GeoJSON LineString
-                        const coordinates = row.geom.coordinates;
-                        pointsResult.rows = coordinates.map(coord => ({
-                            lat: coord[1],
-                            lng: coord[0],
-                            speed: null,
-                            accuracy: null,
-                            timestamp: null
-                        }));
-                        isSimplified = true;
-                    } else {
-                        // Si el GeoJSON no es válido, hacer fallback a ruta completa
-                        console.warn(`[WARNING] Trip ${tripId}: Invalid GeoJSON structure in trip_routes, using full route`);
-                        pointsResult = await db.query(`
-                            SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp
-                            FROM locations 
-                            WHERE trip_id = $1 
-                            ORDER BY timestamp ASC
-                        `, [tripId]);
-                        isSimplified = false;
-                    }
-                } catch (geoJsonError) {
-                    // Si hay error procesando GeoJSON, hacer fallback
-                    console.warn(`[WARNING] Trip ${tripId}: Error processing GeoJSON - ${geoJsonError.message}, using full route`);
-                    pointsResult = await db.query(`
-                        SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp
-                        FROM locations 
-                        WHERE trip_id = $1 
-                        ORDER BY timestamp ASC
-                    `, [tripId]);
-                    isSimplified = false;
-                }
-            }
-        } else {
-            // ❌ SIN OPTIMIZAR: Obtener todos los puntos crudos (~1920)
-            // Mantener para compatibilidad hacia atrás
-            pointsResult = await db.query(`
-                SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp
-                FROM locations 
-                WHERE trip_id = $1 
-                ORDER BY timestamp ASC
-            `, [tripId]);
-        }
+        console.log(`[API] Trip ${tripId}: Found ${pointsResult.rows.length} points from locations table`);
 
         // 3. Get stops
         const stopsResult = await db.query(`
@@ -245,20 +173,15 @@ router.get('/:id', auth, async (req, res) => {
             ORDER BY start_time ASC
         `, [tripId]);
 
-        // Logging para monitoreo
-        const pointCount = Array.isArray(pointsResult.rows) ? pointsResult.rows.length : 0;
-        console.log(
-            `[API] Trip ${tripId}: returned ${pointCount} points ` +
-            `(${isSimplified ? 'simplified ✅' : 'full ❌'})`
-        );
+        console.log(`[API] Trip ${tripId}: Found ${stopsResult.rows.length} stops`);
 
         res.json({
             trip: tripResult.rows[0],
             points: pointsResult.rows,
             stops: stopsResult.rows,
             metadata: {
-                simplified: isSimplified,
-                point_count: pointCount
+                point_count: pointsResult.rows.length,
+                stop_count: stopsResult.rows.length
             }
         });
     } catch (err) {

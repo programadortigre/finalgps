@@ -11,7 +11,11 @@ const History = ({ user }) => {
         d.setDate(d.getDate() - 7);
         return d.toISOString().split('T')[0];
     });
-    const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+    const [endDate, setEndDate] = useState(() => {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);  // ✅ FIX: Incluir también mañana para atrapar viajes con timezone offset
+        return d.toISOString().split('T')[0];
+    });
 
     const [trips, setTrips] = useState([]);
     const [stops, setStops] = useState([]);
@@ -29,7 +33,11 @@ const History = ({ user }) => {
             try {
                 const { data } = await api.get('/api/trips/employees');
                 setEmployees(data);
-                if (data.length > 0) setSelectedEmployee(data[0].id);
+                // ✅ FIX: Preseleccionar el primer empleado al cargar
+                // Esperar a que data esté disponible antes de preseleccionar
+                if (data.length > 0) {
+                    setSelectedEmployee(data[0].id);
+                }
             } catch (err) {
                 setError('Error al cargar vendedores');
             }
@@ -116,9 +124,10 @@ const History = ({ user }) => {
                         </div>
                     ) : (
                         <MapView
-                            points={tripDetails.points}
-                            stops={tripDetails.stops}
-                            selectedTrip={tripDetails.trip}
+                            view="history"
+                            selectedEmployee={employees.find(e => e.id === selectedEmployee) || null}
+                            selectedTrip={selectedTrip}
+                            tripDetails={tripDetails}
                         />
                     )
                 ) : (
