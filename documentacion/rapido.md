@@ -55,3 +55,7 @@ sudo docker-compose up -d --build
 docker-compose down -v
 docker-compose up -d --build   
 docker-compose logs -f gps-                  i
+
+
+cd ~/finalgps
+wget https://download.geofabrik.de/south-america/peru-latest.osm.pbf
