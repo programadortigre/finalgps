@@ -26,7 +26,7 @@ bash setup-deploy.sh  # Linux/Mac
 - Docker & Docker Compose
 - Flutter SDK (for mobile app)
 - Android Emulator or physical device
-- **IMPORTANT**: [OSRM Map Data for Peru](OSRM_FIX.md) - Run `bash setup-osrm.sh` before deploying
+- **NOTE**: OSRM map data is downloaded & compiled automatically on first startup (takes ~50 min)
 
 ## 2. Quick Start
 

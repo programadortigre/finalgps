@@ -7,19 +7,49 @@
 - ✅ Procesa "map matching" para mejorar la precisión
 - ✅ Calcula rutas y distancias exactas
 
-Sin los datos de OSRM precompilados, recibimos este error:
+---
+
+## 🚀 OPCIÓN RECOMENDADA: Automático
+
+**✨ AHORA ESTÁ TOTALMENTE AUTOMATIZADO**
+
+Solo necesitas:
+
+```bash
+cd ~/finalgps
+sudo docker-compose up -d --build
 ```
-[error] Required files are missing, cannot continue
-[warn] Missing/Broken File: /data/peru-latest.osrm.*
+
+El contenedor OSRM automáticamente:
+- ✅ Detecta si hay datos compilados
+- ✅ Si no existen, descarga peru-latest.osm.pbf (~350MB)
+- ✅ Compila con Docker (20-40 minutos)
+- ✅ Inicia el servicio
+
+**Tiempo la primera vez**: ~50 minutos
+**Tiempo siguientes**: ~2 segundos (datos ya compilados)
+
+### Ver progreso:
+
+```bash
+sudo docker-compose logs -f osrm
+```
+
+Esperado ver:
+```
+[OSRM] ⬇️  Descargando peru-latest.osm.pbf...
+[OSRM] 🔧 Compilando datos de OSRM...
+[OSRM] 🚀 Iniciando OSRM server...
+[OSRM] Escuchando en 0.0.0.0:5000
 ```
 
 ---
 
-## 🚀 Solución Rápida (Opción Recomendada)
+## 🔧 OPCIÓN MANUAL: Pre-descargar datos
 
-### PASO 1: Descargar datos precompilados
+Si prefieres descargar y compilar **antes** de iniciar Docker:
 
-Ejecuta en tu VM Linux:
+### PASO 1: Descargar datos
 
 ```bash
 cd ~/finalgps
@@ -28,135 +58,105 @@ cd osrm_data
 
 # Descargar el archivo de datos de Perú (≈ 350MB)
 wget https://download.geofabrik.de/south-america/peru-latest.osm.pbf
-
-# El archivo debe estar en: ~/finalgps/osrm_data/peru-latest.osm.pbf
 ```
 
-### PASO 2: Compilar los datos con OSRM
-
-Docker se encargará automáticamente en el siguiente paso. **PERO PRIMERO**, si necesitas compilar localmente:
+### PASO 2: Compilar (opcional, se hace automáticamente si no existen)
 
 ```bash
-# Opción A: Usar imagen Docker para compilar (recomendado, ≈ 10-15 minutos)
-docker run -t -v /home/ubuntu/finalgps/osrm_data:/data osrm/osrm-backend \
-  osrm-extract -p /opt/osrm/profiles/car.lua /data/peru-latest.osm.pbf
-
-docker run -t -v /home/ubuntu/finalgps/osrm_data:/data osrm/osrm-backend \
-  osrm-partition /data/peru-latest.osrm
-
-docker run -t -v /home/ubuntu/finalgps/osrm_data:/data osrm/osrm-backend \
-  osrm-customize /data/peru-latest.osrm
+# Si quieres compilar ahora en vez de esperar al docker-compose up:
+bash ../setup-osrm.sh
 ```
 
-### PASO 3: Iniciar los contenedores
+### PASO 3: Iniciar Docker
 
 ```bash
+cd ~/finalgps
 sudo docker-compose up -d --build
-
-# Verificar que osrm está corriendo
-sudo docker-compose logs osrm
-```
-
-Deberías ver:
-```
-[info] LibOSRM initialized using algorithm: MLD
-[info] starting service on: 0.0.0.0:5000
 ```
 
 ---
 
-## 💾 Opción B: Descargar datos precompilados (MÁS RÁPIDO)
+## 💾 Archivos necesarios
 
-Si alguien ya compiló los datos, puedes obtenerlos directamente:
-
-### Desde repositorios comunitarios:
-
-```bash
-cd ~/finalgps/osrm_data
-
-# Opción 1: Desde OpenStreetMap (si existen datos precompilados)
-# wget https://some-osrm-host/peru-latest.osrm.tar.gz
-# tar -xzf peru-latest.osrm.tar.gz
-
-# O contacta al equipo para obtener los datos compilados
-```
-
-### Archivos necesarios en osrm_data/:
-
-Después de compilar, debes tener estos archivos (≥ 2-3 GB total):
+Después de compilación, debes tener (~2-3 GB total):
 
 ```
 osrm_data/
-├── peru-latest.osm.pbf           (≈ 350MB) - OSM fuente
-├── peru-latest.osrm              (≈ 1GB) - Archivo base compilado
-├── peru-latest.osrm.edges        (requerido)
-├── peru-latest.osrm.ramIndex     (requerido)
-├── peru-latest.osrm.fileIndex    (requerido)
-├── peru-latest.osrm.geometry     (requerido)
-├── peru-latest.osrm.names        (requerido)
-├── peru-latest.osrm.datasource_names (requerido)
-├── peru-latest.osrm.icd          (requerido)
-├── peru-latest.osrm.maneuver_overrides (requerido)
-├── peru-latest.osrm.turn_weight_penalties (requerido)
-├── peru-latest.osrm.turn_duration_penalties (requerido)
-└── peru-latest.osrm.timestamp    (requerido)
+├── peru-latest.osm.pbf           (~350MB)
+├── peru-latest.osrm              (~1GB)
+├── peru-latest.osrm.edges        ✓
+├── peru-latest.osrm.ramIndex     ✓
+├── peru-latest.osrm.fileIndex    ✓
+├── peru-latest.osrm.geometry     ✓
+├── peru-latest.osrm.names        ✓
+├── peru-latest.osrm.datasource_names ✓
+├── peru-latest.osrm.icd          ✓
+├── peru-latest.osrm.maneuver_overrides ✓
+├── peru-latest.osrm.turn_weight_penalties ✓
+├── peru-latest.osrm.turn_duration_penalties ✓
+└── peru-latest.osrm.timestamp    ✓
 ```
 
 ---
 
 ## 🔧 Troubleshooting
 
-### Problema: Docker no encuentra los datos
+### Problema: compilación tarda mucho
 
-**Síntoma:**
-```
-[error] Required files are missing, cannot continue
-```
+**Síntoma**: El contenedor osrm está corriendo pero no responde
 
-**Solución:**
+**Solución**:
 ```bash
-# 1. Verifica que el directorio existe
-ls -la ~/finalgps/osrm_data
-
-# 2. Verifica que el archivo .pbf existe
-ls -la ~/finalgps/osrm_data/peru-latest.osm.pbf
-
-# 3. Si no existe, descárgalo
-wget -O ~/finalgps/osrm_data/peru-latest.osm.pbf \
-  https://download.geofabrik.de/south-america/peru-latest.osm.pbf
-
-# 4. Reinicia Docker
-sudo docker-compose restart osrm
-```
-
-### Problema: Compilación tarda mucho
-
-**Síntoma:** El contenedor osrm está corriendo pero no responde
-
-**Solución:**
-```bash
-# Ver progreso
+# Ver progreso 
 sudo docker-compose logs -f osrm
 
-# Si tarda más de 30 minutos, puede ser normal en VMs pequeñas
-# Paciencia... ¡es un archivo grande!
+# Es normal que tarde 20-40 minutos la primera vez
+# La compilación usa mucho CPU
 ```
 
 ### Problema: Error de memoria durante compilación
 
-**Síntoma:**
+**Síntoma**:
 ```
 Out of memory / Killed
 ```
 
-**Solución:**
+**Solución**:
 - Añade más RAM a tu VM (mínimo 4GB recomendado)
-- O usa esta opción más eficiente:
+- Para liberar espacio:
+```bash
+docker system prune -a
+# Luego reinicia
+sudo docker-compose down
+sudo docker-compose up -d --build
+```
+
+### Problema: Descarga falla
+
+**Síntoma**:
+```
+[OSRM] ❌ Descarga fallida después de 3 intentos
+```
+
+**Solución**:
+- El contenedor reintenta 3 veces automáticamente
+- Verifica tu conexión a Internet
+- Si persiste, descarga manualmente antes:
 
 ```bash
-docker run -t -v /home/ubuntu/finalgps/osrm_data:/data osrm/osrm-backend \
-  osrm-extract -p /opt/osrm/profiles/car.lua /data/peru-latest.osm.pbf \
-  --memory-limit 2000
+wget -O osrm_data/peru-latest.osm.pbf \
+  https://download.geofabrik.de/south-america/peru-latest.osm.pbf
+```
+
+### Problema: Quiero usar datos precompilados de otra fuente
+
+```bash
+# Copia tus datos a osrm_data/
+cp /ruta/datos/compilados/* ./osrm_data/
+
+# El contenedor detectará que existen
+sudo docker-compose up -d --build
+# No compilará de nuevo
 ```
 
 ---
@@ -165,13 +165,13 @@ docker run -t -v /home/ubuntu/finalgps/osrm_data:/data osrm/osrm-backend \
 
 | Operación | Tiempo |
 |-----------|--------|
-| Descargar peru-latest.osm.pbf | 5-10 min |
+| Descargar osm.pbf | 5-10 min |
 | **osrm-extract** | 10-20 min |
 | **osrm-partition** | 2-5 min |
 | **osrm-customize** | 5-10 min |
-| **TOTAL** | **25-45 min** |
+| **TOTAL (1ª vez)** | **25-45 min** |
 
-(Depende de CPU/RAM de tu VM)
+(Depende de CPU/RAM disponible)
 
 ---
 
@@ -215,17 +215,10 @@ sudo docker-compose down
 # 2. Limpiar datos viejos
 sudo rm -rf ~/finalgps/osrm_data/*
 
-# 3. Crear directorio limpio
-mkdir -p ~/finalgps/osrm_data
-
-# 4. Descargar datos frescos
-wget -O ~/finalgps/osrm_data/peru-latest.osm.pbf \
-  https://download.geofabrik.de/south-america/peru-latest.osm.pbf
-
-# 5. Reiniciar con compilación
+# 3. Reiniciar (descargará y compilará de nuevo)
 sudo docker-compose up -d --build
 
-# 6. Ver progreso (esto tardará...)
+# 4. Ver progreso
 sudo docker-compose logs -f osrm
 ```
 
@@ -237,13 +230,3 @@ sudo docker-compose logs -f osrm
 - 📚 **OSRM Docs**: https://docs.project-osrm.org/
 - 🐳 **Docker OSRM**: https://hub.docker.com/r/osrm/osrm-backend
 - 🔧 **Perfiles OSRM**: https://github.com/Project-OSRM/osrm-backend/tree/master/profiles
-
----
-
-## Next Steps
-
-Una vez que OSRM esté funcionando:
-
-1. ✅ El servicio worker podrá procesar "map matching"
-2. ✅ GPS puntos se ajustarán a carreteras reales
-3. ✅ Las consultas de ruta funcionarán correctamente

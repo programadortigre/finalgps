@@ -1,0 +1,10 @@
+FROM osrm/osrm-backend:latest
+
+# Copiar script entrypoint
+COPY osrm_entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Instalar wget para descargas
+RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["/entrypoint.sh"]

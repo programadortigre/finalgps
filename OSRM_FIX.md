@@ -7,73 +7,61 @@
 [warn] Missing/Broken File: /data/peru-latest.osrm.*
 ```
 
-Esto ocurre porque **faltan los datos precompilados de OSRM para Perú**.
+Esto ocurría porque **faltaban los datos precompilados de OSRM para Perú**.
+
+**✅ AHORA ESTÁ COMPLETAMENTE AUTOMATIZADO**
 
 ---
 
-## ✅ La Solución (3 pasos)
+## ✅ La Solución (1 solo paso)
 
-### Paso 1️⃣: Crear directorio y descargar datos
-
-En tu **VM Ubuntu** (o WSL2):
-
-```bash
-cd ~/finalgps
-mkdir -p osrm_data
-cd osrm_data
-
-# Descargar el archivo OSM de Perú (~350MB, toma 5-10 min)
-wget https://download.geofabrik.de/south-america/peru-latest.osm.pbf
-```
-
-### Paso 2️⃣: Ejecutar script de compilación
-
-```bash
-cd ~/finalgps
-bash setup-osrm.sh
-```
-
-Este script automáticamente:
-- ✅ Verifica espacio en disco
-- ✅ Compila los datos con Docker (20-40 min)
-- ✅ Genera todos los archivos `.osrm.*` necesarios
-
-### Paso 3️⃣: Reiniciar Docker
+### Paso Único: Iniciar Docker
 
 ```bash
 sudo docker-compose down
 sudo docker-compose up -d --build
-
-# Verifica que OSRM está corriendo
-sudo docker-compose logs -f osrm
 ```
 
-Espera a ver esta línea:
-```
-[info] starting service on: 0.0.0.0:5000
-```
+Eso es todo. El contenedor OSRM automáticamente:
+- ✅ Verifica si hay datos compilados
+- ✅ Si no existen, descarga datos de Perú (~350MB)
+- ✅ Compila con Docker (20-40 min, solo la primera vez)
+- ✅ Inicia el servicio OSRM
 
 ---
 
 ## ⏱️ Tiempo Total
 
+**Primera vez**: ~50 minutos (descarga + compilación)
 - Descargar: 5-10 minutos
 - Compilar: 20-40 minutos (según CPU/RAM de tu VM)
-- Total: **~45-50 minutos**
+
+**Siguientes veces**: ~2 segundos (datos ya compilados)
 
 ---
 
 ## 🔍 Verificar que funciona
 
 ```bash
+# Ver logs de OSRM
+sudo docker-compose logs -f osrm
+
+# Espera a ver esta línea (indica que está listo):
+# [OSRM] 🚀 Iniciando OSRM server...
+# [OSRM] Escuchando en 0.0.0.0:5000
+```
+
+En otra terminal:
+```bash
 # Test rápido
 curl http://localhost:5000/status
+
 # Respuesta esperada: {"status":0}
 
 # Ver estado de todos los contenedores
 sudo docker-compose ps
 
-# Deberías ver todos en "Up"
+# Todos deberían estar en "Up"
 ```
 
 ---
@@ -82,31 +70,34 @@ sudo docker-compose ps
 
 **Problema**: Docker se llena de memoria
 ```bash
-# Libera espacio
+# Libera espacio y reinicia
 docker system prune -a
-# O añade más RAM a la VM
+sudo docker-compose down
+sudo docker-compose up -d --build
 ```
 
-**Problema**: Descarga lenta
+**Problema**: Descarga lenta o timeout
 ```bash
-# Prueba con espejo alternativo
-wget https://geofabrik.de/data/osm/south-america/peru/peru-latest.osm.pbf
+# El contenedor reintentar 3 veces automáticamente
+# Si aún falla, verifica tu conexión:
+sudo docker-compose logs osrm | tail -50
 ```
 
-**Problema**: Directorio no existe
+**Problema**: Quieres usar datos precompilados existentes
 ```bash
-# Crea manualmente
-mkdir -p ~/finalgps/osrm_data
-# Verifica permisos
-chmod 755 ~/finalgps/osrm_data
+# Copia los archivos manualmente a osrm_data/
+# El entrypoint detectará que existen y no compilará de nuevo
+cp -r /ruta/a/datos/compilados/* ./osrm_data/
+sudo docker-compose restart osrm
 ```
 
 ---
 
 ## 📚 Documentación completa
 
-Ver: [documentacion/OSRM_SETUP.md](OSRM_SETUP.md)
+Ver: [documentacion/OSRM_SETUP.md](documentacion/OSRM_SETUP.md)
 
 ---
 
-¡Eso es todo! El servicio OSRM debería estar funcionando después.
+¡Eso es todo! OSRM está completamente automatizado.
+

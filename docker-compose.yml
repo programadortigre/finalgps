@@ -73,10 +73,12 @@ services:
     networks: [ tracking-net ]
 
   osrm:
-    image: osrm/osrm-backend
+    build:
+      context: .
+      dockerfile: osrm_Dockerfile
     container_name: gps-osrm
     restart: always
-    command: osrm-routed --algorithm mld /data/peru-latest.osrm
+    # El entrypoint descarga y compila datos automáticamente si no existen
     volumes:
       - ./osrm_data:/data
     networks: [ tracking-net ]
