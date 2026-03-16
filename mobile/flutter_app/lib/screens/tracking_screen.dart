@@ -171,12 +171,21 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
               }
 
               if (_segments.last.isEmpty) {
-                _segments.last.add(ll);
+                // ✅ FIX: Validar precisión del primer punto para evitar arañazos de ruido
+                // Solo agregar si accuracy es decente (<50m) para descartar ruido GPS inicial
+                if (_accuracy < 50) {
+                  _segments.last.add(ll);
+                  _log('GPS', 'Primer punto del segmento: acc=$_accuracy m');
+                } else {
+                  _log('FILTER', 'DROP primer punto: accuracy=$_accuracy m > 50m (ruido GPS)');
+                }
               } else {
                 final lastPoint = _segments.last.last;
-                // Solo agregar si hay movimiento real (> 5m) para no saturar 1500 pts con ruido
+                // Solo agregar si hay movimiento real (> 5m) para no saturar con ruido
                 if (_distCalc.as(LengthUnit.Meter, lastPoint, ll) > 5) {
                   _segments.last.add(ll);
+                } else {
+                  _log('FILTER', 'DROP: distancia=${_distCalc.as(LengthUnit.Meter, lastPoint, ll).toStringAsFixed(1)}m < 5m');
                 }
               }
             }

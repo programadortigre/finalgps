@@ -1,7 +1,7 @@
 async function detectStops(client, tripId, employeeId) {
     const DISTANCE_THRESHOLD = 20;      // 20 metros (Requisito Producción)
     const SPEED_THRESHOLD = 2.0 / 3.6;  // 2 km/h en m/s
-    const MIN_DURATION_MS = 90 * 1000;  // 90 segundos mínimo
+    const MIN_DURATION_MS = 60 * 1000;  // ✅ REDUCIDO a 60 segundos (antes 90s) - más sensible
     const MAX_SPREAD = 25;              // 25 metros máxima dispersión
 
     // ✅ Usar puntos MATCHED si existen, si no, usar RAW
@@ -89,7 +89,7 @@ async function detectStops(client, tripId, employeeId) {
     for (const cluster of clusters) {
         const duration = cluster.endTime - cluster.startTime;
 
-        // ✅ Solo guardar si duracion es >= 3 minutos
+        // ✅ Solo guardar si duracion es >= MIN_DURATION_MS (60 segundos)
         if (duration >= MIN_DURATION_MS) {
             const durationSeconds = Math.floor(duration / 1000);
             const centerLat = cluster.center.lat;
