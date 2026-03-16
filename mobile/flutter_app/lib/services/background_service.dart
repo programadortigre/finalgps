@@ -316,18 +316,25 @@ class TrackingEngine {
     // 2. Chequeo de batería (crítico)
     try {
       final level = await _battery.batteryLevel;
-      if (level < 15 && _currentState != TrackingState.BATT_SAVER) {
-        _log('STATE', 'Batería crítica <15%. Forzando BATT_SAVER');
+      if (level < 10 && _currentState != TrackingState.BATT_SAVER) {
+        _log('STATE', 'Batería CRÍTICA <10%. Forzando BATT_SAVER (últimos intentos)');
         _setState(TrackingState.BATT_SAVER);
         return;
-      } else if (level >= 15 && _currentState == TrackingState.BATT_SAVER) {
+      } else if (level >= 20 && _currentState == TrackingState.BATT_SAVER) {
+        // IMPORTANTE: No forzar a STOPPED, dejar que se recupere naturalmente
+        _log('STATE', 'Batería recuperada >20%. Saliendo de BATT_SAVER (pasando a STOPPED)');
         _setState(TrackingState.STOPPED);
+        // Forzar reinicio agresivo de stream para detectar movimiento
+        _restartLocationStream(reason: 'Battery Recovery');
       }
     } catch (e) {
       _log('BATT', 'Sensor batería falló: $e');
     }
 
-    if (_currentState == TrackingState.BATT_SAVER) return;
+    if (_currentState == TrackingState.BATT_SAVER) {
+      _log('BATT_SAVER', 'En modo ahorrador - GPS reducido pero activo');
+      return;
+    }
 
     // ── FIX V3: GPS Watchdog (20 segundos sin lectura) ─────────────────────
     final rawDiff = now.difference(_lastRawTime).inSeconds;
@@ -392,10 +399,16 @@ class TrackingEngine {
 
       switch (_currentState) {
         case TrackingState.DEEP_SLEEP:
-        case TrackingState.BATT_SAVER:
           intervalSec = 300;
           distanceFilter = 50;
           accuracy = LocationAccuracy.low;
+          break;
+        case TrackingState.BATT_SAVER:
+          // Más agresivo que DEEP_SLEEP: cada 30s en vez de 300s
+          // Asegura que se detecten cambios de zona incluso con batería baja
+          intervalSec = 30; // Cambio crítico: de 300 a 30 segundos
+          distanceFilter = 20; // Más sensible: de 50 a 20 metros
+          accuracy = LocationAccuracy.best; // Mejor precisión que low
           break;
         case TrackingState.STOPPED:
           intervalSec = 10; // RECOMENDADO: 10s
@@ -477,8 +490,8 @@ class TrackingEngine {
       _lastValidLocationTime = DateTime.now();
 
       // ── Votación híbrida de estado ─────────────────────────────────────────
-      if (_currentState != TrackingState.DEEP_SLEEP &&
-          _currentState != TrackingState.BATT_SAVER) {
+      // FIX: Permitir transiciones DESDE BATT_SAVER para detectar movimiento
+      if (_currentState != TrackingState.DEEP_SLEEP) {
         TrackingState votedState = _currentState;
         if (speedKmh > 12.0) {
           votedState = TrackingState.DRIVING;
