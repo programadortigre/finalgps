@@ -320,7 +320,7 @@ async function processBatch(employeeId, points) {
         await client.query(
             `UPDATE trips SET is_active = FALSE, end_time = NOW() 
              WHERE employee_id = $1 AND is_active = TRUE 
-             AND EXTRACT(EPOCH FROM (NOW() - COALESCE(end_time, start_time))) > 1800`,
+             AND EXTRACT(EPOCH FROM (NOW() - COALESCE(end_time, start_time))) > 7200`,
             [employeeId]
         );
 
