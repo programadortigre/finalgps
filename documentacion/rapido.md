@@ -60,8 +60,7 @@ docker-compose logs -f gps-                  i
 cd ~/finalgps
 wget https://download.geofabrik.de/south-america/peru-latest.osm.pbf  
 
-wget https://download.geofabrik.de/south-america/peru-latest.osm.pbf
-
+          
 
 mkdir -p osrm_data
 
