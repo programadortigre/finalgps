@@ -96,7 +96,6 @@ function process_way(profile, way, result, debug)
     foot = way:get_value_by_key('foot'),
     goods = way:get_value_by_key('goods'),
     hgv = way:get_value_by_key('hgv'),
-    车 = way:get_value_by_key('车'),
     vehicle = way:get_value_by_key('vehicle'),
     psv = way:get_value_by_key('psv'),
     bus = way:get_value_by_key('bus'),
