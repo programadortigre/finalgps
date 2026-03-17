@@ -146,6 +146,12 @@ class LocalStorage {
     return {'total': total, 'unsynced': unsynced};
   }
 
+  Future<int> getUnsyncedCount() async {
+    final database = await db;
+    final result = await database.rawQuery('SELECT COUNT(*) as un FROM $_tableName WHERE synced = 0');
+    return (result.first['un'] as int?) ?? 0;
+  }
+
   /// Obtener puntos no sincronizados ordenados por timestamp
   Future<List<LocalPoint>> getUnsyncedPoints({int limit = 100}) async {
     final database = await db;

@@ -661,10 +661,10 @@ class TrackingEngine {
         }
       }
 
-      // 3D: micro-paso en conducción
+      // 3D: micro-paso en conducción (Reducido de 4m a 2m para captar tráfico lento)
       if (_currentState == TrackingState.DRIVING &&
           distToLast > 0 &&
-          distToLast < 4) {
+          distToLast < 2) {
         _log('FILTER',
             'DROP-3D: micro-paso inercial ${distToLast.toStringAsFixed(1)}m en DRIVING');
         _isProcessingPosition = false;
@@ -690,8 +690,13 @@ class TrackingEngine {
         final driftDist = Geolocator.distanceBetween(
           _lastValidPoint!.lat, _lastValidPoint!.lng, finalLat, finalLng,
         );
-        if (driftDist < 10) { // FIX V3: 10m
-          _log('FILTER', 'DROP-DRIFT: ${driftDist.toStringAsFixed(1)}m descartado');
+        
+        // ⚡ MODIFICACIÓN: Permitir al menos 3 puntos de "heartbeat" al parar 
+        // para que el servidor detecte la parada (necesita 3 pts min).
+        // Después de 3 puntos, aplicar el filtro de 10m.
+        final int unsyncedCount = await _storage.getUnsyncedCount();
+        if (driftDist < 10 && unsyncedCount >= 3) { 
+          _log('FILTER', 'DROP-DRIFT: ${driftDist.toStringAsFixed(1)}m descartado (Stop confirmed)');
           _isProcessingPosition = false;
           return;
         }
