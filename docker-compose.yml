@@ -19,8 +19,8 @@ services:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 10s
       timeout: 10s
-      retries: 10
-      start_period: 40s
+      retries: 15
+      start_period: 60s
 
   redis:
     image: redis:7-alpine
@@ -56,8 +56,8 @@ services:
       test: [ "CMD", "curl", "-f", "http://localhost:3000/health" ]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 20s
+      retries: 8
+      start_period: 60s
 
   worker:
     build: ./worker
@@ -76,6 +76,12 @@ services:
       redis:
         condition: service_healthy
     networks: [ tracking-net ]
+    healthcheck:
+      test: [ "CMD", "node", "-e", "process.exit(0)" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   # OSRM - DISABLED FOR NOW (future feature)
   # Re-enable by uncommenting and adding back to worker depends_on
