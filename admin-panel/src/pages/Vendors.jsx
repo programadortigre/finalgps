@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserPlus, Trash2, Pencil, X, Check, Eye, EyeOff } from 'lucide-react';
+import { Users, UserPlus, Trash2, Pencil, X, Check, Eye, EyeOff, Radio, Power, PowerOff } from 'lucide-react';
 import api from '../services/api';
 
 const defaultForm = { name: '', email: '', password: '', role: 'employee' };
@@ -99,6 +99,17 @@ const Vendors = () => {
         } catch (e) { alert(e.response?.data?.error || 'Error al eliminar'); }
     };
 
+    const toggleTracking = async (id, currentStatus) => {
+        try {
+            await api.patch(`/api/employees/${id}/tracking`, { enabled: !currentStatus });
+            setEmployees(prev => prev.map(emp => 
+                emp.id === id ? { ...emp, is_tracking_enabled: !currentStatus } : emp
+            ));
+        } catch (e) {
+            alert(e.response?.data?.error || 'Error al cambiar estado de rastreo');
+        }
+    };
+
     const openAdd = () => { setEditTarget(null); setModalOpen(true); };
     const openEdit = (v) => { setEditTarget(v); setModalOpen(true); };
     const onSave = () => { setModalOpen(false); fetchEmployees(); };
@@ -139,6 +150,7 @@ const Vendors = () => {
                                 <th>Nombre</th>
                                 <th>Email</th>
                                 <th>Rol</th>
+                                <th>Rastreo</th>
                                 <th>Registrado</th>
                                 <th>Acciones</th>
                             </tr>
@@ -152,6 +164,19 @@ const Vendors = () => {
                                         <span className={`badge ${v.role === 'admin' ? 'badge-admin' : 'badge-employee'}`}>
                                             {v.role === 'admin' ? 'Admin' : 'Vendedor'}
                                         </span>
+                                    </td>
+                                    <td>
+                                        <button 
+                                            onClick={() => toggleTracking(v.id, v.is_tracking_enabled)}
+                                            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+                                                v.is_tracking_enabled 
+                                                    ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                                                    : 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                                            }`}
+                                        >
+                                            {v.is_tracking_enabled ? <Power size={12} /> : <PowerOff size={12} />}
+                                            {v.is_tracking_enabled ? 'ACTIVO' : 'INACTIVO'}
+                                        </button>
                                     </td>
                                     <td>{new Date(v.created_at).toLocaleDateString('es-PE')}</td>
                                     <td className="actions-cell">

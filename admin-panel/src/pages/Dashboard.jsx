@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Menu, X, Activity, History, Users, Search, ChevronDown } from 'lucide-react';
+import { LogOut, Menu, X, Activity, History, Users, Search, ChevronDown, Power, PowerOff } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
 import HistoryView from './History';
@@ -85,6 +85,29 @@ const Dashboard = ({ user, onLogout }) => {
             window.removeEventListener('resize', handleResize);
         };
     }, []);
+
+    const toggleTracking = async (e, id, currentStatus) => {
+        e.stopPropagation(); // Evitar seleccionar empleado al tocar el switch
+        try {
+            await api.patch(`/api/employees/${id}/tracking`, { enabled: !currentStatus });
+            // Actualizar localmente la lista de empleados
+            setEmployees(prev => prev.map(emp => 
+                emp.id === id ? { ...emp, is_tracking_enabled: !currentStatus } : emp
+            ));
+            // También actualizar en activeLocations si existe para refrescar el mapa si es necesario
+            setActiveLocations(prev => {
+                const updated = { ...prev };
+                if (updated[id]) {
+                    // Si el admin apaga el rastreo, podríamos querer marcarlo visualmente
+                    // Aunque socket emitirá la señal, esto ayuda a la respuesta inmediata de la UI
+                }
+                return updated;
+            });
+        } catch (e) {
+            console.error('Error toggling tracking', e);
+            alert('Error al cambiar estado de rastreo');
+        }
+    };
 
     const activeCount = liveActiveIds.size; // COUNT ONLY LIVE ACTIVE users (last 5 min)
 
@@ -315,8 +338,21 @@ const Dashboard = ({ user, onLogout }) => {
                                                             : (loc.state === 'Quieto' || loc.state === 'SIN_MOVIMIENTO' || loc.state === 'STOPPED' || loc.state === 'DEEP_SLEEP')
                                                             ? 'bg-slate-500 shadow-lg shadow-slate-400/30'
                                                             : 'bg-amber-400 shadow-lg shadow-amber-400/50'
-                                                    }`} />
+                                                     }`} />
                                                     <span className="font-medium text-sm flex-1 group-hover:text-primary-300">{loc.name || `Vendedor ${loc.employeeId}`}</span>
+                                                    
+                                                    {/* Quick Control */}
+                                                    <button 
+                                                        onClick={(e) => toggleTracking(e, loc.employeeId, employees.find(emp => emp.id === loc.employeeId)?.is_tracking_enabled ?? true)}
+                                                        className={`p-1.5 rounded-lg transition-all ${
+                                                            (employees.find(emp => emp.id === loc.employeeId)?.is_tracking_enabled ?? true)
+                                                                ? 'text-green-400 hover:bg-green-500/20'
+                                                                : 'text-slate-500 hover:bg-slate-500/20'
+                                                        }`}
+                                                        title={employees.find(emp => emp.id === loc.employeeId)?.is_tracking_enabled === false ? "Activar Rastreo" : "Desactivar Rastreo"}
+                                                    >
+                                                        {(employees.find(emp => emp.id === loc.employeeId)?.is_tracking_enabled ?? true) ? <Power size={14} /> : <PowerOff size={14} />}
+                                                    </button>
                                                 </div>
                                                 <div className="text-xs text-slate-400 space-y-1 pl-5">
                                                     <div className="flex justify-between">
@@ -347,7 +383,20 @@ const Dashboard = ({ user, onLogout }) => {
                                     >
                                         <div className="flex items-center gap-2">
                                             <span className={`w-2.5 h-2.5 rounded-full ${activeLocations[e.id] ? 'bg-green-400' : 'bg-slate-500'}`} />
-                                            <span className="text-sm font-medium group-hover:text-primary-300">{e.name}</span>
+                                            <span className="text-sm font-medium group-hover:text-primary-300 flex-1">{e.name}</span>
+                                            
+                                            {/* Quick Control */}
+                                            <button 
+                                                onClick={(e_ev) => toggleTracking(e_ev, e.id, e.is_tracking_enabled)}
+                                                className={`p-1.5 rounded-lg transition-all ${
+                                                    e.is_tracking_enabled 
+                                                        ? 'text-green-400 hover:bg-green-500/20' 
+                                                        : 'text-slate-500 hover:bg-slate-500/20'
+                                                }`}
+                                                title={e.is_tracking_enabled ? "Desactivar Rastreo" : "Activar Rastreo"}
+                                            >
+                                                {e.is_tracking_enabled ? <Power size={14} /> : <PowerOff size={14} />}
+                                            </button>
                                         </div>
                                     </div>
                                 ))}

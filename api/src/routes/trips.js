@@ -9,7 +9,7 @@ router.get('/employees', auth, async (req, res) => {
         return res.status(403).json({ error: 'Admin access required' });
     }
     try {
-        const result = await db.query('SELECT id, name, email FROM employees WHERE role = \'employee\'');
+        const result = await db.query('SELECT id, name, email, is_tracking_enabled FROM employees WHERE role = \'employee\'');
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: 'Internal server error' });
