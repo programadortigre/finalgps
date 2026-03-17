@@ -3,7 +3,7 @@ async function detectStops(client, tripId, employeeId) {
     const SPEED_THRESHOLD = 2.0 / 3.6;  // 2 km/h en m/s
     const MIN_DURATION_MS = 25 * 1000;  // ⚡ REDUCIDO a 25 segundos (fue 60s) - detecta paradas cortas
     const MAX_SPREAD = 20;              // ⚡ ACTIVO: máxima dispersión del cluster (fue 25)
-    const MIN_SPEED_KMH = 1.5;          // ⚡ NUEVO: velocidad máxima para considerar parada
+    const MIN_SPEED_KMH = 3.5;          // ⚡ SUBIDO a 3.5 km/h: permite captar paradas con ruido GPS o paso muy lento
 
     // ✅ Usar puntos MATCHED si existen (ya están suavizados), si no, usar RAW
     const matchedCount = await client.query('SELECT count(*) FROM matched_locations WHERE trip_id = $1', [tripId]);
