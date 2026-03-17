@@ -145,6 +145,7 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
           else if (rawState == 'WALKING') _state = 'A pie';
           else if (rawState == 'DRIVING') _state = 'En auto';
           else if (rawState == 'NO_SIGNAL') _state = 'Sin Señal';
+          else if (rawState == 'PAUSED') _state = 'Pausado (Admin)';
           else _state = rawState;
 
           if (event['lat'] != null && event['lng'] != null) {

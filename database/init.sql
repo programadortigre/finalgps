@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS employees (
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(20) DEFAULT 'employee' CHECK (role IN ('admin', 'employee')),
+    is_tracking_enabled BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -74,7 +75,9 @@ CREATE TABLE IF NOT EXISTS stops (
 CREATE TABLE IF NOT EXISTS trip_routes (
     id SERIAL PRIMARY KEY,
     trip_id INTEGER UNIQUE REFERENCES trips(id) ON DELETE CASCADE,
+    geom_full GEOGRAPHY(LineString, 4326),
     geom_simplified GEOGRAPHY(LineString, 4326),
+    geom_matched GEOGRAPHY(LineString, 4326),
     point_count INTEGER DEFAULT 0,
     point_count_simplified INTEGER DEFAULT 0,
     simplification_tolerance FLOAT DEFAULT 0.0001,

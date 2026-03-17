@@ -58,6 +58,13 @@ const initSocket = (server) => {
             });
         });
 
+        // ✅ Empleado se une a su propia sala privada para recibir comandos (ej: activar rastreo)
+        socket.on('join_employee', (employee) => {
+            const employeeId = typeof employee === 'object' ? employee.id : employee;
+            socket.join(`user:${employeeId}`);
+            console.log(`[Socket] Employee ${employeeId} joined room 'user:${employeeId}'`);
+        });
+
         // ✅ Usuario se suscribe a su propio viaje
         socket.on('join_trip', (tripId) => {
             socket.join(`trip:${tripId}`);

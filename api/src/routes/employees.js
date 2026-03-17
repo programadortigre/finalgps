@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const auth = require('../middleware/auth');
 const db = require('../db/postgres');
+const { getIO } = require('../socket/socket');
 
 // Helper: admin-only guard
 const adminOnly = (req, res, next) => {
@@ -14,7 +15,7 @@ const adminOnly = (req, res, next) => {
 router.get('/', auth, adminOnly, async (req, res) => {
     try {
         const result = await db.query(
-            'SELECT id, name, email, role, created_at FROM employees ORDER BY created_at DESC'
+            'SELECT id, name, email, role, is_tracking_enabled, created_at FROM employees ORDER BY created_at DESC'
         );
         res.json(result.rows);
     } catch (err) {
@@ -44,7 +45,7 @@ router.post('/', auth, adminOnly, async (req, res) => {
         const result = await db.query(
             `INSERT INTO employees (name, email, password_hash, role)
              VALUES ($1, $2, $3, $4)
-             RETURNING id, name, email, role, created_at`,
+             RETURNING id, name, email, role, is_tracking_enabled, created_at`,
             [name, email, hash, role]
         );
         res.status(201).json(result.rows[0]);
@@ -71,7 +72,7 @@ router.put('/:id', auth, adminOnly, async (req, res) => {
                 [name, email, role, id]
             );
         }
-        const updated = await db.query('SELECT id, name, email, role, created_at FROM employees WHERE id=$1', [id]);
+        const updated = await db.query('SELECT id, name, email, role, is_tracking_enabled, created_at FROM employees WHERE id=$1', [id]);
         res.json(updated.rows[0]);
     } catch (err) {
         res.status(500).json({ error: 'Internal server error' });
@@ -89,6 +90,42 @@ router.delete('/:id', auth, adminOnly, async (req, res) => {
         await db.query('DELETE FROM employees WHERE id = $1', [id]);
         res.json({ success: true });
     } catch (err) {
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// PATCH /api/employees/:id/tracking — Toggle tracking state (Admin only)
+router.patch('/:id/tracking', auth, adminOnly, async (req, res) => {
+    const { id } = req.params;
+    const { enabled } = req.body;
+
+    if (typeof enabled !== 'boolean') {
+        return res.status(400).json({ error: 'enabled (boolean) is required' });
+    }
+
+    try {
+        const result = await db.query(
+            'UPDATE employees SET is_tracking_enabled = $1 WHERE id = $2 RETURNING id, is_tracking_enabled',
+            [enabled, id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Employee not found' });
+        }
+
+        // Enviar señal en tiempo real al empleado
+        const io = getIO();
+        if (io) {
+            io.to(`user:${id}`).emit('remote_tracking_toggle', {
+                enabled: enabled,
+                timestamp: new Date(),
+                message: enabled ? 'Admin enabled tracking' : 'Admin disabled tracking'
+            });
+        }
+
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('[Error] Failed to toggle tracking:', err.message);
         res.status(500).json({ error: 'Internal server error' });
     }
 });

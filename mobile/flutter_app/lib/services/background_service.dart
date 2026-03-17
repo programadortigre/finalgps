@@ -10,6 +10,8 @@ import 'api_service.dart';
 import 'local_storage.dart';
 import '../models/local_point.dart';
 import '../utils/kalman_filter.dart';
+import 'package:socket_io_client/socket_io_client.dart' as io;
+import 'socket_service.dart';
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -28,7 +30,8 @@ enum TrackingState {
   WALKING,
   DRIVING,
   BATT_SAVER,
-  NO_SIGNAL
+  NO_SIGNAL,
+  PAUSED // ✅ Remotely disabled by admin
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +70,7 @@ class TrackingEngine {
 
   // FIX A3: employeeId cacheado en memoria (no leer FlutterSecureStorage cada punto)
   int? _cachedEmployeeId;
+  bool _isSocketConnectedByAdmin = true; // Valor inicial asumido
 
   // FIX V3: Guard para evitar subidas paralelas
   bool _isFlushing = false;
@@ -198,6 +202,63 @@ class TrackingEngine {
       'is_active': false,
       'state': 'STOPPED',
     });
+  }
+
+  // ── PAUSE / RESUME (Battery Saver) ────────────────────────────────────────
+  void pause() {
+    _log('REMOTE', 'Pausando rastreo (GPS OFF, Socket ON)...');
+    _positionStreamSub?.cancel();
+    _activityStreamSub?.cancel();
+    _watchdogTimer?.cancel();
+    _currentState = TrackingState.PAUSED;
+    _serviceInstance?.invoke('trackingState', {
+      'is_active': true,
+      'state': 'PAUSED',
+    });
+
+    if (_serviceInstance is AndroidServiceInstance) {
+      (_serviceInstance as AndroidServiceInstance).setForegroundNotificationInfo(
+        title: 'Rastreo Pausado ⏸️',
+        content: 'El administrador ha desactivado el rastreo (Bajo Consumo).',
+      );
+    }
+  }
+
+  void resume() {
+    if (_currentState != TrackingState.PAUSED) return;
+    _isSocketConnectedByAdmin = true;
+    _log('REMOTE', 'Reanudando rastreo por comando remoto...');
+    _currentState = TrackingState.STOPPED;
+    _startLocationStream(reason: 'Remote Resume');
+    // Reiniciar timers si es necesario (el watchdog se reinicia en startLocation)
+    _watchdogTimer = Timer.periodic(const Duration(seconds: 10), (_) => _checkWatchdog());
+  }
+
+  void updateSocketStatus(bool connected) {
+    _isSocketConnectedByAdmin = connected;
+    _updateNotification();
+  }
+
+  void _updateNotification() async {
+    final svc = _serviceInstance;
+    if (svc == null || svc is! AndroidServiceInstance) return;
+    if (!(await svc.isForegroundService())) return;
+
+    String title;
+    String content;
+
+    if (_currentState == TrackingState.PAUSED) {
+      title = 'Rastreo Pausado 📶';
+      content = 'Control remoto activo · Esperando señal del Admin';
+    } else {
+      final stats = await _storage.getStats();
+      final count = stats['unsynced'] ?? 0;
+      final status = _isSocketConnectedByAdmin ? '📡' : '🚫';
+      title = 'Rastreo: ${_currentState.name} $status';
+      content = 'Cola: $count pts | Control Remoto: ${_isSocketConnectedByAdmin ? "Conectado" : "Buscando..."}';
+    }
+
+    svc.setForegroundNotificationInfo(title: title, content: content);
   }
 
   // ---------------------------------------------------------------------------
@@ -383,6 +444,10 @@ class TrackingEngine {
   // ---------------------------------------------------------------------------
   void _startLocationStream({String? reason}) {
     if (_isRestartingStream) return;
+    if (_currentState == TrackingState.PAUSED) {
+      _log('GPS', 'Cancelando _startLocationStream: Estado es PAUSED');
+      return;
+    }
     _isRestartingStream = true;
 
     _log('GPS', '>>> _startLocationStream($reason) [ENTER]');
@@ -668,14 +733,7 @@ class TrackingEngine {
         _lastValidPoint = point;
 
         try {
-          if (await svc.isForegroundService()) {
-            final stats = await _storage.getStats();
-            final count = stats['unsynced'] ?? 0;
-            svc.setForegroundNotificationInfo(
-              title: 'Rastreo: ${_currentState.name} (${pos.accuracy.toStringAsFixed(1)}m)',
-              content: 'Vel: ${speedKmh.toStringAsFixed(1)} km/h | Cola: $count pts',
-            );
-          }
+          _updateNotification();
         } catch (_) {
           // fallos del notificador no tumban el pipeline
         }
@@ -789,6 +847,60 @@ void onStart(ServiceInstance service) async {
 
     _engine = TrackingEngine(api: api, storage: storage);
     await _engine!.start(service);
+
+    // ✅ NUEVO: Socket Listener en el Background Isolate
+    final token = await api.getToken();
+    if (token != null) {
+      _log('SOCKET', 'Iniciando socket en segundo plano...');
+      // Importamos dinámicamente si es necesario o usamos SocketService
+      // Nota: SocketService debe ser compatible con Background Isolate
+      // Para simplicidad, escuchamos el evento del main isolate si el app está abierta,
+      // pero para robustez total, el socket debe estar AQUÍ.
+      
+      // Intentamos inicializar el socket del propio isolate
+      try {
+        final url = await ApiService.getServerUrl();
+        final userId = await api.getUserId();
+        
+        final socket = io.io(url, io.OptionBuilder()
+          .setTransports(['websocket'])
+          .setAuth({'token': token})
+          .setQuery({'from_background': 'true'})
+          .disableAutoConnect() // Control manual para mejor gestión
+          .build());
+
+        socket.onConnect((_) {
+          _log('SOCKET', 'Socket conectado en segundo plano (Isolate)');
+          _engine?.updateSocketStatus(true);
+          if (userId != null) socket.emit('join_employee', userId);
+        });
+
+        socket.onDisconnect((_) {
+          _log('SOCKET', 'Socket desconectado en segundo plano');
+          _engine?.updateSocketStatus(false);
+          // Auto-reconnect handle by socket.io-client defaults if not disabled
+        });
+
+        socket.onConnectError((e) {
+            _log('SOCKET', 'Error de conexión socket bg: $e');
+            _engine?.updateSocketStatus(false);
+        });
+
+        socket.on('remote_tracking_toggle', (data) {
+          final bool enabled = data['enabled'] ?? false;
+          _log('SOCKET', 'Comando remoto recibido: enabled=$enabled');
+          if (enabled) {
+            _engine?.resume();
+          } else {
+            _engine?.pause();
+          }
+        });
+
+        socket.connect();
+      } catch(e) {
+        _log('SOCKET', 'Error iniciando socket bg: $e');
+      }
+    }
 
     // Escuchar eventos del servicio
     if (service is AndroidServiceInstance) {

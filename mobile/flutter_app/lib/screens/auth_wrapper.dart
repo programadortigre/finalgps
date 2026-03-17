@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/api_service.dart';
+import '../services/socket_service.dart';
 import 'tracking_screen.dart';
 import 'login_screen.dart';
 
@@ -20,7 +21,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
   void initState() {
     super.initState();
     _requestBatteryOptimizerExemption();
-    _api.getToken().then((t) => setState(() { _token = t; _checking = false; }));
+    _api.getToken().then((t) {
+      if (t != null) SocketService.init(t);
+      setState(() { _token = t; _checking = false; });
+    });
   }
 
   // Solicitar exención de optimización de batería

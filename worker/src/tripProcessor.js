@@ -103,7 +103,7 @@ async function updateTripRoute(client, tripId) {
                 trip_id, 
                 geom_full, 
                 geom_simplified, 
-                point_count_full, 
+                point_count, 
                 point_count_simplified
             )
             SELECT 
@@ -116,19 +116,19 @@ async function updateTripRoute(client, tripId) {
             ON CONFLICT (trip_id) DO UPDATE SET
                 geom_full = EXCLUDED.geom_full,
                 geom_simplified = EXCLUDED.geom_simplified,
-                point_count_full = EXCLUDED.point_count_full,
+                point_count = EXCLUDED.point_count,
                 point_count_simplified = EXCLUDED.point_count_simplified,
                 updated_at = CURRENT_TIMESTAMP
-            RETURNING point_count_full, point_count_simplified
+            RETURNING point_count, point_count_simplified
         `, [tripId]);
 
         if (result.rows.length > 0) {
-            const { point_count_full, point_count_simplified } = result.rows[0];
+            const { point_count, point_count_simplified } = result.rows[0];
             const elapsed = Date.now() - startTime;
-            const reduction = ((point_count_full - point_count_simplified) / point_count_full * 100).toFixed(1);
+            const reduction = ((point_count - point_count_simplified) / point_count * 100).toFixed(1);
 
             console.log(
-                `[SIMPLIFY] Trip ${tripId}: compiled ${point_count_full} points ` +
+                `[SIMPLIFY] Trip ${tripId}: compiled ${point_count} points ` +
                 `→ ${point_count_simplified} simplified (${reduction}% reduction) in ${elapsed}ms`
             );
         }
@@ -141,214 +141,196 @@ async function updateTripRoute(client, tripId) {
 /// FUNCIÓN: Procesar lote de puntos GPS
 /// ============================================================================
 async function processBatch(employeeId, points) {
+    if (!points || points.length === 0) return;
+
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
-        // Find today's trip
-        let res = await client.query(
-            'SELECT id FROM trips WHERE employee_id = $1 AND DATE(start_time) = CURRENT_DATE AND is_active = TRUE LIMIT 1',
-            [employeeId]
-        );
-
-        let tripId;
-        if (res.rows.length === 0) {
-            const newTrip = await client.query(
-                'INSERT INTO trips (employee_id, is_active) VALUES ($1, TRUE) RETURNING id',
-                [employeeId]
-            );
-            tripId = newTrip.rows[0].id;
-        } else {
-            tripId = res.rows[0].id;
-        }
-
-        // ✅ OBTENER EL ÚLTIMO PUNTO VÁLIDO (para filtrar saltos imposibles)
-        let lastValidPoint = null;
-        const lastPointRes = await client.query(
-            'SELECT latitude as lat, longitude as lng, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp DESC LIMIT 1',
-            [tripId]
-        );
-        if (lastPointRes.rows.length > 0) {
-            lastValidPoint = {
-                lat: parseFloat(lastPointRes.rows[0].lat),
-                lng: parseFloat(lastPointRes.rows[0].lng),
-                timestamp: parseInt(lastPointRes.rows[0].timestamp, 10)
-            };
-        }
-
-        // ✅ VALIDACIÓN: Rechazar puntos con datos inválidos o saltos
-        let validPoints = 0;
-        let invalidPoints = 0;
-
-        // Ordenar chronológicamente el batch para comparar bien
+        // 1. Sort points chronologically
         points.sort((a, b) => a.timestamp - b.timestamp);
 
-        for (let p of points) {
-            // Validar coordenadas
-            if (p.lat < -90 || p.lat > 90 || p.lng < -180 || p.lng > 180 || (p.lat === 0 && p.lng === 0)) {
-                console.warn(`[VALIDATION] Invalid or zero coordinates: lat=${p.lat}, lng=${p.lng}`);
-                invalidPoints++;
-                continue;
+        // 2. Group points into segments by 30-minute gaps
+        const segments = [];
+        let currentSegment = [points[0]];
+
+        for (let i = 1; i < points.length; i++) {
+            const gapMs = points[i].timestamp - points[i - 1].timestamp;
+            if (gapMs > 1800000) { // > 30 minutes
+                segments.push(currentSegment);
+                currentSegment = [points[i]];
+            } else {
+                currentSegment.push(points[i]);
             }
+        }
+        segments.push(currentSegment);
 
-            // Validar timestamp (no puede ser futuro + 1 min tolerancia)
-            if (p.timestamp > Date.now() + 60000) {
-                console.warn(`[VALIDATION] Invalid timestamp: ${new Date(p.timestamp)}`);
-                invalidPoints++;
-                continue;
-            }
-
-            // Validar saltos imposibles (>150km/h o >41m/s)
-            if (lastValidPoint) {
-                const distanceMts = calculateDistanceMeters(lastValidPoint.lat, lastValidPoint.lng, p.lat, p.lng);
-                
-                // Cuidado: algunos timestamps vienen en ms, la DB puede devolver en ms o seg según la inserción.
-                // Asumimos que p.timestamp está en ms (Javascript standard)
-                const timeDiffMst = p.timestamp - lastValidPoint.timestamp;
-                const timeDiffSec = Math.abs(timeDiffMst / 1000.0);
-
-                if (timeDiffSec > 0 && distanceMts > 5) {
-                    const speedMps = distanceMts / timeDiffSec;
-                    const speedKmh = speedMps * 3.6;
-
-                    // Si la velocidad inferida es > 150 km/h, rechazar por salto de GPS
-                    if (speedKmh > 150) {
-                        console.warn(`[SIMPLIFY] Saltando punto GPS imposible: ${speedKmh.toFixed(1)} km/h. Distancia: ${distanceMts.toFixed(1)}m, Tiempo: ${timeDiffSec.toFixed(1)}s`);
-                        invalidPoints++;
-                        continue;
-                    }
-                }
-            }
-
-            // Insert point
-            await client.query(
-                `INSERT INTO locations (trip_id, employee_id, latitude, longitude, speed, accuracy, state, timestamp, geom) 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)
-                 ON CONFLICT DO NOTHING`,
-                [tripId, employeeId, p.lat, p.lng, p.speed, p.accuracy, p.state || 'STOPPED', p.timestamp]
+        // 3. Process each segment
+        for (const segment of segments) {
+            const firstPoint = segment[0];
+            const lastPoint = segment[segment.length - 1];
+            
+            // Find an existing active trip for this employee that is "recent enough"
+            // (within 30 mins of the segment's first point)
+            let tripId;
+            const existingTripRes = await client.query(
+                `SELECT id FROM trips 
+                 WHERE employee_id = $1 
+                 AND is_active = TRUE 
+                 AND (
+                   -- If the trip is active, ensure the new points aren't too far in the future
+                   -- or too far in the past compared to the last recorded point in that trip.
+                   ABS(EXTRACT(EPOCH FROM COALESCE(end_time, start_time)) * 1000 - $2) < 1800000
+                 )
+                 ORDER BY start_time DESC LIMIT 1`,
+                [employeeId, firstPoint.timestamp]
             );
 
-            // Actualizar referencia al último punto insertado en la iteración
-            lastValidPoint = { lat: p.lat, lng: p.lng, timestamp: p.timestamp };
-            validPoints++;
-        }
+            if (existingTripRes.rows.length === 0) {
+                // Create a new trip starting at the first point's timestamp
+                const newTrip = await client.query(
+                    'INSERT INTO trips (employee_id, is_active, start_time) VALUES ($1, TRUE, to_timestamp($2/1000.0)) RETURNING id',
+                    [employeeId, firstPoint.timestamp]
+                );
+                tripId = newTrip.rows[0].id;
+                console.log(`[TRIP] Created new trip ${tripId} for employee ${employeeId}`);
+            } else {
+                tripId = existingTripRes.rows[0].id;
+            }
 
-        console.log(`[BATCH] Trip ${tripId}: inserted ${validPoints} valid points, rejected ${invalidPoints} (jumps/invalid)`);
+            // OBTENER EL ÚLTIMO PUNTO VÁLIDO (para filtrar saltos imposibles)
+            let lastValidPoint = null;
+            const lastPointRes = await client.query(
+                'SELECT latitude as lat, longitude as lng, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp DESC LIMIT 1',
+                [tripId]
+            );
+            if (lastPointRes.rows.length > 0) {
+                lastValidPoint = {
+                    lat: parseFloat(lastPointRes.rows[0].lat),
+                    lng: parseFloat(lastPointRes.rows[0].lng),
+                    timestamp: parseInt(lastPointRes.rows[0].timestamp, 10)
+                };
+            }
 
-        // Update distance using efficient Window Function
-        await client.query(`
-            UPDATE trips SET distance_meters = distance_meters + (
-                SELECT COALESCE(SUM(distance), 0)
-                FROM (
-                    SELECT ST_Distance(
-                        LAG(geom) OVER (ORDER BY timestamp),
-                        geom
-                    ) as distance
-                    FROM locations
-                    WHERE trip_id = $1
-                ) q
-                WHERE distance IS NOT NULL
-            ) WHERE id = $1
-        `, [tripId]);
+            let validPoints = 0;
+            let invalidPoints = 0;
 
-        // ✅ ENLAZAR CON MAP MATCHING (Segmentos de 20-50 puntos)
-        // Buscamos puntos no procesados para este viaje
-        const unmatchedResult = await client.query(
-            'SELECT id, latitude as lat, longitude as lng, speed, accuracy, timestamp FROM locations WHERE trip_id = $1 AND is_matched = FALSE ORDER BY timestamp ASC',
-            [tripId]
-        );
+            for (let p of segment) {
+                // Validar coordenadas
+                if (p.lat < -90 || p.lat > 90 || p.lng < -180 || p.lng > 180 || (p.lat === 0 && p.lng === 0)) {
+                    invalidPoints++;
+                    continue;
+                }
 
-        if (unmatchedResult.rows.length >= 20) {
-            console.log(`[OSRM] Trip ${tripId}: procesando segmento de ${unmatchedResult.rows.length} puntos...`);
-            const rawPoints = unmatchedResult.rows.map(r => ({
-                id: r.id,
-                lat: parseFloat(r.lat),
-                lng: parseFloat(r.lng),
-                speed: parseFloat(r.speed),
-                accuracy: parseFloat(r.accuracy),
-                timestamp: parseInt(r.timestamp)
-            }));
+                // Validar timestamp (no puede ser futuro + 1 min tolerancia)
+                if (p.timestamp > Date.now() + 60000) {
+                    invalidPoints++;
+                    continue;
+                }
 
-            // 1. Gap Detection & Interpolation
-            const processedPoints = osrmService.interpolateGaps(rawPoints);
+                // Validar saltos imposibles (>150km/h)
+                if (lastValidPoint) {
+                    const distanceMts = calculateDistanceMeters(lastValidPoint.lat, lastValidPoint.lng, p.lat, p.lng);
+                    const timeDiffSec = Math.abs((p.timestamp - lastValidPoint.timestamp) / 1000.0);
 
-            // 2. OSRM Match
-            const matchData = await osrmService.matchSegment(processedPoints);
-
-            if (matchData && matchData.tracepoints) {
-                for (let i = 0; i < matchData.tracepoints.length; i++) {
-                    const tp = matchData.tracepoints[i];
-                    const originalP = processedPoints[i];
-
-                    if (tp && tp.location) {
-                        await client.query(
-                            `INSERT INTO matched_locations 
-                            (location_id, trip_id, latitude, longitude, geom, timestamp, speed, heading, match_confidence, waypoint_index, road_name, road_type, is_interpolated)
-                            VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $5, $6, $7, $8, $9, $10, $11, $12)`,
-                            [
-                                originalP.id || null, // null si es interpolado
-                                tripId,
-                                tp.location[1], // OSRM devuelve [lng, lat]
-                                tp.location[0],
-                                originalP.timestamp,
-                                originalP.speed,
-                                tp.waypoint_index, // waypoint index
-                                matchData.matchings[tp.matchings_index] ? matchData.matchings[tp.matchings_index].confidence : 0,
-                                tp.waypoint_index,
-                                tp.name || 'Unknown Road',
-                                '', // road type (annotations requeridas para más detalle)
-                                originalP.is_interpolated || false
-                            ]
-                        );
+                    if (timeDiffSec > 0 && distanceMts > 5) {
+                        const speedKmh = (distanceMts / timeDiffSec) * 3.6;
+                        if (speedKmh > 150) {
+                            console.warn(`[VALIDATION] Skipping jump: ${speedKmh.toFixed(1)} km/h for trip ${tripId}`);
+                            invalidPoints++;
+                            continue;
+                        }
                     }
                 }
-                
-                // Marcar puntos originales como procesados
-                const originalIds = rawPoints.map(p => p.id);
+
+                // Insert point
                 await client.query(
-                    'UPDATE locations SET is_matched = TRUE WHERE id = ANY($1)',
-                    [originalIds]
+                    `INSERT INTO locations (trip_id, employee_id, latitude, longitude, speed, accuracy, state, timestamp, geom) 
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)
+                     ON CONFLICT (employee_id, timestamp) DO NOTHING`,
+                    [tripId, employeeId, p.lat, p.lng, p.speed, p.accuracy, p.state || 'STOPPED', p.timestamp]
                 );
-            }
-        }
 
-        // Detect stops using matched locations if available
-        await stopDetector.detectStops(client, tripId, employeeId);
-
-        await client.query('COMMIT');
-
-        // ✅ COMPILAR RUTA cuando viaje se cierra (30+ min sin puntos o cierre manual)
-        const lastPointTime = await client.query(
-            'SELECT MAX(timestamp) as last_timestamp FROM locations WHERE trip_id = $1',
-            [tripId]
-        );
-
-        if (lastPointTime.rows[0] && lastPointTime.rows[0].last_timestamp) {
-            // Convertir timestamp (puede ser ms o segundos)
-            let lastTs = lastPointTime.rows[0].last_timestamp;
-            if (typeof lastTs === 'number' && lastTs > 9999999999) {
-                // Es en millisegundos, convertir a segundos
-                lastTs = Math.floor(lastTs / 1000);
+                lastValidPoint = { lat: p.lat, lng: p.lng, timestamp: p.timestamp };
+                validPoints++;
             }
 
-            const secondsSinceLast = Math.floor(Date.now() / 1000) - lastTs;
+            console.log(`[BATCH] Segment for Trip ${tripId}: ${validPoints} valid, ${invalidPoints} invalid`);
 
-            if (secondsSinceLast > 1800) {  // 30 minutos
-                console.log(`[CLOSE] Trip ${tripId}: closing due to ${secondsSinceLast}s inactivity (30min threshold)`);
+            // Update trip metadata (end_time and distance)
+            if (validPoints > 0) {
                 await client.query(
-                    'UPDATE trips SET is_active = FALSE, end_time = NOW() WHERE id = $1',
+                    'UPDATE trips SET end_time = to_timestamp($1/1000.0) WHERE id = $2',
+                    [lastPoint.timestamp, tripId]
+                );
+
+                // Update distance
+                await client.query(`
+                    UPDATE trips SET distance_meters = (
+                        SELECT COALESCE(SUM(dist), 0)
+                        FROM (
+                            SELECT ST_Distance(geom, LAG(geom) OVER (ORDER BY timestamp)) as dist
+                            FROM locations WHERE trip_id = $1
+                        ) q WHERE dist IS NOT NULL
+                    ) WHERE id = $1
+                `, [tripId]);
+
+                // OSRM Map Matching
+                const unmatchedResult = await client.query(
+                    'SELECT id, latitude as lat, longitude as lng, speed, accuracy, timestamp FROM locations WHERE trip_id = $1 AND is_matched = FALSE ORDER BY timestamp ASC',
                     [tripId]
                 );
+
+                if (unmatchedResult.rows.length >= 20) {
+                    const rawPoints = unmatchedResult.rows.map(r => ({
+                        id: r.id, lat: parseFloat(r.lat), lng: parseFloat(r.lng),
+                        speed: parseFloat(r.speed), accuracy: parseFloat(r.accuracy), timestamp: parseInt(r.timestamp)
+                    }));
+                    const processedPoints = osrmService.interpolateGaps(rawPoints);
+                    const matchData = await osrmService.matchSegment(processedPoints);
+
+                    if (matchData && matchData.tracepoints) {
+                        for (let i = 0; i < matchData.tracepoints.length; i++) {
+                            const tp = matchData.tracepoints[i];
+                            const originalP = processedPoints[i];
+                            if (tp && tp.location) {
+                                await client.query(
+                                    `INSERT INTO matched_locations (location_id, trip_id, latitude, longitude, geom, timestamp, speed, match_confidence, waypoint_index, road_name, is_interpolated)
+                                     VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $5, $6, $7, $8, $9, $10)
+                                     ON CONFLICT DO NOTHING`,
+                                    [originalP.id || null, tripId, tp.location[1], tp.location[0], originalP.timestamp, originalP.speed, 
+                                     matchData.matchings[tp.matchings_index]?.confidence || 0, tp.waypoint_index, tp.name || 'Unknown', originalP.is_interpolated || false]
+                                );
+                            }
+                        }
+                        await client.query('UPDATE locations SET is_matched = TRUE WHERE id = ANY($1)', [rawPoints.map(p => p.id)]);
+                    }
+                }
+
+                // Stop detection
+                await stopDetector.detectStops(client, tripId, employeeId);
+
+                // Update Simplified Route
                 await updateTripRoute(client, tripId);
             }
         }
 
+        // 4. Cleanup: Close old active trips for this employee
+        // (Any trip that hasn't seen activity in 30+ minutes)
+        await client.query(
+            `UPDATE trips SET is_active = FALSE, end_time = NOW() 
+             WHERE employee_id = $1 AND is_active = TRUE 
+             AND EXTRACT(EPOCH FROM (NOW() - COALESCE(end_time, start_time))) > 1800`,
+            [employeeId]
+        );
+
+        await client.query('COMMIT');
     } catch (err) {
-        await client.query('ROLLBACK');
-        console.error(`[ERROR] Failed to process batch for employee ${employeeId}:`, err.message);
+        if (client) await client.query('ROLLBACK');
+        console.error(`[ERROR] processBatch failed for employee ${employeeId}:`, err.message);
         throw err;
     } finally {
-        client.release();
+        if (client) client.release();
     }
 }
 

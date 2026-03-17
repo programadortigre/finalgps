@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import '../services/api_service.dart';
+import '../services/socket_service.dart';
 import 'tracking_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -74,6 +75,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       if (await Permission.ignoreBatteryOptimizations.isDenied) {
         await Permission.ignoreBatteryOptimizations.request();
       }
+      await SocketService.init(token);
       await FlutterBackgroundService().startService();
       if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const TrackingScreen()));
     } else {
