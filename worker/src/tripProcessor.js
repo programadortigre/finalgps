@@ -55,29 +55,7 @@ async function updateTripRoute(client, tripId) {
             .map(p => `${p.longitude} ${p.latitude}`)
             .join(',');
 
-        // ✅ CORRECTO: ST_SimplifyPreserveTopology conserva la topología
-        // ❌ INCORRECTO: ST_Simplify($1::geography) causa errores de casting
-        const simplifyResult = await client.query(`
-            SELECT 
-                ST_AsText(geom_full) as full_text,
-                ST_AsText(geom_simplified) as simplified_text,
-                ST_NPoints(geom_full) as count_full,
-                ST_NPoints(geom_simplified) as count_simplified
-            FROM (
-                SELECT 
-                    ST_MakeLine(
-                        ARRAY[${pointsGeom.split(',').map((_, i) => `ST_Point(${pointsGeom.split(',')[i]})`).join(', ')}]
-                    ) as geom_full,
-                    ST_SimplifyPreserveTopology(
-                        ST_MakeLine(
-                            ARRAY[${pointsGeom.split(',').map((_, i) => `ST_Point(${pointsGeom.split(',')[i]})`).join(', ')}]
-                        )::geometry,
-                        0.00001  -- 1 metro de tolerancia (aprox)
-                    )::geography as geom_simplified
-            ) q
-        `);
-
-        // 3. Reconstruir ruta usando puntos MATCHED (Ajustada a carretera)
+        // 2. Reconstruir ruta usando puntos MATCHED (Ajustada a carretera)
         await client.query(`
             WITH matched_route AS (
                 SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) AS geom_line
@@ -92,6 +70,7 @@ async function updateTripRoute(client, tripId) {
                 updated_at = CURRENT_TIMESTAMP
         `, [tripId]);
 
+        // 3. Generar y actualizar ruta simplificada/full
         const result = await client.query(`
             WITH route AS (
                 SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) AS geom_line,

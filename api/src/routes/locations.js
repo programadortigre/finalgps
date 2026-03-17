@@ -331,6 +331,12 @@ router.post('/status', auth, async (req, res) => {
                 ORDER BY timestamp DESC LIMIT 1
             `, [employeeId]);
 
+            let updateData = {
+                employeeId,
+                state,
+                timestamp: Date.now()
+            };
+
             if (lastLoc.rows.length > 0) {
                 updateData = { ...updateData, ...lastLoc.rows[0] };
             }
