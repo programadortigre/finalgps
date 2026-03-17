@@ -92,9 +92,11 @@ else
     
     # Verificar espacio en disco
     AVAILABLE=$(df "$OSRM_DATA_DIR" | awk 'NR==2 {print int($4/1024)}')
-    if [ "$AVAILABLE" -lt 2500000 ]; then
+    REQUIRED=2500  # 2500 MB = ~2.5 GB
+    
+    if [ "$AVAILABLE" -lt "$REQUIRED" ]; then
         echo "[OSRM] ❌ Espacio insuficiente en disco"
-        echo "[OSRM] Disponible: ${AVAILABLE}MB, Requerido: ~2500MB"
+        echo "[OSRM] Disponible: ${AVAILABLE}MB, Requerido: ~${REQUIRED}MB"
         exit 1
     fi
     
