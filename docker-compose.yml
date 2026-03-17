@@ -17,9 +17,10 @@ services:
     networks: [ tracking-net ]
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
@@ -51,6 +52,12 @@ services:
       redis:
         condition: service_healthy
     networks: [ tracking-net ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3000/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   worker:
     build: ./worker
@@ -93,6 +100,9 @@ services:
     container_name: gps-admin
     restart: always
     ports: [ "80:80" ]
+    depends_on:
+      api:
+        condition: service_healthy
     networks: [ tracking-net ]
 
 networks:
