@@ -17,9 +17,10 @@ services:
     networks: [ tracking-net ]
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
 
   redis:
     image: redis:7-alpine
@@ -51,6 +52,12 @@ services:
       redis:
         condition: service_healthy
     networks: [ tracking-net ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3000/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   worker:
     build: ./worker
@@ -68,26 +75,28 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      osrm:
-        condition: service_started
     networks: [ tracking-net ]
 
-  osrm:
-    build:
-      context: .
-      dockerfile: osrm_Dockerfile
-    container_name: gps-osrm
-    restart: always
-    # El entrypoint descarga y compila datos automáticamente si no existen
-    volumes:
-      - ./osrm_data:/data
-    networks: [ tracking-net ]
+  # OSRM - DISABLED FOR NOW (future feature)
+  # Re-enable by uncommenting and adding back to worker depends_on
+  # osrm:
+  #   build:
+  #     context: .
+  #     dockerfile: osrm_Dockerfile
+  #   container_name: gps-osrm
+  #   restart: always
+  #   volumes:
+  #     - ./osrm_data:/data
+  #   networks: [ tracking-net ]
 
   admin-panel:
     build: ./admin-panel
     container_name: gps-admin
     restart: always
     ports: [ "80:80" ]
+    depends_on:
+      api:
+        condition: service_healthy
     networks: [ tracking-net ]
 
 networks:
