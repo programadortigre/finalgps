@@ -103,7 +103,7 @@ else
     
     # osrm-extract
     echo "[OSRM] Paso 1/3: osrm-extract (10-20 min)..."
-    if osrm-extract -p /opt/osrm/profiles/car.lua "$OSM_FILE"; then
+    if osrm-extract -p /opt/car.lua "$OSM_FILE"; then
         echo "[OSRM] ✅ osrm-extract completado"
     else
         echo "[OSRM] ❌ osrm-extract falló"
