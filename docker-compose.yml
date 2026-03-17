@@ -17,10 +17,9 @@ services:
     networks: [ tracking-net ]
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
-      interval: 15s
-      timeout: 10s
-      retries: 15
-      start_period: 60s
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -52,12 +51,6 @@ services:
       redis:
         condition: service_healthy
     networks: [ tracking-net ]
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:3000/health" ]
-      interval: 15s
-      timeout: 5s
-      retries: 8
-      start_period: 30s
 
   worker:
     build: ./worker
@@ -75,41 +68,26 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      osrm:
+        condition: service_started
     networks: [ tracking-net ]
-    healthcheck:
-      test: [ "CMD", "node", "-e", "console.log('ok')" ]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
 
-  # OSRM - DISABLED TEMPORARILY (future feature)
-  # To enable: uncomment and add back to worker depends_on
-  # osrm:
-  #   image: osrm/osrm-backend
-  #   container_name: gps-osrm
-  #   restart: always
-  #   volumes:
-  #     - ./osrm_data:/data
-  #     - ./profiles:/profiles
-  #   command: |
-  #     sh -c "if [ ! -f /data/peru-latest.osrm.hsgr ]; then
-  #       echo '[OSRM] Extrayendo datos del mapa...';
-  #       osrm-extract -p /profiles/car.lua /data/peru-latest.osm.pbf;
-  #       echo '[OSRM] Contracting grafo...';
-  #       osrm-contract /data/peru-latest.osrm;
-  #       echo '[OSRM] Compilación completada';
-  #     fi && echo '[OSRM] Iniciando servidor de rutas...' && osrm-routed --algorithm ch /data/peru-latest.osrm"
-  #   networks: [ tracking-net ]
+  osrm:
+    build:
+      context: .
+      dockerfile: osrm_Dockerfile
+    container_name: gps-osrm
+    restart: always
+    # El entrypoint descarga y compila datos automáticamente si no existen
+    volumes:
+      - ./osrm_data:/data
+    networks: [ tracking-net ]
 
   admin-panel:
     build: ./admin-panel
     container_name: gps-admin
     restart: always
     ports: [ "80:80" ]
-    depends_on:
-      api:
-        condition: service_healthy
     networks: [ tracking-net ]
 
 networks:
