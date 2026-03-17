@@ -78,10 +78,11 @@ services:
     restart: always
     volumes:
       - ./osrm_data:/data
+      - ./profiles:/profiles
     command: |
       sh -c "if [ ! -f /data/peru-latest.osrm ]; then
         echo '[OSRM] Compilando mapa...';
-        osrm-extract /data/peru-latest.osm.pbf &&
+        osrm-extract -p /profiles/car.lua /data/peru-latest.osm.pbf &&
         osrm-partition /data/peru-latest.osrm &&
         osrm-customize /data/peru-latest.osrm;
       fi && osrm-routed --algorithm mld /data/peru-latest.osrm"
