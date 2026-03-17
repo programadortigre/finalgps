@@ -17,10 +17,10 @@ services:
     networks: [ tracking-net ]
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
-      interval: 10s
+      interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 20s
+      retries: 15
+      start_period: 60s
 
   redis:
     image: redis:7-alpine
@@ -54,10 +54,10 @@ services:
     networks: [ tracking-net ]
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:3000/health" ]
-      interval: 10s
+      interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 8
+      start_period: 30s
 
   worker:
     build: ./worker
@@ -78,6 +78,12 @@ services:
       osrm:
         condition: service_started
     networks: [ tracking-net ]
+    healthcheck:
+      test: [ "CMD", "node", "-e", "console.log('ok')" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   osrm:
     image: osrm/osrm-backend
