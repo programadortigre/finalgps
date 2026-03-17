@@ -7,6 +7,7 @@ const pool = new Pool({
     user: process.env.POSTGRES_USER || 'postgres',
     password: process.env.POSTGRES_PASSWORD || 'postgres',
     database: process.env.POSTGRES_DB || 'tracking',
+    port: process.env.POSTGRES_PORT || 5432,
 });
 
 /// ============================================================================
@@ -352,26 +353,44 @@ async function processBatch(employeeId, points) {
 }
 
 async function syncSchema() {
-    let client;
-    try {
-        client = await pool.connect();
-        const checkColumn = await client.query(`
-            SELECT 1 FROM information_schema.columns 
-            WHERE table_name='locations' AND column_name='state';
-        `);
+    const maxRetries = 15;
+    let retries = 0;
 
-        if (checkColumn.rowCount === 0) {
-            console.log('Migrating database (Worker): Adding "state" column...');
-            await client.query(`
-                ALTER TABLE locations ADD COLUMN state VARCHAR(30) DEFAULT 'SIN_MOVIMIENTO';
+    while (retries < maxRetries) {
+        let client;
+        try {
+            client = await pool.connect();
+            // Wait for PostgreSQL to be ready
+            await client.query('SELECT 1');
+
+            const checkColumn = await client.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='locations' AND column_name='state';
             `);
-            console.log('Migration completed successfully.');
+
+            if (checkColumn.rowCount === 0) {
+                console.log('Migrating database (Worker): Adding "state" column...');
+                await client.query(`
+                    ALTER TABLE locations ADD COLUMN state VARCHAR(30) DEFAULT 'SIN_MOVIMIENTO';
+                `);
+                console.log('Migration completed successfully.');
+            } else {
+                console.log('Database schema (Worker) already up-to-date.');
+            }
+            return; // Success
+        } catch (err) {
+            retries++;
+            const waitTime = Math.min(2000 * retries, 10000); // Max 10 seconds
+            if (retries >= maxRetries) {
+                console.warn('⚠️  Worker could not sync schema after ' + maxRetries + ' retries. Error: ' + err.message);
+                return;
+            }
+            console.warn(`⏳ Schema sync attempt (Worker) ${retries}/${maxRetries} failed, retrying in ${waitTime / 1000}s...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+        } finally {
+            if (client) client.release();
         }
-    } catch (err) {
-        console.error('Error during schema synchronization (Worker):', err);
-    } finally {
-        if (client) client.release();
     }
 }
 
-module.exports = { processBatch, updateTripRoute, syncSchema };
+module.exports = { processBatch, updateTripRoute, syncSchema, pool };

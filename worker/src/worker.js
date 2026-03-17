@@ -5,12 +5,14 @@ const pino = require('pino');
 const logger = pino({ transport: { target: 'pino-pretty' } });
 
 try {
-    dotenv.config({ path: '../.env' });
+    // If running in development, try to load .env from the project root
+    dotenv.config({ path: '../../.env' });
+    dotenv.config(); // Also try the current directory
 } catch (e) {
     logger.info('.env file not found, using system environment variables');
 }
 
-const { processBatch, syncSchema } = require('./tripProcessor');
+const { processBatch, syncSchema, pool } = require('./tripProcessor');
 
 // Sync database schema on startup
 syncSchema().then(() => {
@@ -45,13 +47,7 @@ logger.info('Worker started and waiting for jobs...');
 
 // --- Data Retention: Retain only 6 months of data ---
 const cron = require('node-cron');
-const { Pool } = require('pg');
-const pool = new Pool({
-    host: process.env.POSTGRES_HOST || 'postgres',
-    user: process.env.POSTGRES_USER || 'postgres',
-    password: process.env.POSTGRES_PASSWORD || 'postgres',
-    database: process.env.POSTGRES_DB || 'tracking',
-});
+// Pool is now imported from tripProcessor
 
 // Run every day at 03:00 AM
 cron.schedule('0 3 * * *', async () => {
