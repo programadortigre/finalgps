@@ -93,12 +93,13 @@ services:
       - ./osrm_data:/data
       - ./profiles:/profiles
     command: |
-      sh -c "if [ ! -f /data/peru-latest.osrm ]; then
-        echo '[OSRM] Compilando mapa...';
-        osrm-extract -p /profiles/car.lua /data/peru-latest.osm.pbf &&
-        osrm-partition /data/peru-latest.osrm &&
-        osrm-customize /data/peru-latest.osrm;
-      fi && osrm-routed --algorithm mld /data/peru-latest.osrm"
+      sh -c "if [ ! -f /data/peru-latest.osrm.hsgr ]; then
+        echo '[OSRM] Extrayendo datos del mapa...';
+        osrm-extract -p /profiles/car.lua /data/peru-latest.osm.pbf;
+        echo '[OSRM] Contracting grafo...';
+        osrm-contract /data/peru-latest.osrm;
+        echo '[OSRM] Compilación completada';
+      fi && echo '[OSRM] Iniciando servidor de rutas...' && osrm-routed --algorithm ch /data/peru-latest.osrm"
     networks: [ tracking-net ]
 
   admin-panel:
