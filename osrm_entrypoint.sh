@@ -35,52 +35,53 @@ else
         echo "[OSRM] Fuente: https://download.geofabrik.de"
         echo ""
         
-    # Si wget o curl no está disponible, dar instrucción al usuario
-    if ! command -v wget &> /dev/null && ! command -v curl &> /dev/null; then
-        echo "[OSRM] ⚠️  Herramientas de descarga no disponibles en la imagen"
-        echo "[OSRM] Por favor descarga manualmente en tu VM:"
-        echo ""
-        echo "  mkdir -p ~/finalgps/osrm_data"
-        echo "  wget -O ~/finalgps/osrm_data/peru-latest.osm.pbf https://download.geofabrik.de/south-america/peru-latest.osm.pbf"
-        echo ""
-        echo "[OSRM] Luego reinicia Docker:"
-        echo "  sudo docker-compose restart osrm"
-        echo ""
-        sleep 30
-        exec "$0"  # Reintentar en 30 segundos
-    fi
-    
-    # Intenta descarga con reintentos
-    MAX_RETRIES=3
-    RETRY=0
-    DOWNLOAD_CMD=""
-    
-    if command -v wget &> /dev/null; then
-        DOWNLOAD_CMD="wget -O"
-    elif command -v curl &> /dev/null; then
-        DOWNLOAD_CMD="curl -L -o"
-    fi
-    
-    while [ $RETRY -lt $MAX_RETRIES ]; do
-        if eval "$DOWNLOAD_CMD \"$OSM_FILE\" 'https://download.geofabrik.de/south-america/peru-latest.osm.pbf'" 2>&1; then
+        # Si wget o curl no está disponible, dar instrucción al usuario
+        if ! command -v wget &> /dev/null && ! command -v curl &> /dev/null; then
+            echo "[OSRM] ⚠️  Herramientas de descarga no disponibles en la imagen"
+            echo "[OSRM] Por favor descarga manualmente en tu VM:"
             echo ""
-            echo "[OSRM] ✅ Descarga completada"
-            break
-        else
-            RETRY=$((RETRY + 1))
-            if [ $RETRY -lt $MAX_RETRIES ]; then
-                echo "[OSRM] ⚠️  Descarga fallida. Reintentando ($RETRY/$MAX_RETRIES)..."
-                sleep 5
-            else
-                echo "[OSRM] ❌ Descarga fallida después de $MAX_RETRIES intentos"
-                echo "[OSRM] Por favor verifica tu conexión a Internet"
-                exit 1
-            fi
+            echo "  mkdir -p ~/finalgps/osrm_data"
+            echo "  wget -O ~/finalgps/osrm_data/peru-latest.osm.pbf https://download.geofabrik.de/south-america/peru-latest.osm.pbf"
+            echo ""
+            echo "[OSRM] Luego reinicia Docker:"
+            echo "  sudo docker-compose restart gps-osrm"
+            echo ""
+            sleep 30
+            exec "$0"  # Reintentar en 30 segundos
         fi
-    done
+        
+        # Intenta descarga con reintentos
+        MAX_RETRIES=3
+        RETRY=0
+        DOWNLOAD_CMD=""
+        
+        if command -v wget &> /dev/null; then
+            DOWNLOAD_CMD="wget -O"
+        elif command -v curl &> /dev/null; then
+            DOWNLOAD_CMD="curl -L -o"
+        fi
+        
+        while [ $RETRY -lt $MAX_RETRIES ]; do
+            if eval "$DOWNLOAD_CMD \"$OSM_FILE\" 'https://download.geofabrik.de/south-america/peru-latest.osm.pbf'" 2>&1; then
+                echo ""
+                echo "[OSRM] ✅ Descarga completada"
+                break
+            else
+                RETRY=$((RETRY + 1))
+                if [ $RETRY -lt $MAX_RETRIES ]; then
+                    echo "[OSRM] ⚠️  Descarga fallida. Reintentando ($RETRY/$MAX_RETRIES)..."
+                    sleep 5
+                else
+                    echo "[OSRM] ❌ Descarga fallida después de $MAX_RETRIES intentos"
+                    echo "[OSRM] Por favor verifica tu conexión a Internet"
+                    exit 1
+                fi
+            fi
+        done
         echo ""
     else
         echo "[OSRM] OSM file ya existe: $OSM_FILE"
+        echo ""
     fi
     
     # ============================================================================
