@@ -73,14 +73,20 @@ services:
     networks: [ tracking-net ]
 
   osrm:
-    build:
-      context: .
-      dockerfile: osrm_Dockerfile
+    image: osrm/osrm-backend
     container_name: gps-osrm
     restart: always
-    # El entrypoint descarga y compila datos automáticamente si no existen
     volumes:
       - ./osrm_data:/data
+    command: sh -c "
+      if [ ! -f /data/peru-latest.osrm ]; then
+        echo '[OSRM] Procesando y compilando mapa...';
+        osrm-extract -p /opt/osrm/profiles/car.lua /data/peru-latest.osm.pbf &&
+        osrm-partition /data/peru-latest.osrm &&
+        osrm-customize /data/peru-latest.osrm;
+      fi &&
+      osrm-routed --algorithm mld /data/peru-latest.osrm
+    "
     networks: [ tracking-net ]
 
   admin-panel:
