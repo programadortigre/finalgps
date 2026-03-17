@@ -1,4 +1,4 @@
--- Simple Car Routing Profile for OSRM
+-- Car profile for OSRM
 local profile = {
   properties = {
     weight_name = 'routability',
@@ -48,29 +48,36 @@ function process_way(profile, way, result)
   local access = way:get_value_by_key('access')
   local oneway = way:get_value_by_key('oneway')
   
-  -- Check access restrictions
-  if access == 'no' or access == 'private' or access == 'official' then
-    result.forward_speed = -1
-    result.backward_speed = -1
+  -- Initialize speeds with defaults
+  local speed = profile.speed[highway] or profile.speed.default
+  
+  -- Check access restrictions - mark as not routable
+  if access and (access == 'no' or access == 'private' or access == 'restricted') then
+    result.forward_speed = 0
+    result.backward_speed = 0
     return
   end
   
   -- Block certain highway types for cars
-  if highway == 'footway' or highway == 'pedestrian' or highway == 'path' then
-    result.forward_speed = -1
-    result.backward_speed = -1
+  if highway == 'footway' or highway == 'pedestrian' or highway == 'path' or highway == 'cycleway' then
+    result.forward_speed = 0
+    result.backward_speed = 0
     return
   end
   
-  -- Get speed from table
-  local speed = profile.speed[highway] or profile.speed.default
+  -- Don't route on certain types
+  if highway == 'construction' or highway == 'proposed' or highway == 'abandoned' then
+    result.forward_speed = 0
+    result.backward_speed = 0
+    return
+  end
   
   -- Handle one-way streets
   if oneway == 'yes' or oneway == '1' then
     result.forward_speed = speed
-    result.backward_speed = -1
+    result.backward_speed = 0
   elseif oneway == '-1' or oneway == 'reverse' then
-    result.forward_speed = -1
+    result.forward_speed = 0
     result.backward_speed = speed
   else
     result.forward_speed = speed
