@@ -72,7 +72,7 @@ async function updateTripRoute(client, tripId) {
                         ST_MakeLine(
                             ARRAY[${pointsGeom.split(',').map((_, i) => `ST_Point(${pointsGeom.split(',')[i]})`).join(', ')}]
                         )::geometry,
-                        0.00005  -- 5 metros de tolerancia (en grados decimales)
+                        0.00001  -- 1 metro de tolerancia (aprox)
                     )::geography as geom_simplified
             ) q
         `);
@@ -109,9 +109,9 @@ async function updateTripRoute(client, tripId) {
             SELECT 
                 $1,
                 geom_line::geography,
-                ST_SimplifyPreserveTopology(geom_line, 0.00005)::geography,
+                ST_SimplifyPreserveTopology(geom_line, 0.00001)::geography,
                 full_count,
-                ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.00005))
+                ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.00001))
             FROM route
             ON CONFLICT (trip_id) DO UPDATE SET
                 geom_full = EXCLUDED.geom_full,

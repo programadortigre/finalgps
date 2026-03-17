@@ -10,9 +10,10 @@ const { LocationKalmanFilter } = require('../utils/kalman_filter');
 /// CONFIGURACIÓN DE FILTRADO MEJORADO
 /// ============================================================================
 const ACCURACY_THRESHOLD = 50;      // Metros - rechaza GPS con error > 50m
-const DISTANCE_THRESHOLD = 5;       // Metros - agrupa puntos < 5m (REDUCIDO de 10)
-const MAX_SPEED_KMH = 180;          // km/h - velocidad máxima realista
-const MAX_ACCELERATION = 50;        // km/h - aceleración máxima realista
+const DISTANCE_THRESHOLD = 2;    // Metros (Reducido de 5 a 2 para más precisión)
+const MAX_SPEED_KMH = 180;       // km/h
+const MAX_ACCELERATION = 50;     // m/s²
+const ACTIVE_THRESHOLD = 15;     // Minutos (Aumentado de 5 a 15 para evitar parpadeo)
 const MAX_LAT = 90;
 const MIN_LAT = -90;
 const MAX_LNG = 180;

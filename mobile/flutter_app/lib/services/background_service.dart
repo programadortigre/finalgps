@@ -172,6 +172,18 @@ class TrackingEngine {
     try {
       await _loadCachedEmployeeId();
       await _restoreStateFromStorage();
+
+      // ✅ NUEVO: Verificar estado de rastreo en el servidor
+      final profile = await _api.fetchMyProfile();
+      if (profile != null) {
+        final bool isTrackingEnabled = profile['is_tracking_enabled'] ?? true;
+        _log('INIT', 'Sincronización remota: is_tracking_enabled=$isTrackingEnabled');
+        if (!isTrackingEnabled) {
+          _log('INIT', 'Rastreo desactivado remotamente. Entrando en PAUSED.');
+          pause();
+        }
+      }
+
       _log('INIT', '<<< _deferredInitialization() [DONE]');
     } catch (e) {
       _log('INIT', '!!! _deferredInitialization() [ERROR]: $e');

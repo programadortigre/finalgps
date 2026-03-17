@@ -83,17 +83,15 @@ services:
       retries: 3
       start_period: 60s
 
-  # OSRM - DISABLED FOR NOW (future feature)
-  # Re-enable by uncommenting and adding back to worker depends_on
-  # osrm:
-  #   build:
-  #     context: .
-  #     dockerfile: osrm_Dockerfile
-  #   container_name: gps-osrm
-  #   restart: always
-  #   volumes:
-  #     - ./osrm_data:/data
-  #   networks: [ tracking-net ]
+  osrm:
+    build:
+      context: .
+      dockerfile: osrm_Dockerfile
+    container_name: gps-osrm
+    restart: always
+    volumes:
+      - ./osrm_data:/data
+    networks: [ tracking-net ]
 
   admin-panel:
     build: ./admin-panel

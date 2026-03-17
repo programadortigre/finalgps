@@ -367,6 +367,8 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
 
       final success = await service.startService();
       if (success) {
+        // ✅ Sincronizar estado con el servidor
+        await _api.updateTrackingStatus(true);
         _startClock();
         // Recordatorio de optimización de batería
         if (mounted) {
@@ -387,6 +389,10 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
     } else {
       service.invoke('stopService');
       _stopClock();
+      
+      // ✅ Sincronizar estado con el servidor
+      await _api.updateTrackingStatus(false);
+
       // No cambiamos _isOnline aquí, esperamos al evento 'trackingState'
       try {
         await _api.updateStatus('OFFLINE'); 

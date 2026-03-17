@@ -345,6 +345,44 @@ class ApiService {
     }
   }
 
+  /// 👥 Obtener perfil propio
+  Future<Map<String, dynamic>?> fetchMyProfile() async {
+    final token = await getToken();
+    if (token == null) return null;
+    try {
+      final dio = await _getDio();
+      final res = await dio.get(
+        '/api/employees/me',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return res.data;
+      }
+    } catch (e) {
+      print('[ApiService] Error fetching profile: $e');
+    }
+    return null;
+  }
+
+  /// 📍 Actualizar estado de rastreo (Sincronización con Admin Panel)
+  Future<bool> updateTrackingStatus(bool enabled) async {
+    final token = await getToken();
+    final userId = await getUserId();
+    if (token == null || userId == null) return false;
+    try {
+      final dio = await _getDio();
+      final res = await dio.patch(
+        '/api/employees/$userId/tracking',
+        data: {'enabled': enabled},
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      return res.statusCode == 200;
+    } catch (e) {
+      print('[ApiService] Error updating tracking status: $e');
+      return false;
+    }
+  }
+
   Future<void> logout() async {
     await _storage.delete(key: 'token');
     await _storage.delete(key: 'user_name');

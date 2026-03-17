@@ -23,7 +23,7 @@ function interpolateGaps(points) {
         if (timeGap > 15 && dist > 40) {
             logger.info(`[OSRM] Gap detected: ${timeGap.toFixed(1)}s / ${dist.toFixed(1)}m. Interpolating...`);
             // Simple linear interpolation
-            const numPoints = Math.floor(timeGap / 10); // 1 point every 10s
+            const numPoints = Math.min(Math.floor(timeGap / 10), 100); // 1 punto cada 10s, max 100
             for (let j = 1; j <= numPoints; j++) {
                 const ratio = j / (numPoints + 1);
                 result.push({

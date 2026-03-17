@@ -23,6 +23,20 @@ router.get('/', auth, adminOnly, async (req, res) => {
     }
 });
 
+// GET /api/employees/me — get current user profile
+router.get('/me', auth, async (req, res) => {
+    try {
+        const result = await db.query(
+            'SELECT id, name, email, role, is_tracking_enabled, created_at FROM employees WHERE id = $1',
+            [req.user.id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // POST /api/employees — create a new employee/vendor
 router.post('/', auth, adminOnly, async (req, res) => {
     const { name, email, password, role = 'employee' } = req.body;
@@ -94,10 +108,15 @@ router.delete('/:id', auth, adminOnly, async (req, res) => {
     }
 });
 
-// PATCH /api/employees/:id/tracking — Toggle tracking state (Admin only)
-router.patch('/:id/tracking', auth, adminOnly, async (req, res) => {
+// PATCH /api/employees/:id/tracking — Toggle tracking state (Admin or Self)
+router.patch('/:id/tracking', auth, async (req, res) => {
     const { id } = req.params;
     const { enabled } = req.body;
+
+    // Solo admin o el mismo usuario pueden modificar su estado de rastreo
+    if (req.user.role !== 'admin' && req.user.id !== parseInt(id)) {
+        return res.status(403).json({ error: 'Not authorized' });
+    }
 
     if (typeof enabled !== 'boolean') {
         return res.status(400).json({ error: 'enabled (boolean) is required' });

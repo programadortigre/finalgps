@@ -154,16 +154,33 @@ router.get('/:id', auth, async (req, res) => {
             return res.status(404).json({ error: 'Trip not found' });
         }
 
-        // 2. Get route points - SIEMPRE desde locations (más confiable)
-        console.log(`[API] Trip ${tripId}: Fetching locations...`);
-        const pointsResult = await db.query(`
-            SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp, state
-            FROM locations 
-            WHERE trip_id = $1 
-            ORDER BY timestamp ASC
-        `, [tripId]);
+        // 2. Get route points (Soporta simplificación)
+        let points = [];
+        if (simplify) {
+            console.log(`[API] Trip ${tripId}: Fetching simplified route from trip_routes...`);
+            const routesResult = await db.query('SELECT ST_AsGeoJSON(geom_simplified) as simplified FROM trip_routes WHERE trip_id = $1', [tripId]);
+            
+            if (routesResult.rows.length > 0 && routesResult.rows[0].simplified) {
+                const geojson = JSON.parse(routesResult.rows[0].simplified);
+                points = geojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
+                console.log(`[API] Trip ${tripId}: Served ${points.length} simplified points`);
+            } else {
+                console.log(`[API] Trip ${tripId}: Simplified route not found, falling back to raw points`);
+            }
+        }
 
-        console.log(`[API] Trip ${tripId}: Found ${pointsResult.rows.length} points from locations table`);
+        // Si no se usó simplificación o falló el fallback
+        if (points.length === 0) {
+            console.log(`[API] Trip ${tripId}: Fetching raw locations...`);
+            const pointsResult = await db.query(`
+                SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp, state
+                FROM locations 
+                WHERE trip_id = $1 
+                ORDER BY timestamp ASC
+            `, [tripId]);
+            points = pointsResult.rows;
+            console.log(`[API] Trip ${tripId}: Found ${points.length} raw points`);
+        }
 
         // 3. Get stops
         const stopsResult = await db.query(`
@@ -173,15 +190,14 @@ router.get('/:id', auth, async (req, res) => {
             ORDER BY start_time ASC
         `, [tripId]);
 
-        console.log(`[API] Trip ${tripId}: Found ${stopsResult.rows.length} stops`);
-
         res.json({
             trip: tripResult.rows[0],
-            points: pointsResult.rows,
+            points: points,
             stops: stopsResult.rows,
             metadata: {
-                point_count: pointsResult.rows.length,
-                stop_count: stopsResult.rows.length
+                point_count: points.length,
+                stop_count: stopsResult.rows.length,
+                is_simplified: simplify && points.length > 0
             }
         });
     } catch (err) {
@@ -238,9 +254,9 @@ router.patch('/:id/close', auth, async (req, res) => {
                 SELECT
                     $1,
                     geom_line::geography,
-                    ST_SimplifyPreserveTopology(geom_line, 0.00005)::geography,
+                    ST_SimplifyPreserveTopology(geom_line, 0.00001)::geography,
                     full_count,
-                    ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.00005))
+                    ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.00001))
                 FROM route
                 ON CONFLICT (trip_id) DO UPDATE SET
                     geom_full = EXCLUDED.geom_full,
