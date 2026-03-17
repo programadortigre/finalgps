@@ -487,6 +487,12 @@ class TrackingEngine {
           break;
         case TrackingState.DRIVING:
         case TrackingState.NO_SIGNAL:
+                  case TrackingState.PAUSED:
+                    // Estado pausado: no iniciar stream
+                    intervalSec = 0;
+                    distanceFilter = 0;
+                    accuracy = LocationAccuracy.low;
+                    break;
           intervalSec = 2; // RECOMENDADO: 2s
           distanceFilter = 10;
           accuracy = LocationAccuracy.bestForNavigation;

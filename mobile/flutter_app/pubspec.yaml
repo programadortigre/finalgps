@@ -9,18 +9,18 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  geolocator: ^10.1.0
+  geolocator: ^14.0.2
   flutter_background_service: ^5.0.3
   flutter_background_service_android: ^6.3.1
-  flutter_secure_storage: ^9.0.0
+  flutter_secure_storage: ^10.0.0
   dio: ^5.3.3
-  intl: ^0.18.1
-  flutter_map: ^6.1.0
+  intl: ^0.20.2
+  flutter_map: ^8.2.2
   latlong2: ^0.9.0
   provider: ^6.1.1
-  device_info_plus: ^9.0.3
+  device_info_plus: ^12.3.0
   shared_preferences: ^2.2.2
-  permission_handler: ^11.0.1
+  permission_handler: ^12.0.1
   sqflite: ^2.3.0
   path: ^1.8.3
   path_provider: ^2.1.2
@@ -34,7 +34,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
+  flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true
