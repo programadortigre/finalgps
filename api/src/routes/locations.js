@@ -140,6 +140,8 @@ router.post('/batch', auth, async (req, res) => {
     /// FILTRADO Y SUAVIZADO DE PUNTOS
     /// ========================================================================
     for (const point of points) {
+        // Log detallado de cada punto recibido para depuración
+        console.log(`[BATCH][DETAIL] emp:${employeeId} lat:${point.lat} lng:${point.lng} acc:${point.accuracy} ts:${point.timestamp} speed:${point.speed}`);
         // ✅ FILTRO INTELIGENTE: Marcar calidad, no descartar
         if (point.accuracy !== undefined) {
             if (point.accuracy > 80) {

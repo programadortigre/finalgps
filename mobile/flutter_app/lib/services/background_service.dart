@@ -48,29 +48,38 @@ class TrackingEngine {
   TrackingState _currentState = TrackingState.STOPPED;
   DateTime _lastValidLocationTime = DateTime.now();
   LocalPoint? _lastValidPoint;
-  int _stationaryTicks = 0;
   int _duplicatePointCount = 0;
   double _lastRawLat = 0;
   double _lastRawLng = 0;
   LocationKalmanFilter? _locationFilter;
   double _totalDistanceKm = 0.0; // Source of Truth for distance
 
+  // PRO: Buffering & Caching
+  final List<LocalPoint> _pointBuffer = [];
+  String? _cachedToken;
+  int? _cachedEmployeeId;
+
+   // PRO: Hysteresis & Filtering
+  DateTime _lastStateChangeTime = DateTime.now();
+  int _lowSpeedTicks = 0;  // Para WALKING -> STOPPED (< 0.8 m/s)
+  int _highSpeedTicks = 0; // Para STOPPED -> WALKING (> 1.2 m/s)
+  int _stationaryTicks = 0; // Para compatibilidad y filtrado fino
+
+  // Socket status cache
+  bool _isSocketConnectedByAdmin = true;
+
   // FIX C5: guardamos la referencia al ServiceInstance para siempre estar disponible
   ServiceInstance? _serviceInstance;
+  io.Socket? _socket;
 
   // ── Subscripciones ─────────────────────────────────────────────────────────
   StreamSubscription<Position>? _positionStreamSub;
   StreamSubscription<ar.Activity>? _activityStreamSub;
 
-  // FIX C3: referencias a timers para cancelación limpia
-  Timer? _watchdogTimer;
-  Timer? _batchTimer;
-  Timer? _emitterTimer;
-  Timer? _heartbeatTimer;
-
-  // FIX A3: employeeId cacheado en memoria (no leer FlutterSecureStorage cada punto)
-  int? _cachedEmployeeId;
-  bool _isSocketConnectedByAdmin = true; // Valor inicial asumido
+  // PRO: Unified Maintenance Timer
+  Timer? _mainMaintenanceTimer;
+  int _maintenanceTicks = 0;
+  int _retryBackoffSeconds = 0;
 
   // FIX V3: Guard para evitar subidas paralelas
   bool _isFlushing = false;
@@ -80,12 +89,13 @@ class TrackingEngine {
 
   // FIX DEEP-AUDIT: Guard para evitar reinicios de stream concurrentes
   bool _isRestartingStream = false;
+  bool _isSleepModeActive = false;
+  bool _isPriorityScanActive = false;
+  int _priorityScanTicks = 0;
 
   // FIX V3: Timestamp del último punto RAW de GPS para el Watchdog
   DateTime _lastRawTime = DateTime.now();
 
-  // Contador de ticks del watchdog para limpieza periódica de DB
-  int _watchdogTicks = 0;
   static const int _cleanupIntervalTicks = 1440; // 1440 × 60s = 24 horas
 
   // ── Constructor: inicialización segura (sin `late`) ───────────────────────
@@ -112,48 +122,19 @@ class TrackingEngine {
       _log('INIT', 'Iniciando Stream GPS...');
       _startLocationStream(reason: 'Initial Start');
 
-      // 3. Watchdog — FIX C3: guardamos referencia. Reducido a 10s para watchdog 20s.
-      _watchdogTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      // PRO: Unified Maintenance Loop (60s)
+      _mainMaintenanceTimer = Timer.periodic(const Duration(seconds: 60), (_) {
         try {
-          _checkWatchdog();
+          _runMaintenanceTasks();
         } catch (e) {
-          _log('CRITICAL', 'Fallo en Watchdog Timer: $e');
+          _log('CRITICAL', 'Fallo en Main Maintenance Timer: $e');
         }
-      });
-
-      // 4. Batch Uploader — ⚡ REDUCIDO a 10s (fue 15s) para detección rápida de paradas
-      _batchTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-        try {
-          _flushPoints();
-        } catch (e) {
-          _log('CRITICAL', 'Fallo en Batch Timer: $e');
-        }
-      });
-
-      // 5. Emitter al UI — FIX C3: guardamos referencia
-      _emitterTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-        _serviceInstance?.invoke('trackingState', {
-          'is_active': true,
-          'state': _currentState.name,
-        });
       });
 
       // FIX 1: Reinicio limpio de distancia al iniciar
       _totalDistanceKm = 0;
       _lastValidPoint = null;
-
-      // 6. Heartbeat (30s) - Bajo consumo para que la UI sepa que seguimos vivos
-      _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-        try {
-          _serviceInstance?.invoke('heartbeat', {
-            'timestamp': DateTime.now().millisecondsSinceEpoch,
-            'state': _currentState.name,
-            'distance': _totalDistanceKm,
-          });
-        } catch (e) {
-          _log('CRITICAL', 'Fallo en Heartbeat Timer: $e');
-        }
-      });
+      _pointBuffer.clear();
 
       // FIX DEEP-AUDIT: Posponemos SecureStorage e hidratación de DB para DESPUÉS del arranque básico
       // Esto asegura que el servicio ya esté en primer plano y los timers corriendo.
@@ -170,6 +151,8 @@ class TrackingEngine {
   Future<void> _deferredInitialization() async {
     _log('INIT', '>>> _deferredInitialization() [ENTER]');
     try {
+      // PRO: Cachear token y employeeId de inmediato
+      _cachedToken = await _api.getToken();
       await _loadCachedEmployeeId();
       await _restoreStateFromStorage();
 
@@ -192,24 +175,21 @@ class TrackingEngine {
 
   // ---------------------------------------------------------------------------
   // Parada limpia del motor
-  // FIX C3: cancelar TODOS los timers y suscripciones
   // ---------------------------------------------------------------------------
   void stop() {
     _log('SYS', 'TrackingEngine.stop() — cancelando todos los recursos');
 
-    _watchdogTimer?.cancel();
-    _batchTimer?.cancel();
-    _emitterTimer?.cancel();
-    _heartbeatTimer?.cancel();
-
+    _mainMaintenanceTimer?.cancel();
     _positionStreamSub?.cancel();
     _activityStreamSub?.cancel();
 
-    // FIX 1: Limpieza de estado al detener
+    // PRO: Guardar puntos pendientes antes de morir
+    _flushBufferToStorage();
+
     _totalDistanceKm = 0;
     _lastValidPoint = null;
+    _pointBuffer.clear();
 
-    // Emitimos un último estado inactivo para limpiar la UI
     _serviceInstance?.invoke('trackingState', {
       'is_active': false,
       'state': 'STOPPED',
@@ -221,8 +201,12 @@ class TrackingEngine {
     _log('REMOTE', 'Pausando rastreo (GPS OFF, Socket ON)...');
     _positionStreamSub?.cancel();
     _activityStreamSub?.cancel();
-    _watchdogTimer?.cancel();
+    _mainMaintenanceTimer?.cancel();
     _currentState = TrackingState.PAUSED;
+    
+    // Guardar buffer antes de pausar
+    _flushBufferToStorage();
+
     _serviceInstance?.invoke('trackingState', {
       'is_active': true,
       'state': 'PAUSED',
@@ -238,17 +222,54 @@ class TrackingEngine {
 
   void resume() {
     if (_currentState != TrackingState.PAUSED) return;
-    _isSocketConnectedByAdmin = true;
     _log('REMOTE', 'Reanudando rastreo por comando remoto...');
     _currentState = TrackingState.STOPPED;
     _startLocationStream(reason: 'Remote Resume');
-    // Reiniciar timers si es necesario (el watchdog se reinicia en startLocation)
-    _watchdogTimer = Timer.periodic(const Duration(seconds: 10), (_) => _checkWatchdog());
+    
+    // Reiniciar loop de mantenimiento
+    _mainMaintenanceTimer?.cancel();
+    _mainMaintenanceTimer = Timer.periodic(const Duration(seconds: 60), (_) => _runMaintenanceTasks());
   }
 
   void updateSocketStatus(bool connected) {
     _isSocketConnectedByAdmin = connected;
     _updateNotification();
+  }
+
+  void setSocket(io.Socket socket) {
+    _socket = socket;
+  }
+
+  void handleRemoteLocationRequest() {
+    _log('SOCKET', 'ADMIN: Petición de ubicación en tiempo real recibida');
+    _isPriorityScanActive = true;
+    _priorityScanTicks = 0;
+
+    // 1. Enviar último punto conocido INMEDIATAMENTE
+    if (_lastValidPoint != null) {
+      _emitToSocket(_lastValidPoint!);
+    }
+
+    // 2. Forzar escaneo de ALTA PRECISIÓN
+    _restartLocationStream(reason: 'Admin Remote Request (Priority)');
+  }
+
+  void _emitToSocket(LocalPoint point) {
+    if (_socket == null || !_socket!.connected) return;
+    try {
+      _socket!.emit('location_update', {
+        'lat': point.lat,
+        'lng': point.lng,
+        'speed': point.speed,
+        'accuracy': point.accuracy,
+        'state': point.state,
+        'timestamp': point.timestamp,
+        'is_manual_request': true,
+      });
+      _log('SOCKET', 'Punto enviado a socket (Real-time)');
+    } catch (e) {
+      _log('SOCKET', 'Error emitiendo a socket: $e');
+    }
   }
 
   void _updateNotification() async {
@@ -367,152 +388,182 @@ class TrackingEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Watchdog
+  // Loop de Mantenimiento Unificado (60s)
   // ---------------------------------------------------------------------------
-  Future<void> _checkWatchdog() async {
-    final now = DateTime.now();
-    final diff = now.difference(_lastValidLocationTime).inSeconds;
+  Future<void> _runMaintenanceTasks() async {
+    _maintenanceTicks++;
+    _log('MAIN', 'Loop #$_maintenanceTicks [ENTER]');
 
-    // 1. Health Check (Heartbeat) - Cada 5 minutos (5 ticks de 60s)
-    _watchdogTicks++;
-    if (_watchdogTicks % 5 == 0) {
-      try {
-        final level = await _battery.batteryLevel;
-        final stats = await _storage.getStats();
-        final unsynced = stats['unsynced'] ?? 0;
-        _log('HEALTH', 'HB: State=$_currentState | Batt=$level% | Buffer=$unsynced pts | LastLoc=${diff}s ago');
-      } catch (e) {
-        _log('HEALTH', 'HB Error: $e');
-      }
-    }
-
-    // 2. Chequeo de batería (crítico)
     try {
+      // 1. Throttling por Batería
+      await _updateBatteryAndThrottling();
+
+      // 2. Flush de Buffer a SQLite
+      await _flushBufferToStorage();
+
+      // 3. Flush de SQLite a API (Solo si bat > 10%)
       final level = await _battery.batteryLevel;
-      if (level < 10 && _currentState != TrackingState.BATT_SAVER) {
-        _log('STATE', 'Batería CRÍTICA <10%. Forzando BATT_SAVER (últimos intentos)');
-        _setState(TrackingState.BATT_SAVER);
-        return;
-      } else if (level >= 20 && _currentState == TrackingState.BATT_SAVER) {
-        // IMPORTANTE: No forzar a STOPPED, dejar que se recupere naturalmente
-        _log('STATE', 'Batería recuperada >20%. Saliendo de BATT_SAVER (pasando a STOPPED)');
-        _setState(TrackingState.STOPPED);
-        // Forzar reinicio agresivo de stream para detectar movimiento
-        _restartLocationStream(reason: 'Battery Recovery');
+      if (level > 10) {
+        await _flushStorageToApi();
+      }
+
+      // 4. Priority Scan Watchdog
+      if (_isPriorityScanActive) {
+        _priorityScanTicks++;
+        if (_priorityScanTicks >= 5) {
+          _log('GPS', 'Finalizando prioridad de escaneo (Timeout 5m)');
+          _isPriorityScanActive = false;
+          _restartLocationStream(reason: 'End Priority Scan');
+        }
+      }
+
+      // 5. Emitter al UI (Menos frecuente para ahorrar CPU)
+      _serviceInstance?.invoke('trackingState', {
+        'is_active': true,
+        'state': _currentState.name,
+      });
+
+      // 5. Watchdog de Salud (GPS/Túneles)
+      _checkWatchdogHealth();
+      
+      // 6. Limpieza periódica (24h)
+      if (_maintenanceTicks >= 1440) {
+        _maintenanceTicks = 0;
+        _storage.cleanOldSyncedPoints(daysToKeep: 7);
       }
     } catch (e) {
-      _log('BATT', 'Sensor batería falló: $e');
+      _log('CRITICAL', 'Error en _runMaintenanceTasks: $e');
     }
+    _log('MAIN', 'Loop #$_maintenanceTicks [DONE]');
+  }
 
-    if (_currentState == TrackingState.BATT_SAVER) {
-      _log('BATT_SAVER', 'En modo ahorrador - GPS reducido pero activo');
-      return;
+  Future<void> _updateBatteryAndThrottling() async {
+    try {
+      final level = await _battery.batteryLevel;
+      if (level < 20 && _currentState != TrackingState.BATT_SAVER && _currentState != TrackingState.PAUSED) {
+        _setState(TrackingState.BATT_SAVER, reason: 'Power Savings (<20%)');
+      } else if (level >= 30 && _currentState == TrackingState.BATT_SAVER) {
+        _setState(TrackingState.STOPPED, reason: 'Battery recovered');
+      }
+    } catch (e) {
+      _log('BATT', 'Sensor falló: $e');
     }
+  }
 
-    // ── FIX V3: GPS Watchdog (20 segundos sin lectura) ─────────────────────
+  void _checkWatchdogHealth() {
+    final now = DateTime.now();
+    final diff = now.difference(_lastValidLocationTime).inSeconds;
+    
+    // GPS Watchdog: si estamos en movimiento pero no recibimos nada por 30s
     final rawDiff = now.difference(_lastRawTime).inSeconds;
-    if (rawDiff > 20 && _currentState != TrackingState.DEEP_SLEEP && _currentState != TrackingState.STOPPED) {
+    if (rawDiff > 30 && _currentState != TrackingState.DEEP_SLEEP && _currentState != TrackingState.STOPPED && _currentState != TrackingState.PAUSED) {
       _log('WATCHDOG', 'Reiniciando stream: ${rawDiff}s sin datos GPS');
-      _lastRawTime = now; // Reset para evitar bucle infinito
-      _restartLocationStream(reason: 'Watchdog Timeout (20s)');
+      _lastRawTime = now;
+      _restartLocationStream(reason: 'Watchdog Timeout');
+    }
+
+    // Deep Sleep: inactivo >3 min (Sleep Mode)
+    if (_currentState == TrackingState.STOPPED && diff > 180) {
+      _setState(TrackingState.DEEP_SLEEP, reason: 'Inactivity 3m (Sleep Mode)');
       return;
     }
 
-    // 2. Deep Sleep extremo (>10 min sin movimiento)
-    if (_currentState == TrackingState.STOPPED && diff > 600) {
-      _log('STATE', 'Inmóvil >10min — DEEP_SLEEP');
-      _setState(TrackingState.DEEP_SLEEP);
-      return;
+    // Refresh settings for Light Sleep (60s mark) 
+    if (_currentState == TrackingState.STOPPED && diff > 60 && !_isSleepModeActive) {
+      _log('WATCHDOG', 'Activando Light Sleep Mode (Inactividad >60s)');
+      _restartLocationStream(reason: 'Light Sleep Transition');
     }
 
-    // 3. Watchdog de señal GPS (>2 min sin lectura)
-    if (diff > 120 && _currentState != TrackingState.DEEP_SLEEP) {
-      _log('WATCHDOG', 'Timeout GPS ${diff}s — posible túnel/crash. Reiniciando.');
-      _setState(TrackingState.NO_SIGNAL, reason: 'Watchdog Timeout');
-    }
-
-    // 4. Limpieza periódica de DB: cada 24h eliminar puntos sincronizados viejos
-    // _watchdogTicks cuenta cada 10s ahora. 24h = 8640 ticks.
-    if (_watchdogTicks >= 8640) {
-      _watchdogTicks = 0;
-      _log('STORAGE', 'Limpieza periódica de DB iniciada (24h)...');
-      _storage.cleanOldSyncedPoints(daysToKeep: 7);
+    // No Signal: >5 min sin puntos válidos en estados de movimiento
+    if (diff > 300 && _currentState != TrackingState.DEEP_SLEEP && _currentState != TrackingState.STOPPED && _currentState != TrackingState.PAUSED) {
+      _setState(TrackingState.NO_SIGNAL, reason: 'No valid signal 5m');
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Cambio de estado con efectos secundarios
+  // Gestión de Estado y Stream GPS
   // ---------------------------------------------------------------------------
   void _setState(TrackingState newState, {String? reason}) {
     if (newState == _currentState) return;
     _log('STATE', '${_currentState.name} → ${newState.name} ${reason != null ? "($reason)" : ""}');
     _currentState = newState;
+    _lastStateChangeTime = DateTime.now();
+    _isSleepModeActive = false; // Reset sleep mode on any real state change
+    
     _applyWakelock();
     _restartLocationStream(reason: reason ?? 'State Change');
   }
 
-  // ---------------------------------------------------------------------------
-  // Stream GPS adaptativo
-  // ---------------------------------------------------------------------------
-  void _startLocationStream({String? reason}) {
+  Future<void> _startLocationStream({String? reason}) async {
     if (_isRestartingStream) return;
-    if (_currentState == TrackingState.PAUSED) {
-      _log('GPS', 'Cancelando _startLocationStream: Estado es PAUSED');
-      return;
-    }
+    if (_currentState == TrackingState.PAUSED) return;
     _isRestartingStream = true;
 
-    _log('GPS', '>>> _startLocationStream($reason) [ENTER]');
-    
     try {
       _positionStreamSub?.cancel();
-
-      // FIX A6: resetear stationaryTicks en cada nuevo stream
-      _stationaryTicks = 0;
 
       int intervalSec;
       int distanceFilter;
       LocationAccuracy accuracy;
 
-      switch (_currentState) {
+      // 0. Priority Scan Override (Admin Request)
+      if (_isPriorityScanActive) {
+        intervalSec = 2; // Máxima frecuencia
+        distanceFilter = 0; // Sin filtro
+        accuracy = LocationAccuracy.best;
+        _log('GPS', 'PRIORITY SCAN ACTIVE: Settings set to MAX');
+      } else {
+        // 1. Valores por defecto según estado
+        switch (_currentState) {
+        case TrackingState.STOPPED:
+          final secondsStationary = DateTime.now().difference(_lastStateChangeTime).inSeconds;
+          if (secondsStationary > 60) {
+            _isSleepModeActive = true;
+            // Light Sleep Mode (WhatsApp style)
+            intervalSec = 60;
+            distanceFilter = 15;
+            accuracy = LocationAccuracy.low;
+            _log('GPS', 'SLEEP MODE: Light Inactivity ($secondsStationary s)');
+          } else {
+            _isSleepModeActive = false;
+            intervalSec = 15;
+            distanceFilter = 5;
+            accuracy = LocationAccuracy.balanced;
+          }
+          break;
         case TrackingState.DEEP_SLEEP:
-          intervalSec = 300;
-          distanceFilter = 50;
+          intervalSec = 300; // 5 min
+          distanceFilter = 25;
           accuracy = LocationAccuracy.low;
           break;
         case TrackingState.BATT_SAVER:
-          // Más agresivo que DEEP_SLEEP: cada 30s en vez de 300s
-          // Asegura que se detecten cambios de zona incluso con batería baja
-          intervalSec = 30; // Cambio crítico: de 300 a 30 segundos
-          distanceFilter = 20; // Más sensible: de 50 a 20 metros
-          accuracy = LocationAccuracy.best; // Mejor precisión que low
-          break;
-        case TrackingState.STOPPED:
-          intervalSec = 5;  // ⚡ REDUCIDO de 10s a 5s - detecta reanudación más rápido
-          distanceFilter = 3; // RECOMENDADO: 3m
-          accuracy = LocationAccuracy.high; // SUBIDO a high
+          intervalSec = 60;
+          distanceFilter = 30;
+          accuracy = LocationAccuracy.balanced;
           break;
         case TrackingState.WALKING:
-          intervalSec = 3; // RECOMENDADO: 3s
+          intervalSec = 5;
           distanceFilter = 5;
           accuracy = LocationAccuracy.high;
           break;
         case TrackingState.DRIVING:
-        case TrackingState.NO_SIGNAL:
-                  case TrackingState.PAUSED:
-                    // Estado pausado: no iniciar stream
-                    intervalSec = 0;
-                    distanceFilter = 0;
-                    accuracy = LocationAccuracy.low;
-                    break;
-          intervalSec = 2; // RECOMENDADO: 2s
+        default:
+          intervalSec = 3;
           distanceFilter = 10;
-          accuracy = LocationAccuracy.bestForNavigation;
+          accuracy = LocationAccuracy.best;
           break;
       }
 
-      _log('GPS',
-          'Stream START ($reason) → State:${_currentState.name} Interval:${intervalSec}s Dist:${distanceFilter}m Acc:${accuracy.name}');
+      // 2. Overrides por Batería (Granular)
+      final level = await _battery.batteryLevel;
+      if (level < 30) {
+        intervalSec = (level < 10) ? 120 : ((level < 20) ? 60 : 30);
+        accuracy = (level < 10) ? LocationAccuracy.low : LocationAccuracy.balanced;
+        distanceFilter = (level < 10) ? 50 : 20;
+        _log('GPS', 'BATTERY OVERRIDE ($level%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
+      }
+
+      _log('GPS', 'Stream START ($reason) → ${_currentState.name} | ${intervalSec}s | ${distanceFilter}m');
 
       _positionStreamSub = Geolocator.getPositionStream(
         locationSettings: AndroidSettings(
@@ -520,22 +571,19 @@ class TrackingEngine {
           distanceFilter: distanceFilter,
           intervalDuration: Duration(seconds: intervalSec),
           forceLocationManager: false,
-          // FIX V3: Se quita notificationConfig para evitar conflictos con flutter_background_service.
-          // El servicio en primer plano ya gestiona su propia notificación.
         ),
       ).listen(
         (Position pos) {
-          _lastRawTime = DateTime.now(); // Feed watchdog
+          _lastRawTime = DateTime.now();
           _processNewPosition(pos);
         },
         onError: (e) {
-          _log('GPS', '!!! Error en stream (V3 Auto-Restart) [ERROR]: $e');
+          _log('GPS', 'Error en stream: $e');
           _restartLocationStream(reason: 'Stream Error');
         },
       );
-      _log('GPS', '<<< _startLocationStream() [DONE]');
     } catch (e) {
-      _log('GPS', '!!! _startLocationStream() [CRITICAL]: $e');
+      _log('GPS', 'Error iniciando stream: $e');
     } finally {
       _isRestartingStream = false;
     }
@@ -544,134 +592,73 @@ class TrackingEngine {
   void _restartLocationStream({String? reason}) => _startLocationStream(reason: reason);
 
   // ---------------------------------------------------------------------------
-  // Procesamiento de cada posición GPS
+  // Procesamiento GPS y Hysteresis
   // ---------------------------------------------------------------------------
   Future<void> _processNewPosition(Position pos) async {
     if (_isProcessingPosition) return;
     _isProcessingPosition = true;
 
-    _log('GPS', '>>> _processNewPosition() [ENTER]');
     try {
-      final double speedKmh = pos.speed * 3.6;
+      final double speed = pos.speed; // m/s
+      final double speedKmh = speed * 3.6;
 
-      // ── Filtro 0: GPS hardware en loop ─────────────────────────────────────
-      if (pos.latitude == _lastRawLat && pos.longitude == _lastRawLng) {
-        _duplicatePointCount++;
-        if (_duplicatePointCount >= 10) {
-          _log('WATCHDOG', 'GPS en loop (misma posición ×10) — purga y reinicio');
-          _duplicatePointCount = 0;
-          _restartLocationStream();
-          _isProcessingPosition = false;
-          return;
-        }
-      } else {
-        _lastRawLat = pos.latitude;
-        _lastRawLng = pos.longitude;
-        _duplicatePointCount = 0;
-      }
-
-      _lastValidLocationTime = DateTime.now();
-
-      // ── Votación híbrida de estado ─────────────────────────────────────────
-      // FIX: Permitir transiciones DESDE BATT_SAVER para detectar movimiento
-      if (_currentState != TrackingState.DEEP_SLEEP) {
-        TrackingState votedState = _currentState;
-        if (speedKmh > 12.0) {
-          votedState = TrackingState.DRIVING;
-        } else if (speedKmh > 2.0 && speedKmh <= 12.0) {
-          votedState = TrackingState.WALKING;
-        } else if (speedKmh <= 2.0) {
-          _stationaryTicks++;
-          if (_stationaryTicks > 4) votedState = TrackingState.STOPPED; // FIX V3: 4 ticks
-        }
-        if (speedKmh > 2.0) _stationaryTicks = 0;
-
-        if (votedState != _currentState) {
-          _log('STATE',
-              '${_currentState.name} → ${votedState.name} (vel=${speedKmh.toStringAsFixed(1)} km/h)');
-          _currentState = votedState;
-          _applyWakelock();
-          _restartLocationStream();
-          _isProcessingPosition = false;
-          return;
-        }
-      }
-
-      // FIX V3: Calcular diff de tiempo ANTES de actualizar el timestamp global
-      final timeDiffSeconds = DateTime.now().difference(_lastValidLocationTime).inSeconds;
-      _lastValidLocationTime = DateTime.now();
-
-      // ── Filtros de calidad ─────────────────────────────────────────────────
-      double distToLast = 0.0;
+      // 1. Anti-Drift Inteligente (Distancia + Velocidad)
       if (_lastValidPoint != null) {
-        distToLast = Geolocator.distanceBetween(
+        final dist = Geolocator.distanceBetween(
           _lastValidPoint!.lat, _lastValidPoint!.lng,
           pos.latitude, pos.longitude,
         );
-
-        // 3A: precisión dinámica (Relajado a 50m en V3)
-        if (pos.accuracy > 50 && distToLast < (pos.accuracy * 0.4)) {
-          // Solo loggear si la precisión es realmente mala (>100m)
-          if (pos.accuracy > 100) {
-            _log('FILTER', 'DROP-3A: acc=${pos.accuracy}m (Threshold 100m exceeded)');
-          }
+        // Drift detectado: < 8m y < 1 m/s
+        if (dist < 8 && speed < 1.0 && _currentState == TrackingState.STOPPED) {
           _isProcessingPosition = false;
           return;
         }
-
-        // 3B: Velocidad física implícita (Filtrar saltos >160km/h)
-        if (timeDiffSeconds > 0) {
-          final impliedSpeedKmh = (distToLast / timeDiffSeconds) * 3.6;
-          if (impliedSpeedKmh > 160) {
-            _log('FILTER', 'DROP-JUMP: salto de ${distToLast.toStringAsFixed(1)}m en ${timeDiffSeconds}s (${impliedSpeedKmh.toStringAsFixed(1)} km/h)');
-            _isProcessingPosition = false;
-            return;
-          }
-        }
-      } else if (pos.accuracy > 50) { // Primer punto relajado a 50m
-        if (pos.accuracy > 100) {
-          _log('FILTER', 'DROP-3A: First point accuracy=${pos.accuracy}m (Too high)');
-        }
-        _isProcessingPosition = false;
-        return;
       }
 
-      // 3B: velocidad máxima física
-      if (speedKmh > 200) {
-        _log('FILTER', 'DROP-3B: velocidad imposible ${speedKmh.toStringAsFixed(1)} km/h');
-        _isProcessingPosition = false;
-        return;
-      }
+      // 2. Hysteresis de Estado (Debouncing de transiciones)
+      final secondsInCurrentState = DateTime.now().difference(_lastStateChangeTime).inSeconds;
+      TrackingState targetState = _currentState;
 
-      // 3C: aceleración promedio imposible
-      if (_lastValidPoint != null) {
-        final timeSecs =
-            (DateTime.now().millisecondsSinceEpoch - _lastValidPoint!.timestamp) /
-                1000.0;
-        if (timeSecs > 0) {
-          final avgSpeed = (distToLast / timeSecs) * 3.6;
-          if (avgSpeed > 180) {
-            // Solo loggear si el salto es masivo (>500m)
-            if (distToLast > 500) {
-              _log('FILTER', 'DROP-3C: Jump detected dist=${distToLast.toStringAsFixed(0)}m avgSpeed=${avgSpeed.toStringAsFixed(0)}km/h');
-            }
-            _isProcessingPosition = false;
-            return;
-          }
+      if (_currentState == TrackingState.WALKING) {
+        if (speed < 0.8) {
+          // Permanecer en WALKING hasta que estemos quietos por 20s
+          if (secondsInCurrentState > 20) targetState = TrackingState.STOPPED;
+        } else {
+          // Resetear tiempo de cambio si hay movimiento real
+          if (speed > 1.0) _lastStateChangeTime = DateTime.now();
+          if (speedKmh > 15) targetState = TrackingState.DRIVING;
+        }
+      } else if (_currentState == TrackingState.STOPPED || _currentState == TrackingState.DEEP_SLEEP) {
+        final distFromLast = _lastValidPoint != null 
+            ? Geolocator.distanceBetween(_lastValidPoint!.lat, _lastValidPoint!.lng, pos.latitude, pos.longitude)
+            : 0.0;
+
+        // Despertar más agresivo si estamos en Sleep Mode
+        if (speed > 1.2 || distFromLast > 15.0) {
+          // Solo despertar si el movimiento dura algo (evitar picos)
+          _highSpeedTicks++;
+          if (_highSpeedTicks >= 2) targetState = TrackingState.WALKING;
+        } else {
+          _highSpeedTicks = 0;
+          // Si estamos quietos, resetear el timer de cambio para mantener el Sleep Mode estable
+          // pero solo si la precisión es buena para no "perder" el timer por drift
+          if (pos.accuracy < 25) _lastStateChangeTime = DateTime.now().subtract(Duration(seconds: secondsInCurrentState));
+        }
+      } else if (_currentState == TrackingState.DRIVING) {
+        if (speedKmh < 10) {
+          if (secondsInCurrentState > 30) targetState = TrackingState.WALKING;
+        } else {
+          if (speedKmh > 15) _lastStateChangeTime = DateTime.now();
         }
       }
 
-      // 3D: micro-paso en conducción (Reducido de 4m a 2m para captar tráfico lento)
-      if (_currentState == TrackingState.DRIVING &&
-          distToLast > 0 &&
-          distToLast < 2) {
-        _log('FILTER',
-            'DROP-3D: micro-paso inercial ${distToLast.toStringAsFixed(1)}m en DRIVING');
-        _isProcessingPosition = false;
-        return;
+      if (targetState != _currentState && _currentState != TrackingState.BATT_SAVER) {
+        _log('STATE', 'Hysteresis -> $targetState (speed=${speed.toStringAsFixed(1)}m/s after ${secondsInCurrentState}s)');
+        _setState(targetState, reason: 'Hysteresis');
+        return; // Reiniciar stream para el nuevo estado
       }
 
-      // ── FIX A1: Kalman con q dinámico basado en velocidad ─────────────────
+      // 3. Filtrado de Calidad (Kalman)
       _locationFilter ??= LocationKalmanFilter(
         initialLat: pos.latitude,
         initialLng: pos.longitude,
@@ -680,133 +667,112 @@ class TrackingEngine {
       final filtered = _locationFilter!.update(
         pos.latitude, pos.longitude,
         gpsAccuracy: pos.accuracy,
-        speedKmh: speedKmh,  // q dinámico
+        speedKmh: speedKmh,
       );
-      final double finalLat = filtered['lat']!;
-      final double finalLng = filtered['lng']!;
 
-      // ── Anti-Drift ─────────────────────────────────────────────────────────
-      if (_currentState == TrackingState.STOPPED && _lastValidPoint != null) {
-        final driftDist = Geolocator.distanceBetween(
-          _lastValidPoint!.lat, _lastValidPoint!.lng, finalLat, finalLng,
-        );
-        
-        // ⚡ MODIFICACIÓN: Permitir al menos 3 puntos de "heartbeat" al parar 
-        // para que el servidor detecte la parada (necesita 3 pts min).
-        // Después de 3 puntos, aplicar el filtro de 10m.
-        final int unsyncedCount = await _storage.getUnsyncedCount();
-        if (driftDist < 10 && unsyncedCount >= 3) { 
-          _log('FILTER', 'DROP-DRIFT: ${driftDist.toStringAsFixed(1)}m descartado (Stop confirmed)');
-          _isProcessingPosition = false;
-          return;
-        }
-      }
-
-      // ── Deduplicación exacta ───────────────────────────────────────────────
-      if (_lastValidPoint != null &&
-          _lastValidPoint!.lat == finalLat &&
-          _lastValidPoint!.lng == finalLng) {
-        _isProcessingPosition = false;
-        return;
-      }
-
-      // FIX A3: usar employeeId cacheado
-      if (_cachedEmployeeId == null) {
-        _isProcessingPosition = false;
-        return;
-      }
-
+      // 4. Buffering en Memoria
+      _lastValidLocationTime = DateTime.now();
       final point = LocalPoint(
-        lat: finalLat,
-        lng: finalLng,
+        lat: filtered['lat']!,
+        lng: filtered['lng']!,
         speed: speedKmh,
         accuracy: pos.accuracy,
         state: _currentState.name,
-        timestamp: DateTime.now().millisecondsSinceEpoch,
+        timestamp: _lastValidLocationTime.millisecondsSinceEpoch,
         employeeId: _cachedEmployeeId,
       );
 
-      // FIX: insertar ANTES de actualizar _lastValidPoint para mantener consistencia
-      final insertedId = await _storage.insertPoint(point);
-      if (insertedId <= 0) {
-        _log('STORAGE', '!!! insertPoint retornó 0 [ERROR]');
-        _isProcessingPosition = false;
-        return;
+      _pointBuffer.add(point);
+      
+      // Enviar a socket inmediatamente si hay una petición prioritaria
+      if (_isPriorityScanActive) {
+        _emitToSocket(point);
+        // Desactivar prioridad después de obtener un punto bueno? 
+        // No, dejémoslo un par de minutos para que el admin vea el movimiento fluido.
       }
 
-      // FIX C5: _serviceInstance siempre disponible
-      final svc = _serviceInstance;
-      if (svc != null && svc is AndroidServiceInstance) {
-        // FIX 3: Solo sumar distancia si ya teníamos un punto previo VÁLIDO
-        // Hacemos el incremento ANTES de sobreescribir _lastValidPoint con el nuevo
-        if (_lastValidPoint != null && distToLast > 0.005) { 
-           _totalDistanceKm += (distToLast / 1000.0);
-        }
-
-        svc.invoke('trackingLocation', {
-          'lat': finalLat,
-          'lng': finalLng,
-          'speed': speedKmh,
-          'accuracy': pos.accuracy,
-          'state': _currentState.name,
-          'total_distance': _totalDistanceKm, 
-        });
-
-        // Ahora sí actualizamos la referencia para el siguiente punto
-        _lastValidPoint = point;
-
-        try {
-          _updateNotification();
-        } catch (_) {
-          // fallos del notificador no tumban el pipeline
-        }
+      // Actualizar distancia local para UI
+      if (_lastValidPoint != null) {
+        final d = Geolocator.distanceBetween(
+          _lastValidPoint!.lat, _lastValidPoint!.lng,
+          point.lat, point.lng
+        );
+        if (d > 5) _totalDistanceKm += (d / 1000.0);
       }
-      _log('GPS', '<<< _processNewPosition() [DONE]');
-    } catch (e, stack) {
-      _log('CRITICAL', '!!! Error en _processNewPosition() [CRITICAL]: $e\n$stack');
+      _lastValidPoint = point;
+
+      // Emitir al UI inmediatamente si es relevante
+      _serviceInstance?.invoke('trackingLocation', {
+        'lat': point.lat,
+        'lng': point.lng,
+        'speed': speedKmh,
+        'state': _currentState.name,
+        'total_distance': _totalDistanceKm,
+      });
+
+      _updateNotification();
+    } catch (e) {
+      _log('CRITICAL', 'Error procesando posición: $e');
     } finally {
       _isProcessingPosition = false;
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Batch Upload
+  // Persistencia y Sincronización
   // ---------------------------------------------------------------------------
-  Future<void> _flushPoints() async {
-    if (_isFlushing) return; // FIX V3: Evitar colisiones/reentrancia
+  Future<void> _flushBufferToStorage() async {
+    if (_pointBuffer.isEmpty) return;
+    _log('STORAGE', 'Guardando ${_pointBuffer.length} puntos en SQLite...');
+    try {
+      final pointsToSave = List<LocalPoint>.from(_pointBuffer);
+      _pointBuffer.clear();
+      await _storage.insertPoints(pointsToSave);
+    } catch (e) {
+      _log('STORAGE', 'Error guardando buffer: $e');
+    }
+  }
+
+  Future<void> _flushStorageToApi() async {
+    if (_isFlushing || _cachedToken == null) return;
     _isFlushing = true;
 
     try {
-      final token = await _api.getToken();
-      if (token == null) {
+      final unsynced = await _storage.getUnsyncedPoints(limit: 50);
+      if (unsynced.isEmpty) {
         _isFlushing = false;
         return;
       }
 
-      final unsyncedPoints = await _storage.getUnsyncedPoints(limit: 50);
-      if (unsyncedPoints.isEmpty) {
+      // Aplicar backoff si hubo errores previos
+      if (_retryBackoffSeconds > 0) {
+        _retryBackoffSeconds--;
         _isFlushing = false;
         return;
       }
 
-      final data = unsyncedPoints.map((p) => {
-        'lat': p.lat,
-        'lng': p.lng,
-        'speed': p.speed,
-        'accuracy': p.accuracy,
-        'state': p.state,
-        'timestamp': p.timestamp,
+      final data = unsynced.map((p) => {
+        'lat': p.lat, 'lng': p.lng,
+        'speed': p.speed, 'accuracy': p.accuracy,
+        'state': p.state, 'timestamp': p.timestamp,
       }).toList();
 
-      _log('BATCH', 'Enviando ${data.length} puntos...');
+      _log('API', 'Enviando batch de ${data.length} puntos...');
       final ok = await _api.uploadBatch(data);
+      
       if (ok) {
-        final ids = unsyncedPoints.map((p) => p.id!).toList();
+        final ids = unsynced.map((p) => p.id!).toList();
         await _storage.markPointsAsSynced(ids);
-        _log('BATCH', 'Éxito: ${ids.length} puntos sincronizados');
+        _log('API', 'Batch enviado con éxito');
+        _retryBackoffSeconds = 0;
+      } else {
+        // Backoff exponencial simple: 1 min, 2 min, 4 min...
+        _retryBackoffSeconds = 60; 
+        _log('API', 'Fallo en envío. Iniciando backoff.');
       }
     } catch (e) {
-      _log('BATCH', 'Error de red/batch: $e');
+      _log('API', 'Error de red: $e');
+      _retryBackoffSeconds = 60;
     } finally {
       _isFlushing = false;
     }
@@ -894,6 +860,7 @@ void onStart(ServiceInstance service) async {
 
         socket.onConnect((_) {
           _log('SOCKET', 'Socket conectado en segundo plano (Isolate)');
+          _engine?.setSocket(socket); // Pasar socket al motor
           _engine?.updateSocketStatus(true);
           if (userId != null) socket.emit('join_employee', userId);
         });
@@ -901,7 +868,6 @@ void onStart(ServiceInstance service) async {
         socket.onDisconnect((_) {
           _log('SOCKET', 'Socket desconectado en segundo plano');
           _engine?.updateSocketStatus(false);
-          // Auto-reconnect handle by socket.io-client defaults if not disabled
         });
 
         socket.onConnectError((e) {
@@ -917,6 +883,11 @@ void onStart(ServiceInstance service) async {
           } else {
             _engine?.pause();
           }
+        });
+
+        socket.on('request_current_location', (data) {
+          _log('SOCKET', 'Comando manual de ubicación recibido');
+          _engine?.handleRemoteLocationRequest();
         });
 
         socket.connect();

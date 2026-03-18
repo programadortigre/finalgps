@@ -69,50 +69,45 @@ class LocalStorage {
 
   // ── Escritura ───────────────────────────────────────────────────────────────
 
-  /// Insertar un punto GPS.
-  /// FIX A4: la purga elimina primero registros ya sincronizados.
-  /// Solo si sigue sin espacio suficiente, elimina los más antiguos sin sincronizar
-  /// como último recurso (y lo advierte con un log).
-  Future<int> insertPoint(LocalPoint point) async {
+  /// Insertar múltiples puntos GPS en una sola transacción.
+  /// Mejora el rendimiento y reduce el uso de CPU/Disco.
+  Future<void> insertPoints(List<LocalPoint> points) async {
+    if (points.isEmpty) return;
     final database = await db;
 
-    // Contar total de registros
-    final countResult = await database
-        .rawQuery('SELECT COUNT(*) as total FROM $_tableName');
+    // Check limit before batch insert
+    final countResult = await database.rawQuery('SELECT COUNT(*) as total FROM $_tableName');
     final total = (countResult.first['total'] as int?) ?? 0;
 
-    if (total >= 5000) {
-      // ── PASO 1: eliminar los 500 sincronizados más antiguos ────────────────
-      final deletedSynced = await database.rawDelete('''
-        DELETE FROM $_tableName
-        WHERE id IN (
-          SELECT id FROM $_tableName
-          WHERE synced = 1
-          ORDER BY timestamp ASC
-          LIMIT 500
-        )
-      ''');
-
-      if (deletedSynced == 0) {
-        // ── PASO 2: si no había sincronizados, ÚLTIMO RECURSO ─────────────────
-        // Advertimos explícitamente porque estamos descartando datos no enviados.
-        final deletedUnsynced = await database.rawDelete('''
-          DELETE FROM $_tableName
-          WHERE id IN (
-            SELECT id FROM $_tableName
-            ORDER BY timestamp ASC
-            LIMIT 200
-          )
-        ''');
-        // ignore: avoid_print
-        print('[STORAGE] ⚠️ ÚLTIMO RECURSO: eliminados $deletedUnsynced puntos '
-            'NO sincronizados (buffer lleno y sin conectividad prolongada)');
-      } else {
-        // ignore: avoid_print
-        print('[STORAGE] Purga: $deletedSynced registros sincronizados eliminados');
-      }
+    if (total + points.length >= 5000) {
+      await _purgeIfNeeded(database);
     }
 
+    await database.transaction((txn) async {
+      for (var point in points) {
+        await txn.insert(
+          _tableName,
+          {
+            'lat': point.lat,
+            'lng': point.lng,
+            'speed': point.speed,
+            'accuracy': point.accuracy,
+            'state': point.state,
+            'timestamp': point.timestamp,
+            'synced': 0,
+            'created_at': DateTime.now().millisecondsSinceEpoch,
+            'employee_id': point.employeeId,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  /// Insertar un punto GPS de forma individual.
+  Future<int> insertPoint(LocalPoint point) async {
+    final database = await db;
+    await _checkLimit(database);
     return database.insert(
       _tableName,
       {
@@ -128,6 +123,44 @@ class LocalStorage {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  Future<void> _checkLimit(Database database) async {
+    final countResult = await database.rawQuery('SELECT COUNT(*) as total FROM $_tableName');
+    final total = (countResult.first['total'] as int?) ?? 0;
+    if (total >= 5000) {
+      await _purgeIfNeeded(database);
+    }
+  }
+
+  Future<void> _purgeIfNeeded(Database database) async {
+    // ── PASO 1: eliminar los 500 sincronizados más antiguos ────────────────
+    final deletedSynced = await database.rawDelete('''
+      DELETE FROM $_tableName
+      WHERE id IN (
+        SELECT id FROM $_tableName
+        WHERE synced = 1
+        ORDER BY timestamp ASC
+        LIMIT 500
+      )
+    ''');
+
+    if (deletedSynced == 0) {
+      // ── PASO 2: si no había sincronizados, ÚLTIMO RECURSO ─────────────────
+      final deletedUnsynced = await database.rawDelete('''
+        DELETE FROM $_tableName
+        WHERE id IN (
+          SELECT id FROM $_tableName
+          ORDER BY timestamp ASC
+          LIMIT 200
+        )
+      ''');
+      // ignore: avoid_print
+      print('[STORAGE] ⚠️ ÚLTIMO RECURSO: eliminados $deletedUnsynced puntos NO sincronizados');
+    } else {
+      // ignore: avoid_print
+      print('[STORAGE] Purga: $deletedSynced registros sincronizados eliminados');
+    }
   }
 
   // ── Lectura ─────────────────────────────────────────────────────────────────
