@@ -57,7 +57,7 @@ async function matchSegment(points) {
     let retries = 2;
     while (retries >= 0) {
         try {
-            const response = await axios.get(url, { timeout: 5000 });
+            const response = await axios.get(url, { timeout: 10000 }); // 10s para redes 3G lentas
             if (response.data.code === 'Ok') {
                 return response.data;
             } else {

@@ -255,35 +255,80 @@ async function processBatch(employeeId, points) {
                 `, [tripId]);
 
                 // OSRM Map Matching
+                // FIX: umbral bajado de 20 a 5 puntos — dispositivos 3G de gama baja
+                // raramente acumulan 20 puntos entre envíos, así que antes nunca
+                // se activaba el map-matching y las rutas saliían chuecas.
+                const OSRM_MIN_POINTS = 5;
+                const OSRM_CHUNK_SIZE = 100; // Límite máximo de OSRM por request
+
                 const unmatchedResult = await client.query(
                     'SELECT id, latitude as lat, longitude as lng, speed, accuracy, timestamp FROM locations WHERE trip_id = $1 AND is_matched = FALSE ORDER BY timestamp ASC',
                     [tripId]
                 );
 
-                if (unmatchedResult.rows.length >= 20) {
+                if (unmatchedResult.rows.length >= OSRM_MIN_POINTS) {
                     const rawPoints = unmatchedResult.rows.map(r => ({
                         id: r.id, lat: parseFloat(r.lat), lng: parseFloat(r.lng),
                         speed: parseFloat(r.speed), accuracy: parseFloat(r.accuracy), timestamp: parseInt(r.timestamp)
                     }));
                     const processedPoints = osrmService.interpolateGaps(rawPoints);
-                    const matchData = await osrmService.matchSegment(processedPoints);
 
-                    if (matchData && matchData.tracepoints) {
-                        for (let i = 0; i < matchData.tracepoints.length; i++) {
-                            const tp = matchData.tracepoints[i];
-                            const originalP = processedPoints[i];
-                            if (tp && tp.location) {
-                                await client.query(
-                                    `INSERT INTO matched_locations (location_id, trip_id, latitude, longitude, geom, timestamp, speed, match_confidence, waypoint_index, road_name, is_interpolated)
-                                     VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $5, $6, $7, $8, $9, $10)
-                                     ON CONFLICT DO NOTHING`,
-                                    [originalP.id || null, tripId, tp.location[1], tp.location[0], originalP.timestamp, originalP.speed, 
-                                     matchData.matchings[tp.matchings_index]?.confidence || 0, tp.waypoint_index, tp.name || 'Unknown', originalP.is_interpolated || false]
-                                );
-                            }
-                        }
-                        await client.query('UPDATE locations SET is_matched = TRUE WHERE id = ANY($1)', [rawPoints.map(p => p.id)]);
+                    // Dividir en chunks si hay más de 100 puntos (límite de OSRM)
+                    const chunks = [];
+                    for (let i = 0; i < processedPoints.length; i += OSRM_CHUNK_SIZE) {
+                        chunks.push(processedPoints.slice(i, i + OSRM_CHUNK_SIZE));
                     }
+                    console.log(`[OSRM] Trip ${tripId}: ${processedPoints.length} points → ${chunks.length} chunk(s)`);
+
+                    const matchedIds = [];
+                    for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+                        const chunk = chunks[chunkIdx];
+                        const matchData = await osrmService.matchSegment(chunk);
+
+                        if (matchData && matchData.tracepoints) {
+                            for (let i = 0; i < matchData.tracepoints.length; i++) {
+                                const tp = matchData.tracepoints[i];
+                                const originalP = chunk[i];
+                                if (tp && tp.location) {
+                                    await client.query(
+                                        `INSERT INTO matched_locations (location_id, trip_id, latitude, longitude, geom, timestamp, speed, match_confidence, waypoint_index, road_name, is_interpolated)
+                                         VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $5, $6, $7, $8, $9, $10)
+                                         ON CONFLICT DO NOTHING`,
+                                        [originalP.id || null, tripId, tp.location[1], tp.location[0], originalP.timestamp, originalP.speed,
+                                         matchData.matchings[tp.matchings_index]?.confidence || 0, tp.waypoint_index, tp.name || 'Unknown', originalP.is_interpolated || false]
+                                    );
+                                    if (originalP.id) matchedIds.push(originalP.id);
+                                }
+                            }
+                            console.log(`[OSRM] Chunk ${chunkIdx + 1}/${chunks.length}: matched ${matchData.tracepoints.filter(t => t).length} points`);
+                        } else {
+                            console.warn(`[OSRM] Chunk ${chunkIdx + 1}/${chunks.length}: no match — usando GPS raw`);
+                        }
+                    }
+
+                    if (matchedIds.length > 0) {
+                        await client.query('UPDATE locations SET is_matched = TRUE WHERE id = ANY($1)', [matchedIds]);
+                        
+                        // ✅ NUEVO: Compilar la ruta matcheada en el resumen de trip_routes
+                        // Esto permite que el admin vea la versión "ajustada a la calle" de la ruta total
+                        await client.query(`
+                            WITH route_geom AS (
+                                SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) as line
+                                FROM matched_locations
+                                WHERE trip_id = $1
+                            )
+                            INSERT INTO trip_routes (trip_id, geom_matched, point_count)
+                            SELECT $1, line::geography, ST_NPoints(line)
+                            FROM route_geom
+                            ON CONFLICT (trip_id) DO UPDATE SET
+                                geom_matched = EXCLUDED.geom_matched,
+                                point_count = GREATEST(trip_routes.point_count, EXCLUDED.point_count),
+                                updated_at = CURRENT_TIMESTAMP
+                        `, [tripId]);
+                        console.log(`[OSRM] Trip ${tripId}: geom_matched updated in trip_routes table`);
+                    }
+                } else {
+                    console.log(`[OSRM] Trip ${tripId}: solo ${unmatchedResult.rows.length} punto(s) sin matchear (mín: ${OSRM_MIN_POINTS}), usando GPS raw`);
                 }
 
                 // Stop detection

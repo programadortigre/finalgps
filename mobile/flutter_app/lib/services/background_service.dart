@@ -39,6 +39,8 @@ enum TrackingState {
 // Evita el anti-patrón de variables globales que se reinician al crash del OS.
 // ---------------------------------------------------------------------------
 class TrackingEngine {
+    // Declaración adelantada para evitar errores de referencia
+
   // ── Dependencias ──────────────────────────────────────────────────────────
   final ApiService _api;
   final LocalStorage _storage;
@@ -92,6 +94,9 @@ class TrackingEngine {
   bool _isSleepModeActive = false;
   bool _isPriorityScanActive = false;
   int _priorityScanTicks = 0;
+
+  // FIX LIVE: Guardar si el admin pidió ubicación mientras offline
+  bool _pendingLocationRequest = false;
 
   // FIX V3: Timestamp del último punto RAW de GPS para el Watchdog
   DateTime _lastRawTime = DateTime.now();
@@ -245,13 +250,66 @@ class TrackingEngine {
     _isPriorityScanActive = true;
     _priorityScanTicks = 0;
 
-    // 1. Enviar último punto conocido INMEDIATAMENTE
-    if (_lastValidPoint != null) {
-      _emitToSocket(_lastValidPoint!);
+    // Si el socket está offline, encolar la petición para enviar al reconectar
+    if (_socket == null || !_socket!.connected) {
+      _log('SOCKET', 'Socket offline — petición encolada, se enviará al reconectar');
+      _pendingLocationRequest = true;
+      // Intentar obtener GPS de todas formas (para tenerlo listo)
+      Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      ).then((pos) {
+        _lastValidPoint = LocalPoint(
+          lat: pos.latitude,
+          lng: pos.longitude,
+          speed: pos.speed * 3.6,
+          accuracy: pos.accuracy,
+          state: _currentState.name,
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+          employeeId: _cachedEmployeeId,
+        );
+        _log('SOCKET', 'GPS obtenido offline: ${pos.latitude}, ${pos.longitude} (acc: ${pos.accuracy}m)');
+      }).catchError((e) {
+        _log('SOCKET', 'GPS offline falló: $e');
+      });
+      return;
     }
+
+    // 1. Intentar obtener una ubicación actual
+    Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.best, timeLimit: const Duration(seconds: 8))
+        .then((pos) {
+      final point = LocalPoint(
+        lat: pos.latitude,
+        lng: pos.longitude,
+        speed: pos.speed * 3.6, // m/s a km/h
+        accuracy: pos.accuracy,
+        state: _currentState.name,
+        timestamp: DateTime.now().millisecondsSinceEpoch,
+        employeeId: _cachedEmployeeId,
+      );
+      _emitToSocket(point);
+      _lastValidPoint = point;
+    }).catchError((e) {
+      _log('SOCKET', 'Error obteniendo ubicación actual: $e');
+      // Si falla, enviar último punto conocido
+      if (_lastValidPoint != null) {
+        _emitToSocket(_lastValidPoint!);
+      }
+    });
 
     // 2. Forzar escaneo de ALTA PRECISIÓN
     _restartLocationStream(reason: 'Admin Remote Request (Priority)');
+  }
+
+  // Llamar cuando el socket reconecta — envía ubicación pendiente al admin
+  void onSocketReconnected() {
+    _log('SOCKET', 'Socket reconectado');
+    _updateNotification();
+    if (_pendingLocationRequest && _lastValidPoint != null) {
+      _log('SOCKET', 'Enviando ubicación pendiente al admin (guardada offline)');
+      _emitToSocket(_lastValidPoint!);
+      _pendingLocationRequest = false;
+    }
   }
 
   void _emitToSocket(LocalPoint point) {
@@ -528,18 +586,21 @@ class TrackingEngine {
             _isSleepModeActive = false;
             intervalSec = 15;
             distanceFilter = 5;
-            accuracy = LocationAccuracy.balanced;
+            accuracy = LocationAccuracy.medium;
           }
           break;
         case TrackingState.DEEP_SLEEP:
-          intervalSec = 300; // 5 min
-          distanceFilter = 25;
+          // FIX: 90s en vez de 5 min — si el usuario vuelve a caminar,
+          // la app lo detecta en máx. 90s y no en 10+ minutos.
+          // LocationAccuracy.low usa antenas de celular, consume muy poca batería.
+          intervalSec = 90;
+          distanceFilter = 20;
           accuracy = LocationAccuracy.low;
           break;
         case TrackingState.BATT_SAVER:
           intervalSec = 60;
           distanceFilter = 30;
-          accuracy = LocationAccuracy.balanced;
+          accuracy = LocationAccuracy.medium;
           break;
         case TrackingState.WALKING:
           intervalSec = 5;
@@ -558,10 +619,11 @@ class TrackingEngine {
       final level = await _battery.batteryLevel;
       if (level < 30) {
         intervalSec = (level < 10) ? 120 : ((level < 20) ? 60 : 30);
-        accuracy = (level < 10) ? LocationAccuracy.low : LocationAccuracy.balanced;
+        accuracy = (level < 10) ? LocationAccuracy.low : LocationAccuracy.medium;
         distanceFilter = (level < 10) ? 50 : 20;
         _log('GPS', 'BATTERY OVERRIDE ($level%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
       }
+    }
 
       _log('GPS', 'Stream START ($reason) → ${_currentState.name} | ${intervalSec}s | ${distanceFilter}m');
 
@@ -602,12 +664,24 @@ class TrackingEngine {
       final double speed = pos.speed; // m/s
       final double speedKmh = speed * 3.6;
 
-      // 1. Anti-Drift Inteligente (Distancia + Velocidad)
+      // FILTRO 1: Descartar por baja precisión
+      if (pos.accuracy > 20) {
+        _log('GPS', 'Descartado por baja precisión: ${pos.accuracy}m');
+        _isProcessingPosition = false;
+        return;
+      }
+
+      // FILTRO 2: Descartar saltos imposibles
       if (_lastValidPoint != null) {
         final dist = Geolocator.distanceBetween(
           _lastValidPoint!.lat, _lastValidPoint!.lng,
           pos.latitude, pos.longitude,
         );
+        if (dist > 50 && speedKmh < 20) {
+          _log('GPS', 'Salto descartado: $dist m, velocidad: $speedKmh km/h');
+          _isProcessingPosition = false;
+          return;
+        }
         // Drift detectado: < 8m y < 1 m/s
         if (dist < 8 && speed < 1.0 && _currentState == TrackingState.STOPPED) {
           _isProcessingPosition = false;
@@ -633,15 +707,15 @@ class TrackingEngine {
             ? Geolocator.distanceBetween(_lastValidPoint!.lat, _lastValidPoint!.lng, pos.latitude, pos.longitude)
             : 0.0;
 
-        // Despertar más agresivo si estamos en Sleep Mode
-        if (speed > 1.2 || distFromLast > 15.0) {
-          // Solo despertar si el movimiento dura algo (evitar picos)
+        // FIX: En DEEP_SLEEP despertamos con UNA sola lectura de movimiento
+        // (antes necesitaba 2, a 90s de intervalo = 3 min de delay mínimo).
+        // Si hay falsas alarmas, el filtro de velocidad de Kalman las filtra.
+        if (speed > 1.0 || distFromLast > 12.0) {
           _highSpeedTicks++;
-          if (_highSpeedTicks >= 2) targetState = TrackingState.WALKING;
+          final requiredTicks = (_currentState == TrackingState.DEEP_SLEEP) ? 1 : 2;
+          if (_highSpeedTicks >= requiredTicks) targetState = TrackingState.WALKING;
         } else {
           _highSpeedTicks = 0;
-          // Si estamos quietos, resetear el timer de cambio para mantener el Sleep Mode estable
-          // pero solo si la precisión es buena para no "perder" el timer por drift
           if (pos.accuracy < 25) _lastStateChangeTime = DateTime.now().subtract(Duration(seconds: secondsInCurrentState));
         }
       } else if (_currentState == TrackingState.DRIVING) {
@@ -863,6 +937,9 @@ void onStart(ServiceInstance service) async {
           _engine?.setSocket(socket); // Pasar socket al motor
           _engine?.updateSocketStatus(true);
           if (userId != null) socket.emit('join_employee', userId);
+          // FIX LIVE: Si había una petición de ubicación pendiente mientras
+          // el teléfono estaba sin datos, la enviamos ahora al reconectar.
+          _engine?.onSocketReconnected();
         });
 
         socket.onDisconnect((_) {

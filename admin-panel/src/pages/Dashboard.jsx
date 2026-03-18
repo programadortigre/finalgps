@@ -19,7 +19,8 @@ const Dashboard = ({ user, onLogout }) => {
     const [isConnected, setIsConnected] = useState(true);
 
     useEffect(() => {
-        connectSocket();
+        const token = localStorage.getItem('token');
+        connectSocket(token);
         setIsConnected(true);
         
         const adminId = user.user?.id || user.id;

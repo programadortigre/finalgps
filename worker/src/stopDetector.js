@@ -1,9 +1,8 @@
 async function detectStops(client, tripId, employeeId) {
-    const DISTANCE_THRESHOLD = 15;      // ⚡ REDUCIDO a 15 metros (fue 20m) - mejor precisión
-    const SPEED_THRESHOLD = 2.0 / 3.6;  // 2 km/h en m/s
-    const MIN_DURATION_MS = 25 * 1000;  // ⚡ REDUCIDO a 25 segundos (fue 60s) - detecta paradas cortas
-    const MAX_SPREAD = 20;              // ⚡ ACTIVO: máxima dispersión del cluster (fue 25)
-    const MIN_SPEED_KMH = 3.5;          // ⚡ SUBIDO a 3.5 km/h: permite captar paradas con ruido GPS o paso muy lento
+    const DISTANCE_THRESHOLD = 15;      // metros para asignar un punto al cluster actual
+    const MIN_DURATION_MS = 20 * 1000;  // FIX: 20s (era 25s) — capta paradas más cortas
+    const MAX_SPREAD = 20;              // máxima dispersión del cluster en metros
+    const MIN_SPEED_KMH = 3.5;          // velocidad promedio máxima para considerar parada
 
     // ✅ Usar puntos MATCHED si existen (ya están suavizados), si no, usar RAW
     const matchedCount = await client.query('SELECT count(*) FROM matched_locations WHERE trip_id = $1', [tripId]);
@@ -99,12 +98,23 @@ async function detectStops(client, tripId, employeeId) {
             continue;
         }
 
-        // ⚡ Validación 2: Velocidad promedio muy baja (indicador de parada)
-        const avgSpeed = cluster.points.reduce((sum, p) => sum + (p.speed || 0), 0) / cluster.points.length;
-        const avgSpeedKmh = avgSpeed * 3.6;
+        // FIX: Recalcular velocidad desde distancia/tiempo entre puntos consecutivos.
+        // El campo `speed` heredado puede ser incorrecto si OSRM reposicionó el punto
+        // pero el valor de velocidad original permaneció del punto GPS crudo.
+        let totalDistM = 0;
+        let totalTimeS = 0;
+        for (let i = 1; i < cluster.points.length; i++) {
+            const pa = cluster.points[i - 1];
+            const pb = cluster.points[i];
+            totalDistM += haversineDistance(pa.latitude, pa.longitude, pb.latitude, pb.longitude);
+            const dt = (parseInt(pb.timestamp) - parseInt(pa.timestamp)) / 1000;
+            if (dt > 0) totalTimeS += dt;
+        }
+        const avgSpeedKmh = totalTimeS > 0 ? (totalDistM / totalTimeS) * 3.6 : 0;
+
         if (avgSpeedKmh > MIN_SPEED_KMH) {
             console.log(
-                `[STOP-SKIP] Trip ${tripId}: cluster rechazado por velocidad alta (${avgSpeedKmh.toFixed(1)} km/h)`
+                `[STOP-SKIP] Trip ${tripId}: cluster rechazado por velocidad (${avgSpeedKmh.toFixed(1)} km/h calculada en ${totalDistM.toFixed(1)}m / ${totalTimeS.toFixed(1)}s)`
             );
             continue;
         }

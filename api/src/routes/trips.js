@@ -157,15 +157,25 @@ router.get('/:id', auth, async (req, res) => {
         // 2. Get route points (Soporta simplificación)
         let points = [];
         if (simplify) {
-            console.log(`[API] Trip ${tripId}: Fetching simplified route from trip_routes...`);
-            const routesResult = await db.query('SELECT ST_AsGeoJSON(geom_simplified) as simplified FROM trip_routes WHERE trip_id = $1', [tripId]);
+            console.log(`[API] Trip ${tripId}: Fetching matched or simplified route from trip_routes...`);
+            // ✅ PRIORIDAD: Buscar geom_matched (OSRM) primero, luego geom_simplified (Douglas-Peucker)
+            const routesResult = await db.query(`
+                SELECT 
+                    CASE 
+                        WHEN geom_matched IS NOT NULL THEN ST_AsGeoJSON(geom_matched)
+                        ELSE ST_AsGeoJSON(geom_simplified)
+                    END as route_json,
+                    CASE WHEN geom_matched IS NOT NULL THEN 'matched' ELSE 'simplified' END as type
+                FROM trip_routes 
+                WHERE trip_id = $1
+            `, [tripId]);
             
-            if (routesResult.rows.length > 0 && routesResult.rows[0].simplified) {
-                const geojson = JSON.parse(routesResult.rows[0].simplified);
+            if (routesResult.rows.length > 0 && routesResult.rows[0].route_json) {
+                const geojson = JSON.parse(routesResult.rows[0].route_json);
                 points = geojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-                console.log(`[API] Trip ${tripId}: Served ${points.length} simplified points`);
+                console.log(`[API] Trip ${tripId}: Served ${points.length} ${routesResult.rows[0].type} points`);
             } else {
-                console.log(`[API] Trip ${tripId}: Simplified route not found, falling back to raw points`);
+                console.log(`[API] Trip ${tripId}: No pre-compiled route found, falling back to raw points`);
             }
         }
 
@@ -248,20 +258,20 @@ router.patch('/:id/close', auth, async (req, res) => {
                     trip_id,
                     geom_full,
                     geom_simplified,
-                    point_count_full,
+                    point_count,
                     point_count_simplified
                 )
-                SELECT
-                    $1,
-                    geom_line::geography,
-                    ST_SimplifyPreserveTopology(geom_line, 0.00001)::geography,
-                    full_count,
-                    ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.00001))
+                    SELECT
+                        $1,
+                        geom_line::geography,
+                        ST_SimplifyPreserveTopology(geom_line, 0.00001)::geography,
+                        full_count,
+                        ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.00001))
                 FROM route
                 ON CONFLICT (trip_id) DO UPDATE SET
                     geom_full = EXCLUDED.geom_full,
                     geom_simplified = EXCLUDED.geom_simplified,
-                    point_count_full = EXCLUDED.point_count_full,
+                    point_count = EXCLUDED.point_count,
                     point_count_simplified = EXCLUDED.point_count_simplified,
                     updated_at = CURRENT_TIMESTAMP;
             `, [tripId]);
