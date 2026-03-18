@@ -222,14 +222,14 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
     }
   }
 
-  Future<void> _restoreOrStartSession() async {
+  Future<void> _restoreOrStartSession({bool forceReset = false}) async {
     // No restaurar si no estamos online realmente
-    if (!_isOnline) return;
+    if (!_isOnline && !forceReset) return;
 
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getInt('session_start_ms');
     
-    if (saved != null) {
+    if (saved != null && !forceReset) {
       final startTime = DateTime.fromMillisecondsSinceEpoch(saved);
       // TTL de 12 horas: Si la sesión es más vieja, se limpia.
       if (DateTime.now().difference(startTime).inHours < 12) {
@@ -310,9 +310,9 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
 
   // Locals removed: we react to events now instead of Geolocator.
 
-  void _startClock() async {
-    if (_sessionStart == null) {
-      await _restoreOrStartSession();
+  void _startClock({bool forceReset = false}) async {
+    if (_sessionStart == null || forceReset) {
+      await _restoreOrStartSession(forceReset: forceReset);
     }
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_sessionStart != null && mounted) {
@@ -369,7 +369,8 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
       if (success) {
         // ✅ Sincronizar estado con el servidor
         await _api.updateTrackingStatus(true);
-        _startClock();
+        _startClock(forceReset: true); // 🔥 Reset timer on manual start
+
         // Recordatorio de optimización de batería
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -502,6 +503,27 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
               ]),
           ],
         ),
+
+        // ── "Buscando GPS" overlay when online but no position ──
+        if (_isOnline && _position == null)
+          Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.7),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                SizedBox(
+                  width: 14, height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF6C63FF)),
+                ),
+                SizedBox(width: 12),
+                Text('Buscando señal GPS...', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+              ]),
+            ),
+          ),
 
         // ── Top Bar (Glassmorphism) ──
         Positioned(
