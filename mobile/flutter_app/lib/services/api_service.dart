@@ -104,11 +104,14 @@ class ApiService {
         copy['employeeId'] = employeeId;
         return copy;
       }).toList();
+      print('[FLOW-DIAG] API Submitting batch of ${enrichedPoints.length} points to /api/locations/batch');
       final res = await dio.post(
         '/api/locations/batch',
         data: {'points': enrichedPoints},
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
+      
+      print('[FLOW-DIAG] API Response (${res.statusCode}): ${res.data}');
       
       if (res.statusCode == 202) {
         print('[ApiService] Batch subido con éxito: ${enrichedPoints.length} puntos');

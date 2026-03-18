@@ -170,11 +170,13 @@ class TrackingEngine {
       final profile = await _api.fetchMyProfile();
       if (profile != null) {
         final bool isTrackingEnabled = profile['is_tracking_enabled'] ?? true;
-        _log('INIT', 'Sincronización remota: is_tracking_enabled=$isTrackingEnabled');
+        _log('FLOW-DIAG', 'Profile check: is_tracking_enabled=$isTrackingEnabled');
         if (!isTrackingEnabled) {
-          _log('INIT', 'Rastreo desactivado remotamente. Entrando en PAUSED.');
+          _log('FLOW-DIAG', 'ENTER PAUSE: is_tracking_enabled is FALSE');
           pause();
         }
+      } else {
+        _log('FLOW-DIAG', 'Profile check FAILED (null response)');
       }
 
       _log('INIT', '<<< _deferredInitialization() [DONE]');
@@ -858,7 +860,14 @@ class TrackingEngine {
   }
 
   Future<void> _syncLoop({String reason = 'unknown'}) async {
-    if (_isSyncing || _cachedToken == null) return;
+    if (_isSyncing) {
+      _log('FLOW-DIAG', 'Sync blocked: already syncing');
+      return;
+    }
+    if (_cachedToken == null) {
+      _log('FLOW-DIAG', 'Sync blocked: NO TOKEN cacheado');
+      return;
+    }
     _isSyncing = true;
 
     try {

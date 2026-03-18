@@ -30,8 +30,9 @@ router.get('/me', auth, async (req, res) => {
             'SELECT id, name, email, role, is_tracking_enabled, created_at FROM employees WHERE id = $1',
             [req.user.id]
         );
-        if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-        res.json(result.rows[0]);
+        const profile = result.rows[0];
+        console.log(`[FLOW-DIAG] Profile fetch for emp ${req.user.id}: is_tracking_enabled=${profile.is_tracking_enabled}`);
+        res.json(profile);
     } catch (err) {
         res.status(500).json({ error: 'Internal server error' });
     }

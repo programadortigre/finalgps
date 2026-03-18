@@ -407,6 +407,16 @@ async function syncSchema() {
                 await client.query('ALTER TABLE locations ADD COLUMN state VARCHAR(30) DEFAULT \'SIN_MOVIMIENTO\'');
             }
 
+            // ✅ NUEVO: Check for 'is_tracking_enabled' in 'employees'
+            const checkTrackingCol = await client.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='employees' AND column_name='is_tracking_enabled';
+            `);
+            if (checkTrackingCol.rowCount === 0) {
+                console.log('Migrating database: Adding "is_tracking_enabled" column to "employees"...');
+                await client.query('ALTER TABLE employees ADD COLUMN is_tracking_enabled BOOLEAN DEFAULT TRUE');
+            }
+
             // 2. Check for 'is_matched' column
             const checkMatchedCol = await client.query(`
                 SELECT 1 FROM information_schema.columns 

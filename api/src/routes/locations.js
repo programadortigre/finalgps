@@ -111,6 +111,8 @@ router.post('/batch', auth, async (req, res) => {
     const { points } = req.body;
     const employeeId = req.user.id;
 
+    console.log(`[FLOW-DIAG] GPS HIT from emp ${employeeId}: ${Array.isArray(points) ? points.length : 'NOT_ARRAY'} points received`);
+    
     if (!Array.isArray(points) || points.length === 0) {
         return res.status(400).json({ error: 'Valid points array required' });
     }
@@ -263,7 +265,7 @@ router.post('/batch', auth, async (req, res) => {
     }
 
     console.log(
-        `[BATCH] Received ${points.length} points: ${inserted} inserted, ${filtered} filtered`
+        `[FLOW-DIAG] Batch processing finished for emp ${employeeId}: Total:${points.length}, OK:${inserted}, Filtered:${filtered}`
     );
 
     // Guardar estado actualizado en Redis (expira en 12 horas si no hay movimiento)
