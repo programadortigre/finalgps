@@ -4,11 +4,8 @@ async function detectStops(client, tripId, employeeId) {
     const MAX_JUMP_M = 100;             // metros para filtrar puntos "locos"
     const MAX_SPEED_KMH = 3.5;          // velocidad base para parada
 
-    // 1. Obtener puntos (Matched > Raw)
-    const matchedCount = await client.query('SELECT count(*) FROM matched_locations WHERE trip_id = $1', [tripId]);
-    const query = parseInt(matchedCount.rows[0].count) > 0
-        ? 'SELECT id, latitude, longitude, speed, timestamp FROM matched_locations WHERE trip_id = $1 ORDER BY timestamp ASC'
-        : 'SELECT id, latitude, longitude, speed, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp ASC';
+    // 1. Obtener puntos (Siempre usar GPS Raw para que la parada caiga dentro de la tienda, no en la pista)
+    const query = 'SELECT id, latitude, longitude, speed, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp ASC';
 
     const res = await client.query(query, [tripId]);
     let rawPoints = res.rows;
