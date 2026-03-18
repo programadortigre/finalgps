@@ -261,8 +261,8 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations, select
     const points = routeData && Array.isArray(routeData.points) ? routeData.points : [];
     const stops = routeData && Array.isArray(routeData.stops) ? routeData.stops : [];
 
-    // Si no hay puntos, mostrar mensaje amigable
-    const noPoints = view === 'history' && routeData && points.length === 0;
+    // Si no hay puntos, mostrar mensaje amigable (solo si no es multi-recorrido)
+    const noPoints = view === 'history' && routeData && !routeData.isMulti && points.length === 0;
 
     const flyTarget = selectedEmployee && view === 'live'
         ? (activeLocations[selectedEmployee.id])

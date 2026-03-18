@@ -174,6 +174,7 @@ router.get('/:id', auth, async (req, res) => {
                 const geojson = JSON.parse(routesResult.rows[0].route_json);
                 points = geojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
                 console.log(`[API] Trip ${tripId}: Served ${points.length} ${routesResult.rows[0].type} points`);
+                console.log(`[API] Trip ${tripId}: Route data from trip_routes:`, routesResult.rows[0]);
             } else {
                 console.log(`[API] Trip ${tripId}: No pre-compiled route found, falling back to raw points`);
             }
@@ -189,7 +190,14 @@ router.get('/:id', auth, async (req, res) => {
                 ORDER BY timestamp ASC
             `, [tripId]);
             points = pointsResult.rows;
-            console.log(`[API] Trip ${tripId}: Found ${points.length} raw points`);
+            console.log(`[API] Trip ${tripId}: Found ${points.length} raw points fallback`);
+        }
+        
+        if (points.length === 0) {
+            console.log(`[API] Trip ${tripId} WARNING: No points found in either trip_routes or locations!`);
+            // Check if trip exists at all in locations with raw SQL for debugging
+            const debugCount = await db.query('SELECT COUNT(*) FROM locations WHERE trip_id = $1', [tripId]);
+            console.log(`[API] Trip ${tripId} DEBUG: Direct COUNT in locations table: ${debugCount.rows[0].count}`);
         }
 
         // 3. Get stops
