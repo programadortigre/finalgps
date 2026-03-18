@@ -309,28 +309,51 @@ async function processBatch(employeeId, points) {
                     if (matchedIds.length > 0) {
                         await client.query('UPDATE locations SET is_matched = TRUE WHERE id = ANY($1)', [matchedIds]);
                         
-                        // ✅ NUEVO: Compilar la ruta matcheada en el resumen de trip_routes
-                        // Solo usamos geom_matched si hay suficientes puntos y la confianza es aceptable
-                        // Si la confianza es baja (ej. < 0.3), OSRM probablemente "alucinó" una calle.
+                        // ✅ PRO ARCHITECTURE: Compilar ambas rutas (Raw y Matched)
+                        // Calculamos ratio de confianza real: puntos_matcheados / puntos_totales
                         await client.query(`
-                            WITH route_geom AS (
-                                SELECT 
-                                    ST_MakeLine(geom::geometry ORDER BY timestamp) as line,
-                                    AVG(match_confidence) as avg_conf
+                            WITH stats AS (
+                                SELECT
+                                    (SELECT COUNT(*) FROM locations WHERE trip_id = $1) as total_pts,
+                                    (SELECT COUNT(*) FROM matched_locations WHERE trip_id = $1) as matched_pts
+                            ),
+                            route_raw_geom AS (
+                                SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) as line
+                                FROM locations
+                                WHERE trip_id = $1
+                            ),
+                            route_matched_geom AS (
+                                SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) as line
                                 FROM matched_locations
                                 WHERE trip_id = $1
                             )
-                            INSERT INTO trip_routes (trip_id, geom_matched, point_count)
-                            SELECT $1, 
-                                   CASE WHEN avg_conf > 0.3 THEN ST_SimplifyPreserveTopology(line, 0.0001) ELSE NULL END, 
-                                   ST_NPoints(line)
-                            FROM route_geom
+                            INSERT INTO trip_routes (
+                                trip_id, 
+                                geom_raw, 
+                                geom_matched, 
+                                point_count, 
+                                point_count_matched, 
+                                match_confidence
+                            )
+                            SELECT 
+                                $1, 
+                                ST_SimplifyPreserveTopology(route_raw_geom.line, 0.0001),
+                                CASE WHEN (stats.matched_pts::float / NULLIF(stats.total_pts, 0)) > 0.6 
+                                     THEN ST_SimplifyPreserveTopology(route_matched_geom.line, 0.0001) 
+                                     ELSE NULL END,
+                                stats.total_pts,
+                                stats.matched_pts,
+                                (stats.matched_pts::float / NULLIF(stats.total_pts, 0))
+                            FROM stats, route_raw_geom, route_matched_geom
                             ON CONFLICT (trip_id) DO UPDATE SET
+                                geom_raw = EXCLUDED.geom_raw,
                                 geom_matched = EXCLUDED.geom_matched,
                                 point_count = EXCLUDED.point_count,
+                                point_count_matched = EXCLUDED.point_count_matched,
+                                match_confidence = EXCLUDED.match_confidence,
                                 updated_at = CURRENT_TIMESTAMP;
                         `, [tripId]);
-                        console.log(`[OSRM] Trip ${tripId}: geom_matched compiled with simplification (0.0001)`);
+                        console.log(`[OSRM] Trip ${tripId}: Pro architecture sync completed (Raw + Matched fallback)`);
                     }
                 } else {
                     console.log(`[OSRM] Trip ${tripId}: solo ${unmatchedResult.rows.length} punto(s) sin matchear (mín: ${OSRM_MIN_POINTS}), usando GPS raw`);

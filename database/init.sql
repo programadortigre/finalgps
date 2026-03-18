@@ -96,15 +96,17 @@ CREATE TABLE IF NOT EXISTS stops (
 -- Simplified Routes table (for performance optimization)
 CREATE TABLE IF NOT EXISTS trip_routes (
     id SERIAL PRIMARY KEY,
-    trip_id INTEGER UNIQUE REFERENCES trips(id) ON DELETE CASCADE,
+    trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE UNIQUE,
     geom_full GEOGRAPHY(LineString, 4326),
-    geom_simplified GEOGRAPHY(LineString, 4326),
-    geom_matched GEOGRAPHY(LineString, 4326),
+    geom_simplified GEOGRAPHY(LineString, 4326), -- Douglas-Peucker original
+    geom_raw GEOGRAPHY(LineString, 4326),         -- Kalman smoothed + simplified
+    geom_matched GEOGRAPHY(LineString, 4326),     -- OSRM matched
     point_count INTEGER DEFAULT 0,
     point_count_simplified INTEGER DEFAULT 0,
-    simplification_tolerance FLOAT DEFAULT 0.0001,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    point_count_matched INTEGER DEFAULT 0,
+    match_confidence FLOAT DEFAULT 0,             -- Ratio of matched points
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Index for trip_routes

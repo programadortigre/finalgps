@@ -157,26 +157,33 @@ router.get('/:id', auth, async (req, res) => {
         // 2. Get route points (Soporta simplificación)
         let points = [];
         if (simplify) {
-            console.log(`[API] Trip ${tripId}: Fetching matched or simplified route from trip_routes...`);
-            // ✅ PRIORIDAD: Buscar geom_matched (OSRM) primero, luego geom_simplified (Douglas-Peucker)
+            console.log(`[API] Trip ${tripId}: Fetching Pro dual-path (Raw + Matched) from trip_routes...`);
+            // ✅ PRO ARCHITECTURE: Devolvemos ambas opciones y dejamos que el sistema decida la mejor
             const routesResult = await db.query(`
                 SELECT 
-                    CASE 
-                        WHEN geom_matched IS NOT NULL THEN ST_AsGeoJSON(geom_matched)
-                        ELSE ST_AsGeoJSON(geom_simplified)
-                    END as route_json,
-                    CASE WHEN geom_matched IS NOT NULL THEN 'matched' ELSE 'simplified' END as type
+                    ST_AsGeoJSON(geom_raw) as raw_json,
+                    ST_AsGeoJSON(geom_matched) as matched_json,
+                    match_confidence as confidence
                 FROM trip_routes 
                 WHERE trip_id = $1
             `, [tripId]);
             
-            if (routesResult.rows.length > 0 && routesResult.rows[0].route_json) {
-                const geojson = JSON.parse(routesResult.rows[0].route_json);
-                points = geojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-                console.log(`[API] Trip ${tripId}: Served ${points.length} ${routesResult.rows[0].type} points`);
-                console.log(`[API] Trip ${tripId}: Route data from trip_routes:`, routesResult.rows[0]);
+            if (routesResult.rows.length > 0) {
+                const row = routesResult.rows[0];
+                const rawGeojson = row.raw_json ? JSON.parse(row.raw_json) : null;
+                const matchedGeojson = row.matched_json ? JSON.parse(row.matched_json) : null;
+                
+                // Decisión "Pro": Si la confianza es alta (> 0.6), usamos matcheado. 
+                // Si es baja (parques, zonas rurales), usamos raw suavizado.
+                if (row.confidence > 0.6 && matchedGeojson) {
+                    points = matchedGeojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
+                    console.log(`[API] Trip ${tripId}: High confidence (${(row.confidence*100).toFixed(0)}%). Using SNAPPED path.`);
+                } else if (rawGeojson) {
+                    points = rawGeojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
+                    console.log(`[API] Trip ${tripId}: Low confidence (${(row.confidence*100).toFixed(0)}%). Using RAW (Kalman) path.`);
+                }
             } else {
-                console.log(`[API] Trip ${tripId}: No pre-compiled route found, falling back to raw points`);
+                console.log(`[API] Trip ${tripId}: No pre-compiled Pro routes found`);
             }
         }
 
@@ -263,22 +270,24 @@ router.patch('/:id/close', auth, async (req, res) => {
                     WHERE trip_id = $1
                 )
                 INSERT INTO trip_routes (
-                    trip_id,
-                    geom_full,
-                    geom_simplified,
-                    point_count,
-                    point_count_simplified
+                    trip_id, 
+                    geom_full, 
+                    geom_raw, 
+                    point_count, 
+                    point_count_simplified,
+                    updated_at
                 )
-                    SELECT
-                        $1,
-                        geom_line::geography,
-                        ST_SimplifyPreserveTopology(geom_line, 0.0001)::geography,
-                        full_count,
-                        ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.0001))
+                SELECT
+                    $1,
+                    geom_line::geography,
+                    ST_SimplifyPreserveTopology(geom_line, 0.0001)::geography,
+                    full_count,
+                    ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.0001)),
+                    CURRENT_TIMESTAMP
                 FROM route
                 ON CONFLICT (trip_id) DO UPDATE SET
                     geom_full = EXCLUDED.geom_full,
-                    geom_simplified = EXCLUDED.geom_simplified,
+                    geom_raw = EXCLUDED.geom_raw,
                     point_count = EXCLUDED.point_count,
                     point_count_simplified = EXCLUDED.point_count_simplified,
                     updated_at = CURRENT_TIMESTAMP;
