@@ -79,6 +79,15 @@ const initSocket = (server) => {
             console.log(`[Socket] User joined room: ${room}`);
         });
 
+        // ✅ El empleado envía su ubicación (usualmente en respuesta a una petición manual)
+        socket.on('location_update', (data) => {
+            console.log(`[Socket] Received real-time update from employee ${data.employeeId}`);
+            // Publicar en Redis para que todas las instancias de la API lo envíen a sus admins
+            const redisPub = new Redis(redisConfig); // Cliente temporal para publicar
+            redisPub.publish('location_updates', JSON.stringify(data))
+                .finally(() => redisPub.disconnect());
+        });
+
         // ✅ Admin solicita ubicación en tiempo real de un empleado específico
         socket.on('admin_request_location', (data) => {
             const { employeeId, adminId } = data;
