@@ -9,6 +9,8 @@ let redisSub;
  */
 const initSocket = (server) => {
     io = new Server(server, {
+        pingTimeout: 60000,   // 60s (Aumentado para mayor estabilidad en 3G)
+        pingInterval: 25000,  // 25s
         cors: { 
             origin: ['http://localhost:5173', 'http://admin-panel:80', 'http://admin-panel'],
             methods: ["GET", "POST"],

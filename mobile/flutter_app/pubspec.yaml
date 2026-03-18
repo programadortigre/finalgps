@@ -30,6 +30,7 @@ dependencies:
   sensors_plus: ^7.0.0
   flutter_activity_recognition: ^4.0.0
   battery_plus: ^7.0.0
+  connectivity_plus: ^7.0.0
 
 dev_dependencies:
   flutter_test:

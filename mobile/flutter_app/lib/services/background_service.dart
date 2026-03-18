@@ -11,6 +11,7 @@ import 'local_storage.dart';
 import '../models/local_point.dart';
 import '../utils/kalman_filter.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'socket_service.dart';
 
 // ---------------------------------------------------------------------------
@@ -83,8 +84,11 @@ class TrackingEngine {
   int _maintenanceTicks = 0;
   int _retryBackoffSeconds = 0;
 
+  // SUBS: Connectivity
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+
   // FIX V3: Guard para evitar subidas paralelas
-  bool _isFlushing = false;
+  bool _isSyncing = false;
 
   // FIX DEEP-AUDIT: Guard para evitar solapamiento de procesamiento GPS
   bool _isProcessingPosition = false;
@@ -127,6 +131,9 @@ class TrackingEngine {
       _log('INIT', 'Iniciando Stream GPS...');
       _startLocationStream(reason: 'Initial Start');
 
+      // 3. Listener de Conectividad para Synchro Inmediato
+      _initConnectivityListener();
+
       // PRO: Unified Maintenance Loop (60s)
       _mainMaintenanceTimer = Timer.periodic(const Duration(seconds: 60), (_) {
         try {
@@ -141,9 +148,7 @@ class TrackingEngine {
       _lastValidPoint = null;
       _pointBuffer.clear();
 
-      // FIX DEEP-AUDIT: Posponemos SecureStorage e hidratación de DB para DESPUÉS del arranque básico
-      // Esto asegura que el servicio ya esté en primer plano y los timers corriendo.
-      _log('INIT', 'Iniciando carga asíncrona de estado (SecureStorage/DB)...');
+      // Hydratación diferida para no bloquear el inicio
       _deferredInitialization();
 
       _log('ISOLATE', '<<< engine.start() [DONE]');
@@ -187,6 +192,7 @@ class TrackingEngine {
     _mainMaintenanceTimer?.cancel();
     _positionStreamSub?.cancel();
     _activityStreamSub?.cancel();
+    _connectivitySub?.cancel();
 
     // PRO: Guardar puntos pendientes antes de morir
     _flushBufferToStorage();
@@ -305,6 +311,11 @@ class TrackingEngine {
   void onSocketReconnected() {
     _log('SOCKET', 'Socket reconectado');
     _updateNotification();
+    
+    // ✅ TRIGGER PRO: Resetear backoff y forzar sync al reconectar socket
+    _retryBackoffSeconds = 0;
+    _syncLoop(reason: 'Socket Reconnected');
+
     if (_pendingLocationRequest && _lastValidPoint != null) {
       _log('SOCKET', 'Enviando ubicación pendiente al admin (guardada offline)');
       _emitToSocket(_lastValidPoint!);
@@ -445,6 +456,18 @@ class TrackingEngine {
     }
   }
 
+  void _initConnectivityListener() {
+    _log('INIT', 'Iniciando Connectivity Listener...');
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+      final isOnline = results.any((r) => r != ConnectivityResult.none);
+      if (isOnline) {
+        _log('CONN', 'Reconexión detectada (Network) → Triggering Sync');
+        _retryBackoffSeconds = 0; // Reset backoff
+        _syncLoop(reason: 'Network Reconnected');
+      }
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // Loop de Mantenimiento Unificado (60s)
   // ---------------------------------------------------------------------------
@@ -462,7 +485,7 @@ class TrackingEngine {
       // 3. Flush de SQLite a API (Solo si bat > 10%)
       final level = await _battery.batteryLevel;
       if (level > 10) {
-        await _flushStorageToApi();
+        _syncLoop(reason: 'Maintenance Loop');
       }
 
       // 4. Priority Scan Watchdog
@@ -632,7 +655,7 @@ class TrackingEngine {
           accuracy: accuracy,
           distanceFilter: distanceFilter,
           intervalDuration: Duration(seconds: intervalSec),
-          forceLocationManager: false,
+          forceLocationManager: true, // ✅ FIX: Usar LocationManager directamente para evitar throttling en Moto/Samsung
         ),
       ).listen(
         (Position pos) {
@@ -710,7 +733,7 @@ class TrackingEngine {
         // FIX: En DEEP_SLEEP despertamos con UNA sola lectura de movimiento
         // (antes necesitaba 2, a 90s de intervalo = 3 min de delay mínimo).
         // Si hay falsas alarmas, el filtro de velocidad de Kalman las filtra.
-        if (speed > 1.0 || distFromLast > 12.0) {
+        if (speed > 1.0 || distFromLast > 8.0) { // ✅ REFINADO: 8m en lugar de 12m
           _highSpeedTicks++;
           final requiredTicks = (_currentState == TrackingState.DEEP_SLEEP) ? 1 : 2;
           if (_highSpeedTicks >= requiredTicks) targetState = TrackingState.WALKING;
@@ -758,6 +781,12 @@ class TrackingEngine {
 
       _pointBuffer.add(point);
       
+      // ✅ TRIGGER PRO: Si el buffer es > 5, mover a SQLite y disparar Sync de una
+      if (_pointBuffer.length >= 5) {
+        _log('SYNC', 'Buffer proactivo (~5 pts) -> SQLite & Sync');
+        _flushBufferToStorage().then((_) => _syncLoop(reason: 'Proactive Sync'));
+      }
+
       // Enviar a socket inmediatamente si hay una petición prioritaria
       if (_isPriorityScanActive) {
         _emitToSocket(point);
@@ -807,48 +836,68 @@ class TrackingEngine {
     }
   }
 
-  Future<void> _flushStorageToApi() async {
-    if (_isFlushing || _cachedToken == null) return;
-    _isFlushing = true;
+  Future<void> _syncLoop({String reason = 'unknown'}) async {
+    if (_isSyncing || _cachedToken == null) return;
+    _isSyncing = true;
 
     try {
-      final unsynced = await _storage.getUnsyncedPoints(limit: 50);
-      if (unsynced.isEmpty) {
-        _isFlushing = false;
-        return;
-      }
-
+      _log('SYNC', 'Iniciando Sync Loop ($reason)...');
+      
       // Aplicar backoff si hubo errores previos
       if (_retryBackoffSeconds > 0) {
-        _retryBackoffSeconds--;
-        _isFlushing = false;
+        _log('SYNC', 'Postergando sync por backoff: ${_retryBackoffSeconds}s restantes');
+        _retryBackoffSeconds -= 60; // Descontar 1 ciclo de mantenimiento (60s)
+        if (_retryBackoffSeconds < 0) _retryBackoffSeconds = 0;
         return;
       }
 
-      final data = unsynced.map((p) => {
-        'lat': p.lat, 'lng': p.lng,
-        'speed': p.speed, 'accuracy': p.accuracy,
-        'state': p.state, 'timestamp': p.timestamp,
-      }).toList();
+      int batchesProcessed = 0;
+      while (true) {
+        // 1. Obtener batch del almacenamiento
+        final unsynced = await _storage.getUnsyncedPoints(limit: 50);
+        if (unsynced.isEmpty) {
+          _log('SYNC', 'Sync completado: no hay más puntos pendientes.');
+          break;
+        }
 
-      _log('API', 'Enviando batch de ${data.length} puntos...');
-      final ok = await _api.uploadBatch(data);
-      
-      if (ok) {
-        final ids = unsynced.map((p) => p.id!).toList();
-        await _storage.markPointsAsSynced(ids);
-        _log('API', 'Batch enviado con éxito');
-        _retryBackoffSeconds = 0;
-      } else {
-        // Backoff exponencial simple: 1 min, 2 min, 4 min...
-        _retryBackoffSeconds = 60; 
-        _log('API', 'Fallo en envío. Iniciando backoff.');
+        _log('SYNC', 'Procesando batch ${batchesProcessed + 1}: ${unsynced.length} puntos...');
+
+        // 2. Preparar datos
+        final data = unsynced.map((p) => {
+          'lat': p.lat, 'lng': p.lng,
+          'speed': p.speed, 'accuracy': p.accuracy,
+          'state': p.state, 'timestamp': p.timestamp,
+        }).toList();
+
+        // 3. Intentar envío
+        final ok = await _api.uploadBatch(data);
+        
+        if (ok) {
+          // 4. Éxito: Marcar como sincronizados y continuar bucle
+          final ids = unsynced.map((p) => p.id!).toList();
+          await _storage.markPointsAsSynced(ids);
+          _retryBackoffSeconds = 0; // Reset backoff en éxito
+          batchesProcessed++;
+          _log('SYNC', 'Batch exitoso. Restantes en DB: pendiente...');
+          
+          // Protección contra bucle infinito accidental o exceso de memoria
+          if (batchesProcessed > 100) {
+            _log('SYNC', 'Límite de seguridad alcanzado (100 batches). Postergando el resto.');
+            break;
+          }
+        } else {
+          // 5. Fallo: Aplicar backoff inteligente y salir del bucle
+          _retryBackoffSeconds = (_retryBackoffSeconds == 0) ? 30 : (_retryBackoffSeconds * 2);
+          if (_retryBackoffSeconds > 300) _retryBackoffSeconds = 300; // Máximo 5 min
+          _log('SYNC', 'Fallo en envío de batch. Reintento en $_retryBackoffSeconds s');
+          break;
+        }
       }
     } catch (e) {
-      _log('API', 'Error de red: $e');
+      _log('SYNC', 'Error crítico en Sync Loop: $e');
       _retryBackoffSeconds = 60;
     } finally {
-      _isFlushing = false;
+      _isSyncing = false;
     }
   }
 }
