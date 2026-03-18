@@ -390,10 +390,7 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
       service.invoke('stopService');
       _stopClock();
       
-      // ✅ Sincronizar estado con el servidor
-      await _api.updateTrackingStatus(false);
-
-      // No cambiamos _isOnline aquí, esperamos al evento 'trackingState'
+      // ✅ Sincronizar estado con el servidor (OPCIONAL: Solo informar OFFLINE, no deshabilitar permiso)
       try {
         await _api.updateStatus('OFFLINE'); 
       } catch (e) {

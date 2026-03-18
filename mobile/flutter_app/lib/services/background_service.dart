@@ -262,8 +262,11 @@ class TrackingEngine {
       _pendingLocationRequest = true;
       // Intentar obtener GPS de todas formas (para tenerlo listo)
       Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
+        locationSettings: AndroidSettings(
+          accuracy: LocationAccuracy.best,
+          forceLocationManager: true, // ✅ Fuerza Hardware GPS directo
+        ),
+        timeLimit: const Duration(seconds: 28), // ✅ Aumentado para dar tiempo al hardware
       ).then((pos) {
         _lastValidPoint = LocalPoint(
           lat: pos.latitude,
@@ -281,9 +284,14 @@ class TrackingEngine {
       return;
     }
 
-    // 1. Intentar obtener una ubicación actual
-    Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.best, timeLimit: const Duration(seconds: 8))
-        .then((pos) {
+    // 1. Intentar obtener una ubicación actual con parámetros agresivos
+    Geolocator.getCurrentPosition(
+      locationSettings: AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        forceLocationManager: true,
+      ),
+      timeLimit: const Duration(seconds: 28),
+    ).then((pos) {
       final point = LocalPoint(
         lat: pos.latitude,
         lng: pos.longitude,
@@ -475,6 +483,12 @@ class TrackingEngine {
     _maintenanceTicks++;
     _log('MAIN', 'Loop #$_maintenanceTicks [ENTER]');
 
+    // ✅ SOCKET WATCHDOG: Asegurar que el socket intente reconectar si murió
+    if (_socket != null && !_socket!.connected) {
+      _log('SOCKET', 'Watchdog: Socket detectado offline, intentando reconexión forzada...');
+      _socket!.connect();
+    }
+
     try {
       // 1. Throttling por Batería
       await _updateBatteryAndThrottling();
@@ -613,12 +627,12 @@ class TrackingEngine {
           }
           break;
         case TrackingState.DEEP_SLEEP:
-          // FIX: 90s en vez de 5 min — si el usuario vuelve a caminar,
-          // la app lo detecta en máx. 90s y no en 10+ minutos.
-          // LocationAccuracy.low usa antenas de celular, consume muy poca batería.
-          intervalSec = 90;
-          distanceFilter = 20;
-          accuracy = LocationAccuracy.low;
+          // FIX: 60s en vez de 90s — si el usuario vuelve a caminar,
+          // la app lo detecta en máx. 60s y no en 10+ minutos.
+          // LocationAccuracy.medium es más fiable que .low para despertar.
+          intervalSec = 60;
+          distanceFilter = 15;
+          accuracy = LocationAccuracy.medium;
           break;
         case TrackingState.BATT_SAVER:
           intervalSec = 60;
@@ -687,9 +701,10 @@ class TrackingEngine {
       final double speed = pos.speed; // m/s
       final double speedKmh = speed * 3.6;
 
-      // FILTRO 1: Descartar por baja precisión
-      if (pos.accuracy > 20) {
-        _log('GPS', 'Descartado por baja precisión: ${pos.accuracy}m');
+      // FILTRO 1: Descartar por baja precisión (Dinámico)
+      double maxAcc = (_currentState == TrackingState.STOPPED || _currentState == TrackingState.DEEP_SLEEP) ? 60.0 : 25.0;
+      if (pos.accuracy > maxAcc) {
+        _log('GPS', 'Descartado por muy baja precisión: ${pos.accuracy}m (max $maxAcc)');
         _isProcessingPosition = false;
         return;
       }
@@ -767,7 +782,13 @@ class TrackingEngine {
         speedKmh: speedKmh,
       );
 
-      // 4. Buffering en Memoria
+      // 4. Buffering en Memoria (Solo si la precisión es aceptable para dibujo)
+      if (pos.accuracy > 25 && _currentState != TrackingState.DEEP_SLEEP) {
+         _log('GPS', 'Punto de baja calidad (${pos.accuracy}m) - omitiendo dibujo pero procesando estado');
+         _isProcessingPosition = false;
+         return; 
+      }
+
       _lastValidLocationTime = DateTime.now();
       final point = LocalPoint(
         lat: filtered['lat']!,

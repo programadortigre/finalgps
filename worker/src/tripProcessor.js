@@ -369,20 +369,55 @@ async function syncSchema() {
             // Wait for PostgreSQL to be ready
             await client.query('SELECT 1');
 
-            const checkColumn = await client.query(`
+            // 1. Check for 'state' column
+            const checkState = await client.query(`
                 SELECT 1 FROM information_schema.columns 
                 WHERE table_name='locations' AND column_name='state';
             `);
-
-            if (checkColumn.rowCount === 0) {
-                console.log('Migrating database (Worker): Adding "state" column...');
-                await client.query(`
-                    ALTER TABLE locations ADD COLUMN state VARCHAR(30) DEFAULT 'SIN_MOVIMIENTO';
-                `);
-                console.log('Migration completed successfully.');
-            } else {
-                console.log('Database schema (Worker) already up-to-date.');
+            if (checkState.rowCount === 0) {
+                console.log('Migrating database: Adding "state" column...');
+                await client.query('ALTER TABLE locations ADD COLUMN state VARCHAR(30) DEFAULT \'SIN_MOVIMIENTO\'');
             }
+
+            // 2. Check for 'is_matched' column
+            const checkMatchedCol = await client.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='locations' AND column_name='is_matched';
+            `);
+            if (checkMatchedCol.rowCount === 0) {
+                console.log('Migrating database: Adding "is_matched" column...');
+                await client.query('ALTER TABLE locations ADD COLUMN is_matched BOOLEAN DEFAULT FALSE');
+                await client.query('CREATE INDEX IF NOT EXISTS idx_locations_is_matched ON locations (is_matched) WHERE is_matched = FALSE');
+            }
+
+            // 3. Check for 'matched_locations' table
+            const checkMatchedTable = await client.query(`
+                SELECT 1 FROM information_schema.tables WHERE table_name='matched_locations'
+            `);
+            if (checkMatchedTable.rowCount === 0) {
+                console.log('Migrating database: Creating "matched_locations" table...');
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS matched_locations (
+                        id SERIAL PRIMARY KEY,
+                        location_id INTEGER REFERENCES locations(id) ON DELETE SET NULL,
+                        trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
+                        geom GEOGRAPHY(Point, 4326),
+                        latitude FLOAT NOT NULL,
+                        longitude FLOAT NOT NULL,
+                        speed FLOAT,
+                        match_confidence FLOAT,
+                        waypoint_index INTEGER,
+                        road_name VARCHAR(255),
+                        is_interpolated BOOLEAN DEFAULT FALSE,
+                        timestamp BIGINT NOT NULL,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+                await client.query('CREATE INDEX IF NOT EXISTS idx_matched_locations_trip_id ON matched_locations (trip_id)');
+                await client.query('CREATE INDEX IF NOT EXISTS idx_matched_locations_time ON matched_locations (timestamp ASC)');
+            }
+
+            console.log('Database schema (Worker) sync completed.');
             return; // Success
         } catch (err) {
             retries++;

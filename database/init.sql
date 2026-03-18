@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS locations (
     speed FLOAT,
     accuracy FLOAT,
     state VARCHAR(30) DEFAULT 'SIN_MOVIMIENTO',
+    is_matched BOOLEAN DEFAULT FALSE,
     timestamp BIGINT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(employee_id, timestamp)
@@ -56,6 +57,27 @@ CREATE TABLE IF NOT EXISTS locations (
 CREATE INDEX IF NOT EXISTS idx_locations_geom ON locations USING GIST (geom);
 CREATE INDEX IF NOT EXISTS idx_locations_emp_time ON locations (employee_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_locations_trip_id ON locations (trip_id);
+CREATE INDEX IF NOT EXISTS idx_locations_is_matched ON locations (is_matched) WHERE is_matched = FALSE;
+
+-- Matched Locations (Cleaned/Smoothed Road Points)
+CREATE TABLE IF NOT EXISTS matched_locations (
+    id SERIAL PRIMARY KEY,
+    location_id INTEGER REFERENCES locations(id) ON DELETE SET NULL,
+    trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
+    geom GEOGRAPHY(Point, 4326),
+    latitude FLOAT NOT NULL,
+    longitude FLOAT NOT NULL,
+    speed FLOAT,
+    match_confidence FLOAT,
+    waypoint_index INTEGER,
+    road_name VARCHAR(255),
+    is_interpolated BOOLEAN DEFAULT FALSE,
+    timestamp BIGINT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_matched_locations_trip_id ON matched_locations (trip_id);
+CREATE INDEX IF NOT EXISTS idx_matched_locations_time ON matched_locations (timestamp ASC);
 
 -- Stops table
 CREATE TABLE IF NOT EXISTS stops (
