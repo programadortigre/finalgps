@@ -123,7 +123,7 @@ router.post('/batch', auth, async (req, res) => {
     // 🧠 APLICAR FILTRO KALMAN (Persistente por empleado en Redis)
     const filterKey = `kalman:employee:${employeeId}`;
     const locationFilter = new LocationKalmanFilter(0, 0, 50); // Valores dummy iniciales
-    
+
     try {
         const savedStateJson = await redis.get(filterKey);
         if (savedStateJson) {
@@ -140,13 +140,23 @@ router.post('/batch', auth, async (req, res) => {
     /// FILTRADO Y SUAVIZADO DE PUNTOS
     /// ========================================================================
     for (const point of points) {
-        // 🔴 VALIDACIÓN 1: Accuracy > 50m → RECHAZAR (GPS ruido)
-        if (point.accuracy !== undefined && point.accuracy > ACCURACY_THRESHOLD) {
+        // ✅ FILTRO INTELIGENTE: Marcar calidad, no descartar
+        if (point.accuracy !== undefined) {
+            if (point.accuracy > 80) {
+                point.quality = "low";
+            } else if (point.accuracy > 50) {
+                point.quality = "medium";
+            } else {
+                point.quality = "high";
+            }
+        } else {
+            point.quality = "unknown";
+        }
+        // Guardar todos los puntos, pero loguear si la calidad es baja
+        if (point.quality === "low") {
             console.log(
-                `[FILTER] Point rejected: accuracy=${point.accuracy}m > ${ACCURACY_THRESHOLD}m`
+                `[FILTER] Point marked as LOW quality: accuracy=${point.accuracy}m`
             );
-            filtered++;
-            continue;
         }
 
         // 🔴 VALIDACIÓN 2: Coordenadas inválidas
@@ -178,7 +188,7 @@ router.post('/batch', auth, async (req, res) => {
                 lastValidPoint.lat, lastValidPoint.lng,
                 point.lat, point.lng
             );
-            
+
             if (distance < DISTANCE_THRESHOLD) {
                 console.log(
                     `[FILTER] Point ignored: distance=${distance.toFixed(1)}m < ${DISTANCE_THRESHOLD}m (duplicate)`
@@ -191,7 +201,7 @@ router.post('/batch', auth, async (req, res) => {
             const timeDiffSec = (point.timestamp - lastValidPoint.timestamp) / 1000;
             if (timeDiffSec > 0) {
                 const calculatedSpeedKmh = (distance / timeDiffSec) * 3.6;
-                
+
                 // Rechazar si la velocidad calculada es irreal (> 180 km/h)
                 if (calculatedSpeedKmh > MAX_SPEED_KMH) {
                     console.log(
@@ -250,12 +260,13 @@ router.post('/batch', auth, async (req, res) => {
     }
 
     if (filteredPoints.length === 0) {
-        // Todos los puntos fueron filtrados
+        // Solo marcar como OFFLINE si no hay datos en absoluto
+        // Si hay puntos pero todos son de baja calidad, igual se consideran "online" pero con baja calidad
         return res.status(202).json({
             status: 'queued',
             inserted: 0,
             filtered: filtered,
-            message: 'All points were filtered out (GPS noise or duplicates)'
+            message: 'No data points received (completamente offline o sin datos)'
         });
     }
 
