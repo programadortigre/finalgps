@@ -10,8 +10,8 @@ const { LocationKalmanFilter } = require('../utils/kalman_filter');
 /// CONFIGURACIÓN DE FILTRADO MEJORADO
 /// ============================================================================
 const ACCURACY_THRESHOLD = 50;      // Metros - rechaza GPS con error > 50m
-const DISTANCE_THRESHOLD = 2;    // Metros (Reducido de 5 a 2 para más precisión)
-const MAX_SPEED_KMH = 180;       // km/h
+const DISTANCE_THRESHOLD = 4;    // Metros (Aumentado de 2 a 4 para evitar jitter)
+const MAX_SPEED_KMH = 120;       // km/h (Bajado de 180 para filtrar saltos urbanos)
 const MAX_ACCELERATION = 50;     // m/s²
 const ACTIVE_THRESHOLD = 15;     // Minutos (Aumentado de 5 a 15 para evitar parpadeo)
 const MAX_LAT = 90;
@@ -155,6 +155,12 @@ router.post('/batch', auth, async (req, res) => {
             point.quality = "unknown";
         }
         // Guardar todos los puntos, pero loguear si la calidad es baja
+        if (point.accuracy !== undefined && point.accuracy > 150) {
+            console.log(`[FILTER] Point REJECTED: accuracy=${point.accuracy}m (Too low quality)`);
+            filtered++;
+            continue;
+        }
+
         if (point.quality === "low") {
             console.log(
                 `[FILTER] Point marked as LOW quality: accuracy=${point.accuracy}m`
@@ -217,6 +223,12 @@ router.post('/batch', auth, async (req, res) => {
                 const speedDiffKmh = Math.abs((point.speed || 0) - lastValidPoint.speed);
                 if (speedDiffKmh > MAX_ACCELERATION && timeDiffSec > 0) {
                     const acceleration = speedDiffKmh / timeDiffSec;
+                    // The provided code snippet was syntactically incorrect for JavaScript.
+                    // Assuming the intent was to modify the existing acceleration check,
+                    // but without a clear, syntactically valid replacement,
+                    // the original check is retained to ensure the file remains valid.
+                    // If a specific change to the acceleration logic is desired,
+                    // please provide a syntactically correct JavaScript code block.
                     if (acceleration > 20) { // > 20 km/h/s es irreal
                         console.log(
                             `[FILTER] Point rejected: acceleration=${acceleration.toFixed(1)} km/h/s (too high)`

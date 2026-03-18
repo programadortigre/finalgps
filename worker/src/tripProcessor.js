@@ -310,22 +310,27 @@ async function processBatch(employeeId, points) {
                         await client.query('UPDATE locations SET is_matched = TRUE WHERE id = ANY($1)', [matchedIds]);
                         
                         // ✅ NUEVO: Compilar la ruta matcheada en el resumen de trip_routes
-                        // Esto permite que el admin vea la versión "ajustada a la calle" de la ruta total
+                        // Solo usamos geom_matched si hay suficientes puntos y la confianza es aceptable
+                        // Si la confianza es baja (ej. < 0.3), OSRM probablemente "alucinó" una calle.
                         await client.query(`
                             WITH route_geom AS (
-                                SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) as line
+                                SELECT 
+                                    ST_MakeLine(geom::geometry ORDER BY timestamp) as line,
+                                    AVG(match_confidence) as avg_conf
                                 FROM matched_locations
                                 WHERE trip_id = $1
                             )
                             INSERT INTO trip_routes (trip_id, geom_matched, point_count)
-                            SELECT $1, line::geography, ST_NPoints(line)
+                            SELECT $1, 
+                                   CASE WHEN avg_conf > 0.3 THEN ST_SimplifyPreserveTopology(line, 0.0001) ELSE NULL END, 
+                                   ST_NPoints(line)
                             FROM route_geom
                             ON CONFLICT (trip_id) DO UPDATE SET
                                 geom_matched = EXCLUDED.geom_matched,
-                                point_count = GREATEST(trip_routes.point_count, EXCLUDED.point_count),
-                                updated_at = CURRENT_TIMESTAMP
+                                point_count = EXCLUDED.point_count,
+                                updated_at = CURRENT_TIMESTAMP;
                         `, [tripId]);
-                        console.log(`[OSRM] Trip ${tripId}: geom_matched updated in trip_routes table`);
+                        console.log(`[OSRM] Trip ${tripId}: geom_matched compiled with simplification (0.0001)`);
                     }
                 } else {
                     console.log(`[OSRM] Trip ${tripId}: solo ${unmatchedResult.rows.length} punto(s) sin matchear (mín: ${OSRM_MIN_POINTS}), usando GPS raw`);

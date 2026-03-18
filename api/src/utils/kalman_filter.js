@@ -6,7 +6,7 @@ class KalmanFilter {
   constructor(initialValue = 0, gpsAccuracy = 50) {
     this.estimate = initialValue;
     this.errorEstimate = 1.0;
-    this.q = 0.005; // Process noise (movimiento del objeto)
+    this.q = 0.01; // Process noise (Aumentado de 0.005 para seguir giros reales mejor)
     this.r = Math.max(0.01, (gpsAccuracy / 100).toFixed(2)); // Measurement noise
   }
 
