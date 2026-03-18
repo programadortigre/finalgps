@@ -444,6 +444,28 @@ async function syncSchema() {
                 await client.query('CREATE INDEX IF NOT EXISTS idx_matched_locations_trip_id ON matched_locations (trip_id)');
                 await client.query('CREATE INDEX IF NOT EXISTS idx_matched_locations_time ON matched_locations (timestamp ASC)');
             }
+            
+            // 4. Check for 'source' column in 'stops'
+            const checkSource = await client.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='stops' AND column_name='source';
+            `);
+            if (checkSource.rowCount === 0) {
+                console.log('Migrating database: Adding "source" column to "stops"...');
+                await client.query('ALTER TABLE stops ADD COLUMN source VARCHAR(10) DEFAULT \'auto\'');
+            }
+
+            // 5. Check for 'geom_raw' in 'trip_routes'
+            const checkRaw = await client.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='trip_routes' AND column_name='geom_raw';
+            `);
+            if (checkRaw.rowCount === 0) {
+                console.log('Migrating database: Adding "geom_raw" column to "trip_routes"...');
+                await client.query('ALTER TABLE trip_routes ADD COLUMN geom_raw GEOGRAPHY(LineString, 4326)');
+                await client.query('ALTER TABLE trip_routes ADD COLUMN IF NOT EXISTS point_count_matched INTEGER DEFAULT 0');
+                await client.query('ALTER TABLE trip_routes ADD COLUMN IF NOT EXISTS match_confidence FLOAT DEFAULT 0');
+            }
 
             console.log('Database schema (Worker) sync completed.');
             return; // Success

@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS stops (
     start_time TIMESTAMP WITH TIME ZONE NOT NULL,
     end_time TIMESTAMP WITH TIME ZONE,
     duration_seconds INTEGER,
+    source VARCHAR(10) DEFAULT 'auto',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

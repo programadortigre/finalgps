@@ -1,30 +1,42 @@
 async function detectStops(client, tripId, employeeId) {
-    const DISTANCE_THRESHOLD = 15;      // metros para asignar un punto al cluster actual
-    const MIN_DURATION_MS = 20 * 1000;  // FIX: 20s (era 25s) — capta paradas más cortas
-    const MAX_SPREAD = 20;              // máxima dispersión del cluster en metros
-    const MIN_SPEED_KMH = 3.5;          // velocidad promedio máxima para considerar parada
+    const MIN_DURATION_MS = 25 * 1000;  // 25s mínimo
+    const MAX_SPREAD = 20;              // metros de radio máximo para un cluster
+    const MAX_JUMP_M = 100;             // metros para filtrar puntos "locos"
+    const MAX_SPEED_KMH = 3.5;          // velocidad base para parada
 
-    // ✅ Usar puntos MATCHED si existen (ya están suavizados), si no, usar RAW
+    // 1. Obtener puntos (Matched > Raw)
     const matchedCount = await client.query('SELECT count(*) FROM matched_locations WHERE trip_id = $1', [tripId]);
-    let query;
-    if (parseInt(matchedCount.rows[0].count) > 0) {
-        query = 'SELECT id, latitude, longitude, speed, timestamp FROM matched_locations WHERE trip_id = $1 ORDER BY timestamp ASC';
-    } else {
-        query = 'SELECT id, latitude, longitude, speed, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp ASC';
-    }
+    const query = parseInt(matchedCount.rows[0].count) > 0
+        ? 'SELECT id, latitude, longitude, speed, timestamp FROM matched_locations WHERE trip_id = $1 ORDER BY timestamp ASC'
+        : 'SELECT id, latitude, longitude, speed, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp ASC';
 
     const res = await client.query(query, [tripId]);
+    let rawPoints = res.rows;
 
-    const points = res.rows;
-    if (points.length < 3) {
-        // ⚡ REDUCIDO de 5 a 3 puntos mínimos - detecta paradas con pocos datos
-        return;
+    if (rawPoints.length < 3) return;
+
+    // 2. Pre-procesamiento: Casteo de tipos y Filtro de Saltos (Anti-Jumps)
+    const points = [];
+    for (let i = 0; i < rawPoints.length; i++) {
+        const p = rawPoints[i];
+        p.timestamp = parseInt(p.timestamp);
+        p.latitude = parseFloat(p.latitude);
+        p.longitude = parseFloat(p.longitude);
+
+        if (i > 0) {
+            const jumpDist = haversineDistance(rawPoints[i-1].latitude, rawPoints[i-1].longitude, p.latitude, p.longitude);
+            if (jumpDist > MAX_JUMP_M) {
+                console.log(`[STOP-FILTER] Skipping jump of ${jumpDist.toFixed(1)}m for trip ${tripId}`);
+                continue;
+            }
+        }
+        points.push(p);
     }
 
-    // ✅ Eliminar paradas previas para recalcular desde cero
-    await client.query('DELETE FROM stops WHERE trip_id = $1', [tripId]);
+    // 3. Limpieza de paradas anteriores (solo automáticas)
+    await client.query("DELETE FROM stops WHERE trip_id = $1 AND source = 'auto'", [tripId]);
 
-    // ⚡ ALGORITMO MEJORADO: Agrupar por proximidad con validación de velocidad
+    // 4. Clustering Pro: Agrupación por dispersión máxima
     let clusters = [];
     let currentCluster = null;
 
@@ -32,45 +44,28 @@ async function detectStops(client, tripId, employeeId) {
         const p = points[i];
 
         if (!currentCluster) {
-            // Iniciar nuevo cluster
             currentCluster = {
-                startIdx: i,
                 startTime: p.timestamp,
                 points: [p],
                 center: { lat: p.latitude, lng: p.longitude },
                 maxDistance: 0
             };
         } else {
-            // Calcular distancia al centro del cluster actual
-            const dist = haversineDistance(
-                currentCluster.center.lat,
-                currentCluster.center.lng,
-                p.latitude,
-                p.longitude
-            );
+            const dist = haversineDistance(currentCluster.center.lat, currentCluster.center.lng, p.latitude, p.longitude);
 
-            // ⚡ NUEVA VALIDACIÓN: verificar dispersión máxima del cluster
-            if (dist <= DISTANCE_THRESHOLD && dist <= MAX_SPREAD) {
-                // Punto pertenece al cluster, agregarlo
+            if (dist <= MAX_SPREAD) {
                 currentCluster.points.push(p);
                 currentCluster.maxDistance = Math.max(currentCluster.maxDistance, dist);
-
-                // ✅ Actualizar centro del cluster (centroide dinámico)
+                
+                // Actualizar centroide dinámico
                 let sumLat = 0, sumLng = 0;
-                currentCluster.points.forEach(pt => {
-                    sumLat += pt.latitude;
-                    sumLng += pt.longitude;
-                });
+                currentCluster.points.forEach(pt => { sumLat += pt.latitude; sumLng += pt.longitude; });
                 currentCluster.center.lat = sumLat / currentCluster.points.length;
                 currentCluster.center.lng = sumLng / currentCluster.points.length;
             } else {
-                // Punto está lejos → cerrar cluster y empezar uno nuevo
-                currentCluster.endIdx = i - 1;
                 currentCluster.endTime = points[i - 1].timestamp;
                 clusters.push(currentCluster);
-
                 currentCluster = {
-                    startIdx: i,
                     startTime: p.timestamp,
                     points: [p],
                     center: { lat: p.latitude, lng: p.longitude },
@@ -79,79 +74,57 @@ async function detectStops(client, tripId, employeeId) {
             }
         }
     }
-
-    // ✅ Cerrar el último cluster
     if (currentCluster) {
-        currentCluster.endIdx = points.length - 1;
         currentCluster.endTime = points[points.length - 1].timestamp;
         clusters.push(currentCluster);
     }
 
-    // ⚡ FILTRAR CLUSTERS: validar duración, velocidad y coherencia
+    // 5. Validación PRO por Scoring
     let stopsCount = 0;
-
     for (const cluster of clusters) {
         const duration = cluster.endTime - cluster.startTime;
+        if (duration < MIN_DURATION_MS) continue;
 
-        // ⚡ Validación 1: Duración mínima (25 segundos)
-        if (duration < MIN_DURATION_MS) {
-            continue;
-        }
-
-        // FIX: Recalcular velocidad desde distancia/tiempo entre puntos consecutivos.
-        // El campo `speed` heredado puede ser incorrecto si OSRM reposicionó el punto
-        // pero el valor de velocidad original permaneció del punto GPS crudo.
+        // Calcular velocidad real (distancia recorrida / tiempo)
         let totalDistM = 0;
         let totalTimeS = 0;
         for (let i = 1; i < cluster.points.length; i++) {
-            const pa = cluster.points[i - 1];
-            const pb = cluster.points[i];
-            totalDistM += haversineDistance(pa.latitude, pa.longitude, pb.latitude, pb.longitude);
-            const dt = (parseInt(pb.timestamp) - parseInt(pa.timestamp)) / 1000;
+            totalDistM += haversineDistance(cluster.points[i-1].latitude, cluster.points[i-1].longitude, cluster.points[i].latitude, cluster.points[i].longitude);
+            const dt = (cluster.points[i].timestamp - cluster.points[i-1].timestamp) / 1000;
             if (dt > 0) totalTimeS += dt;
         }
         const avgSpeedKmh = totalTimeS > 0 ? (totalDistM / totalTimeS) * 3.6 : 0;
 
-        if (avgSpeedKmh > MIN_SPEED_KMH) {
-            console.log(
-                `[STOP-SKIP] Trip ${tripId}: cluster rechazado por velocidad (${avgSpeedKmh.toFixed(1)} km/h calculada en ${totalDistM.toFixed(1)}m / ${totalTimeS.toFixed(1)}s)`
-            );
+        // SISTEMA DE PUNTUACIÓN (SCORE)
+        let score = 0;
+        if (duration > 40000) score++; // Bonus por duración larga (>40s)
+        
+        // Regla de Micro-movimientos: si es compacto (<10m), permitimos vel. hasta 6km/h
+        const limitSpeed = cluster.maxDistance < 10 ? 6.0 : MAX_SPEED_KMH;
+        if (avgSpeedKmh <= limitSpeed) score++;
+        
+        if (cluster.maxDistance < 15) score++; // Bonus por ser muy estático
+
+        // Confirmar si score >= 2 (Nivel Pro)
+        if (score < 2) {
+            console.log(`[STOP-SKIP] Trip ${tripId}: Cluster con score ${score} rechazado (vel=${avgSpeedKmh.toFixed(1)}, radio=${cluster.maxDistance.toFixed(1)}m)`);
             continue;
         }
 
-        // ⚡ Validación 3: Dispersión del cluster dentro de límite
-        if (cluster.maxDistance > MAX_SPREAD) {
-            console.log(
-                `[STOP-SKIP] Trip ${tripId}: cluster rechazado por dispersión (${cluster.maxDistance.toFixed(1)}m > ${MAX_SPREAD}m)`
-            );
-            continue;
-        }
-
-        // ✅ CLUSTER VÁLIDO: Insertar parada en BD
-        const durationSeconds = Math.floor(duration / 1000);
-        const centerLat = cluster.center.lat;
-        const centerLng = cluster.center.lng;
-
+        // 6. Guardar Parada Confirmada
         try {
             await client.query(
-                `INSERT INTO stops (trip_id, employee_id, latitude, longitude, start_time, end_time, duration_seconds, geom)
-                 VALUES ($1, $2, $3, $4, to_timestamp($5/1000.0), to_timestamp($6/1000.0), $7, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)`,
-                [tripId, employeeId, centerLat, centerLng, cluster.startTime, cluster.endTime, durationSeconds]
+                `INSERT INTO stops (trip_id, employee_id, latitude, longitude, start_time, end_time, duration_seconds, source, geom)
+                 VALUES ($1, $2, $3, $4, to_timestamp($5/1000.0), to_timestamp($6/1000.0), $7, 'auto', ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)`,
+                [tripId, employeeId, cluster.center.lat, cluster.center.lng, cluster.startTime, cluster.endTime, Math.floor(duration/1000)]
             );
-
             stopsCount++;
-
-            console.log(
-                `[STOP] Trip ${tripId}: parada de ${(duration / 1000 / 60).toFixed(1)} min ` +
-                `en (${centerLat.toFixed(4)}, ${centerLng.toFixed(4)}) - ${cluster.points.length} puntos, ` +
-                `vel.prom: ${avgSpeedKmh.toFixed(1)} km/h, disp: ${cluster.maxDistance.toFixed(1)}m`
-            );
         } catch (err) {
-            console.error(`[ERROR] Failed to insert stop for trip ${tripId}:`, err.message);
+            console.error(`[ERROR] Save stop failed:`, err.message);
         }
     }
 
-    console.log(`[STOPS] Trip ${tripId}: detectadas ${stopsCount} paradas válidas de ${clusters.length} clusters totales`);
+    console.log(`[STOPS-PRO] Trip ${tripId}: ${stopsCount} paradas confirmadas via Scoring System.`);
 }
 
 /// ✅ Calcular distancia en metros entre dos puntos usando Haversine
