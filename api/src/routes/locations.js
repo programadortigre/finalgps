@@ -346,6 +346,7 @@ router.post('/status', auth, async (req, res) => {
 
             let updateData = {
                 employeeId,
+                name: req.user.name,
                 state,
                 timestamp: Date.now()
             };

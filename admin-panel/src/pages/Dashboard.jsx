@@ -28,9 +28,14 @@ const Dashboard = ({ user, onLogout }) => {
         socket.emit('join_admins', { id: adminId, name: adminName });
 
         socket.on('location_update', (data) => {
+            if (!data.employeeId) return;
             setActiveLocations(prev => ({
                 ...prev,
-                [data.employeeId]: { ...data, lastUpdate: new Date().toISOString() }
+                [data.employeeId]: { 
+                    ...(prev[data.employeeId] || {}), 
+                    ...data, 
+                    lastUpdate: new Date().toISOString() 
+                }
             }));
             // Mark as live active when receiving real-time update
             setLiveActiveIds(prev => new Set([...prev, data.employeeId]));
