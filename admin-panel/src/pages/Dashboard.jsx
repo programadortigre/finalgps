@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Menu, X, Activity, History, Users, Search, ChevronDown, Power, PowerOff } from 'lucide-react';
+import { LogOut, Menu, X, Activity, History, Users, Search, ChevronDown, Power, PowerOff, Radar, RefreshCw } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
 import HistoryView from './History';
@@ -107,20 +107,34 @@ const Dashboard = ({ user, onLogout }) => {
             console.error('Error toggling tracking', e);
             alert('Error al cambiar estado de rastreo');
         }
+    };    const activeCount = liveActiveIds.size; // COUNT ONLY LIVE ACTIVE users (last 5 min)
+
+    const requestLocate = (e, employeeId) => {
+        e.stopPropagation();
+        const adminId = user.user?.id || user.id;
+        socket.emit('admin_request_location', { employeeId, adminId });
+        console.log(`Requested location for ${employeeId}`);
     };
 
-    const activeCount = liveActiveIds.size; // COUNT ONLY LIVE ACTIVE users (last 5 min)
-
-    const filteredLiveLocations = Object.values(activeLocations).filter(loc => {
-        // In LIVE view, only show users active in last 5 minutes
-        const isLiveActive = liveActiveIds.has(loc.employeeId);
-        if (view === 'live' && !isLiveActive) return false;
+    // Merge employees with their latest status for the sidebar
+    const vendorsWithStatus = employees.map(emp => {
+        const loc = activeLocations[emp.id];
+        const isLive = liveActiveIds.has(emp.id);
+        const matchesSearch = emp.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                             `Vendedor ${emp.id}`.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesStatus = selectedStatus === 'all' || (loc && loc.state === selectedStatus);
         
-        const matchesSearch = loc.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                              `Vendedor ${loc.employeeId}`.toLowerCase().includes(searchQuery.toLowerCase());
-        const matchesStatus = selectedStatus === 'all' || loc.state === selectedStatus;
-        return matchesSearch && matchesStatus;
+        return {
+            ...emp,
+            status: loc?.state || 'OFFLINE',
+            lastUpdate: loc?.lastUpdate || null,
+            speed: loc?.speed || 0,
+            isLive,
+            isVisible: matchesSearch && matchesStatus
+        };
     });
+
+    const filteredVendors = vendorsWithStatus.filter(v => v.isVisible);
 
     // Calculate stats only for LIVE active users
     const liveActiveLocations = Object.values(activeLocations).filter(loc => liveActiveIds.has(loc.employeeId));
@@ -311,56 +325,63 @@ const Dashboard = ({ user, onLogout }) => {
 
                                 {/* Live List */}
                                 <div className="flex-1 overflow-y-auto space-y-2">
-                                    {filteredLiveLocations.length === 0 ? (
+                                    {filteredVendors.length === 0 ? (
                                         <div className="text-center py-8">
-                                            <p className="text-slate-500 text-sm">{activeCount === 0 ? 'No hay rastreos activos' : 'Sin coincidencias'}</p>
+                                            <p className="text-slate-500 text-sm">Sin coincidencias</p>
                                         </div>
                                     ) : (
-                                        filteredLiveLocations.map(loc => (
+                                        filteredVendors.map(vendor => (
                                             <div
-                                                key={loc.employeeId}
+                                                key={vendor.id}
                                                 onClick={() => {
-                                                    setSelectedEmployee(selectedEmployee?.id === loc.employeeId ? null : { id: loc.employeeId, name: loc.name });
+                                                    setSelectedEmployee(selectedEmployee?.id === vendor.id ? null : vendor);
                                                     isMobile && setSidebarOpen(false);
                                                 }}
                                                 className={`p-3 rounded-lg cursor-pointer transition-all border group ${
-                                                    selectedEmployee?.id === loc.employeeId
+                                                    selectedEmployee?.id === vendor.id
                                                         ? 'bg-primary-600/20 border-primary-500/30'
                                                         : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10'
                                                 }`}
                                             >
                                                 <div className="flex items-center gap-2 mb-2">
                                                     <span className={`w-2.5 h-2.5 rounded-full ${
-                                                        (loc.state === 'En auto' || loc.state === 'VEHICULO' || loc.state === 'DRIVING') 
-                                                            ? 'bg-indigo-400 shadow-lg shadow-indigo-400/50' 
-                                                            : (loc.state === 'A pie' || loc.state === 'CAMINANDO' || loc.state === 'WALKING')
-                                                            ? 'bg-green-400 shadow-lg shadow-green-400/50'
-                                                            : (loc.state === 'Quieto' || loc.state === 'SIN_MOVIMIENTO' || loc.state === 'STOPPED' || loc.state === 'DEEP_SLEEP')
-                                                            ? 'bg-slate-500 shadow-lg shadow-slate-400/30'
-                                                            : 'bg-amber-400 shadow-lg shadow-amber-400/50'
+                                                        vendor.isLive ? 'bg-green-400 shadow-lg shadow-green-400/50 animate-pulse' :
+                                                        (vendor.status === 'OFFLINE' ? 'bg-slate-700' : 'bg-slate-500')
                                                      }`} />
-                                                    <span className="font-medium text-sm flex-1 group-hover:text-primary-300">{loc.name || `Vendedor ${loc.employeeId}`}</span>
+                                                    <span className="font-medium text-sm flex-1 group-hover:text-primary-300">{vendor.name}</span>
                                                     
+                                                    {/* Locate Now Button */}
+                                                    <button 
+                                                        onClick={(e) => requestLocate(e, vendor.id)}
+                                                        className="p-1.5 rounded-lg text-primary-400 hover:bg-primary-500/20 transition-all"
+                                                        title="Localizar ahora"
+                                                    >
+                                                        <Radar size={14} />
+                                                    </button>
+
                                                     {/* Quick Control */}
                                                     <button 
-                                                        onClick={(e) => toggleTracking(e, loc.employeeId, employees.find(emp => emp.id === loc.employeeId)?.is_tracking_enabled ?? true)}
+                                                        onClick={(e) => toggleTracking(e, vendor.id, vendor.is_tracking_enabled ?? true)}
                                                         className={`p-1.5 rounded-lg transition-all ${
-                                                            (employees.find(emp => emp.id === loc.employeeId)?.is_tracking_enabled ?? true)
+                                                            (vendor.is_tracking_enabled ?? true)
                                                                 ? 'text-green-400 hover:bg-green-500/20'
                                                                 : 'text-slate-500 hover:bg-slate-500/20'
                                                         }`}
-                                                        title={employees.find(emp => emp.id === loc.employeeId)?.is_tracking_enabled === false ? "Activar Rastreo" : "Desactivar Rastreo"}
+                                                        title={vendor.is_tracking_enabled === false ? "Activar Rastreo" : "Desactivar Rastreo"}
                                                     >
-                                                        {(employees.find(emp => emp.id === loc.employeeId)?.is_tracking_enabled ?? true) ? <Power size={14} /> : <PowerOff size={14} />}
+                                                        {(vendor.is_tracking_enabled ?? true) ? <Power size={14} /> : <PowerOff size={14} />}
                                                     </button>
                                                 </div>
-                                                <div className="text-xs text-slate-400 space-y-1 pl-5">
-                                                    <div className="flex justify-between">
-                                                        <span>⚡ {loc.speed ? (loc.speed.toFixed(1) + ' km/h') : 'Inmóvil'}</span>
+                                                <div className="text-xs text-slate-400 space-y-1 pl-5 flex justify-between items-end">
+                                                    <div className="space-y-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-[10px] opacity-70">⚡ {vendor.speed ? (vendor.speed.toFixed(1) + ' km/h') : '---'}</span>
+                                                        </div>
+                                                        <div className="text-slate-500">
+                                                            {vendor.lastUpdate ? new Date(vendor.lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Offline'}
+                                                        </div>
                                                     </div>
-                                                    <div className="text-slate-500">
-                                                        {loc.lastUpdate ? new Date(loc.lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '---'}
-                                                    </div>
+                                                    {vendor.isLive && <span className="text-[9px] text-green-500 font-bold uppercase tracking-wider">Live</span>}
                                                 </div>
                                             </div>
                                         ))
@@ -415,7 +436,7 @@ const Dashboard = ({ user, onLogout }) => {
                         <MapView
                             view={view}
                             selectedEmployee={selectedEmployee}
-                            activeLocations={view === 'live' ? Object.fromEntries(filteredLiveLocations.map(loc => [loc.employeeId, loc])) : activeLocations}
+                            activeLocations={activeLocations}
                         />
                     )}
                 </main>

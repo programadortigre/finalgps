@@ -77,6 +77,18 @@ const initSocket = (server) => {
             console.log(`[Socket] User joined room: ${room}`);
         });
 
+        // ✅ Admin solicita ubicación en tiempo real de un empleado específico
+        socket.on('admin_request_location', (data) => {
+            const { employeeId, adminId } = data;
+            console.log(`[Socket] Admin ${adminId} requesting location for employee ${employeeId}`);
+            
+            // Reenviar a la sala del empleado
+            io.to(`user:${employeeId}`).emit('request_current_location', {
+                requestedBy: adminId,
+                timestamp: new Date()
+            });
+        });
+
         // Desconexión
         socket.on('disconnect', () => {
             console.log(`[Socket] User disconnected: ${socket.id}`);
