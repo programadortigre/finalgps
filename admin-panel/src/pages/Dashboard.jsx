@@ -388,14 +388,14 @@ const Dashboard = ({ user, onLogout }) => {
                                                              {vendor.lastUpdate && (
                                                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 font-medium ${
                                                                      vendor.is_stale ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' :
-                                                                     vendor.state === 'GPS_OFF' ? 'bg-red-600 text-white font-bold animate-pulse' :
+                                                                     vendor.status === 'GPS_OFF' ? 'bg-red-600 text-white font-bold animate-pulse' :
                                                                      vendor.reset_reason && vendor.reset_reason.includes('recovery') ? 'bg-blue-500/10 text-blue-400 animate-pulse' :
                                                                      (vendor.confidence || 1.0) >= 0.8 ? 'bg-green-500/10 text-green-400' :
                                                                      (vendor.confidence || 1.0) >= 0.4 ? 'bg-yellow-500/10 text-yellow-400' :
                                                                      'bg-red-500/10 text-red-400'
                                                                  }`}>
                                                                      {vendor.is_stale ? '⚠️ Desactualizado' : 
-                                                                      vendor.state === 'GPS_OFF' ? '⛔ GPS Apagado' :
+                                                                      vendor.status === 'GPS_OFF' ? '⛔ GPS Apagado' :
                                                                       vendor.reset_reason && vendor.reset_reason.includes('recovery') ? '🔄 Recuperando' :
                                                                       (vendor.confidence || 1.0) >= 0.8 ? '🟢 En Vivo' : 
                                                                       (vendor.confidence || 1.0) >= 0.4 ? '🟡 Baja Precisión' : '🔴 Sin GPS'}

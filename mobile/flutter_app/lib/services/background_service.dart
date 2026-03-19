@@ -601,7 +601,7 @@ class TrackingEngine {
       });
 
       // 5. Watchdog de Salud (GPS/Túneles)
-      _checkWatchdogHealth();
+      await _checkWatchdogHealth();
       
       // 6. Limpieza periódica (24h)
       if (_maintenanceTicks >= 1440) {
@@ -627,7 +627,7 @@ class TrackingEngine {
     }
   }
 
-  void _checkWatchdogHealth() {
+  Future<void> _checkWatchdogHealth() async {
     final now = DateTime.now();
     final diff = now.difference(_lastValidLocationTime).inSeconds;
     
@@ -645,6 +645,28 @@ class TrackingEngine {
     }
 
     // GPS Watchdog: si estamos en movimiento pero no recibimos nada
+    final rawDiff = now.difference(_lastRawTime).inSeconds;
+    if (rawDiff > watchdogThreshold && _currentState != TrackingState.DEEP_SLEEP && _currentState != TrackingState.STOPPED && _currentState != TrackingState.PAUSED) {
+      _log('WATCHDOG', 'Timeout detectado: ${rawDiff}s sin datos GPS (umbral: ${watchdogThreshold}s)');
+      _hardResetGPS(reason: 'watchdog_timeout');
+    }
+
+    // Deep Sleep: inactivo >3 min (Sleep Mode)
+    if (_currentState == TrackingState.STOPPED && diff > 180) {
+      _setState(TrackingState.DEEP_SLEEP, reason: 'Inactivity 3m (Sleep Mode)');
+      return;
+    }
+
+    // Refresh settings for Light Sleep (60s mark) 
+    if (_currentState == TrackingState.STOPPED && diff > 60 && !_isSleepModeActive) {
+      _log('WATCHDOG', 'Activando Light Sleep Mode (Inactividad >60s)');
+      _restartLocationStream(reason: 'Light Sleep Transition');
+    }
+
+    // No Signal: >5 min sin puntos válidos en estados de movimiento
+    if (diff > 300 && _currentState != TrackingState.DEEP_SLEEP && _currentState != TrackingState.STOPPED && _currentState != TrackingState.PAUSED) {
+      _setState(TrackingState.NO_SIGNAL, reason: 'No valid signal 5m');
+    }
   }
 
   // ✅ NUEVO: HARD RESET CON BACKOFF (Blindaje Anti-Caos)
@@ -677,24 +699,6 @@ class TrackingEngine {
     
     await Future.delayed(const Duration(milliseconds: 1500));
     _restartLocationStream(reason: 'Hard Reset ($reason)');
-  }
-
-    // Deep Sleep: inactivo >3 min (Sleep Mode)
-    if (_currentState == TrackingState.STOPPED && diff > 180) {
-      _setState(TrackingState.DEEP_SLEEP, reason: 'Inactivity 3m (Sleep Mode)');
-      return;
-    }
-
-    // Refresh settings for Light Sleep (60s mark) 
-    if (_currentState == TrackingState.STOPPED && diff > 60 && !_isSleepModeActive) {
-      _log('WATCHDOG', 'Activando Light Sleep Mode (Inactividad >60s)');
-      _restartLocationStream(reason: 'Light Sleep Transition');
-    }
-
-    // No Signal: >5 min sin puntos válidos en estados de movimiento
-    if (diff > 300 && _currentState != TrackingState.DEEP_SLEEP && _currentState != TrackingState.STOPPED && _currentState != TrackingState.PAUSED) {
-      _setState(TrackingState.NO_SIGNAL, reason: 'No valid signal 5m');
-    }
   }
 
   // ✅ NUEVO: Enviar heartbeat al servidor cuando el GPS falla pero el app está viva
