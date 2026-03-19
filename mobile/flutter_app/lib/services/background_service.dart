@@ -277,6 +277,13 @@ class TrackingEngine {
       _emitToSocket(_lastValidPoint!, manual: true);
     }
 
+    if (_serviceInstance is AndroidServiceInstance) {
+      (_serviceInstance as AndroidServiceInstance).setForegroundNotificationInfo(
+        title: '📍 LOCALIZANDO AHORA...',
+        content: 'El administrador ha solicitado tu ubicación exacta.',
+      );
+    }
+
     _isPriorityScanActive = true;
     _priorityScanTicks = 0;
 
@@ -369,6 +376,7 @@ class TrackingEngine {
         'accuracy': point.accuracy,
         'state': point.state,
         'timestamp': point.timestamp,
+        'employeeId': _cachedEmployeeId, // ✅ FIX: Missing ID
         'is_manual_request': manual,
         'battery': batteryLevel,
         'source': point.source ?? 'gps',
@@ -541,6 +549,10 @@ class TrackingEngine {
     if (_socket != null && !_socket!.connected) {
       _log('SOCKET', 'Watchdog: Socket detectado offline, intentando reconexión forzada...');
       _socket!.connect();
+      // ✅ Re-emitir join por seguridad
+      if (_cachedEmployeeId != null) {
+        _socket!.emit('join_employee', _cachedEmployeeId);
+      }
     }
 
     try {
@@ -556,26 +568,29 @@ class TrackingEngine {
         _syncLoop(reason: 'Maintenance Loop');
       }
 
-      // 4. Priority Scan Watchdog
+      // 4. Check for remote commands (Modo Despertar)
+      await _checkRemoteCommands();
+
+      // 5. Priority Scan Watchdog
       if (_isPriorityScanActive) {
         _priorityScanTicks++;
-        if (_priorityScanTicks >= 5) {
-          _log('GPS', 'Finalizando prioridad de escaneo (Timeout 5m)');
+        if (_priorityScanTicks >= 3) { // Reducido a 3m para ahorrar batería
+          _log('GPS', 'Finalizando prioridad de escaneo (Timeout 3m)');
           _isPriorityScanActive = false;
           _restartLocationStream(reason: 'End Priority Scan');
         }
       }
 
-      // 5. Emitter al UI (Menos frecuente para ahorrar CPU)
+      // 6. Emitter al UI (Menos frecuente para ahorrar CPU)
       _serviceInstance?.invoke('trackingState', {
         'is_active': true,
         'state': _currentState.name,
       });
 
-      // 5. Watchdog de Salud (GPS/Túneles)
+      // 7. Watchdog de Salud (GPS/Túneles)
       await _checkWatchdogHealth();
       
-      // 6. Limpieza periódica (24h)
+      // 8. Limpieza periódica (24h)
       if (_maintenanceTicks >= 1440) {
         _maintenanceTicks = 0;
         _storage.cleanOldSyncedPoints(daysToKeep: 7);
@@ -589,13 +604,34 @@ class TrackingEngine {
   Future<void> _updateBatteryAndThrottling() async {
     try {
       final level = await _battery.batteryLevel;
-      if (level < 20 && _currentState != TrackingState.BATT_SAVER && _currentState != TrackingState.PAUSED) {
-        _setState(TrackingState.BATT_SAVER, reason: 'Power Savings (<20%)');
-      } else if (level >= 30 && _currentState == TrackingState.BATT_SAVER) {
+      if (level < 25 && _currentState != TrackingState.BATT_SAVER && _currentState != TrackingState.PAUSED) {
+        _setState(TrackingState.BATT_SAVER, reason: 'Power Savings (<25%)');
+      } else if (level >= 35 && _currentState == TrackingState.BATT_SAVER) {
         _setState(TrackingState.STOPPED, reason: 'Battery recovered');
       }
     } catch (e) {
       _log('BATT', 'Sensor falló: $e');
+    }
+  }
+
+  // ✅ NUEVO: Consultar comandos pendientes (Modo Despertar)
+  Future<void> _checkRemoteCommands() async {
+    if (_currentState == TrackingState.PAUSED) return;
+    try {
+      final dio = await _api.getDio();
+      final token = await _api.getToken();
+      
+      final res = await dio.get(
+        '/api/employees/commands',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+
+      if (res.statusCode == 200 && res.data['command'] == 'locate') {
+        _log('POLLING', 'Comando manual detectado vía HTTP (Polling Fallback)');
+        handleRemoteLocationRequest();
+      }
+    } catch (e) {
+      _log('POLLING', 'Error consultando comandos: $e');
     }
   }
 
@@ -689,9 +725,10 @@ class TrackingEngine {
         'lng': useLng,
         'speed': 0,
         'accuracy': 999,
-        'state': isGpsEnabled ? 'NO_FIX' : 'GPS_OFF', // Diferenciar señal vs switch
+        'state': isGpsEnabled ? 'NO_FIX' : 'GPS_OFF',
         'timestamp': now,
         'reset_reason': reason,
+        'employeeId': _cachedEmployeeId, // ✅ FIX: Missing ID
         'source': isGpsEnabled ? 'heartbeat' : 'system_alert',
       };
       
@@ -745,39 +782,39 @@ class TrackingEngine {
         switch (_currentState) {
           case TrackingState.STOPPED:
             final secondsStationary = DateTime.now().difference(_lastStateChangeTime).inSeconds;
-            if (secondsStationary > 60) {
+            if (secondsStationary > 120) { // Aumentado a 2m para ahorro
               _isSleepModeActive = true;
-              intervalSec = 60;
-              distanceFilter = 15;
+              intervalSec = 120; // 2 minutos
+              distanceFilter = 20;
               accuracy = LocationAccuracy.low;
               _log('GPS', 'SLEEP MODE: Light Inactivity ($secondsStationary s)');
             } else {
               _isSleepModeActive = false;
-              intervalSec = 15;
-              distanceFilter = 5;
+              intervalSec = 30; // 15s -> 30s
+              distanceFilter = 10;
               accuracy = LocationAccuracy.medium;
             }
             break;
           case TrackingState.DEEP_SLEEP:
-            intervalSec = 300;
-            distanceFilter = 25;
-            accuracy = LocationAccuracy.medium;
+            intervalSec = 600; // 5m -> 10m
+            distanceFilter = 50;
+            accuracy = LocationAccuracy.low; // medium -> low
             break;
           case TrackingState.BATT_SAVER:
-            intervalSec = 120;
-            distanceFilter = 50;
-            accuracy = LocationAccuracy.medium;
+            intervalSec = 180; // 2m -> 3m
+            distanceFilter = 100;
+            accuracy = LocationAccuracy.low;
             break;
           case TrackingState.WALKING:
-            intervalSec = 5;
-            distanceFilter = 5;
+            intervalSec = 10; // 5s -> 10s
+            distanceFilter = 10;
             accuracy = LocationAccuracy.high;
             break;
           case TrackingState.DRIVING:
           default:
-            intervalSec = 3;
-            distanceFilter = 10;
-            accuracy = LocationAccuracy.best;
+            intervalSec = 5; // 3s -> 5s (Reduce calor)
+            distanceFilter = 15;
+            accuracy = LocationAccuracy.high; // best -> high
             break;
         }
 

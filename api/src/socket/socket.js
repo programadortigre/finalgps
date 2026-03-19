@@ -89,10 +89,17 @@ const initSocket = (server) => {
         });
 
         // ✅ Admin solicita ubicación en tiempo real de un empleado específico
-        socket.on('admin_request_location', (data) => {
+        socket.on('admin_request_location', async (data) => {
             const { employeeId, adminId } = data;
             console.log(`[Socket] Admin ${adminId} requesting location for employee ${employeeId}`);
             
+            // ✅ Guardar comando en DB para polling fallback (Modo Despertar)
+            const db = require('../db/postgres');
+            await db.query(
+                "UPDATE employees SET pending_command = 'locate' WHERE id = $1",
+                [employeeId]
+            );
+
             // Reenviar a la sala del empleado
             io.to(`user:${employeeId}`).emit('request_current_location', {
                 requestedBy: adminId,

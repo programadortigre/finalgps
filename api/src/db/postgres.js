@@ -23,7 +23,18 @@ async function syncSchema() {
             // Wait for PostgreSQL to be ready
             await pool.query('SELECT 1');
             
-            // Check if column exists
+            // Check if employees has pending_command
+            const checkCmdColumn = await pool.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='employees' AND column_name='pending_command';
+            `);
+
+            if (checkCmdColumn.rowCount === 0) {
+                logger.info('Migrating database: Adding "pending_command" column to "employees" table...');
+                await pool.query('ALTER TABLE employees ADD COLUMN pending_command VARCHAR(50);');
+            }
+
+            // Check if column exists in locations
             const checkColumn = await pool.query(`
                 SELECT 1 FROM information_schema.columns 
                 WHERE table_name='locations' AND column_name='state';

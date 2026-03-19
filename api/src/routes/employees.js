@@ -150,4 +150,29 @@ router.patch('/:id/tracking', auth, async (req, res) => {
     }
 });
 
+// GET /api/employees/commands — Poll for pending commands (Wake-up Mode)
+router.get('/commands', auth, async (req, res) => {
+    try {
+        const result = await db.query(
+            'SELECT pending_command FROM employees WHERE id = $1',
+            [req.user.id]
+        );
+        
+        const command = result.rows[0]?.pending_command;
+        
+        if (command) {
+            // Limpiar el comando inmediatamente (consumo)
+            await db.query(
+                'UPDATE employees SET pending_command = NULL WHERE id = $1',
+                [req.user.id]
+            );
+            return res.json({ command });
+        }
+        
+        res.json({ command: null });
+    } catch (err) {
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 module.exports = router;
