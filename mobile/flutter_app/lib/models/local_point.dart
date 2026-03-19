@@ -9,6 +9,7 @@ class LocalPoint {
   final String state;
   final bool synced;
   final int? employeeId;
+  final String? source; // ✅ NUEVO: gps, network, fused, heartbeat
 
   LocalPoint({
     this.id,
@@ -20,6 +21,7 @@ class LocalPoint {
     this.state = 'SIN_MOVIMIENTO',
     this.synced = false,
     this.employeeId,
+    this.source,
   });
 
   /// Convertir a Map para guardar en SQLite
@@ -33,12 +35,12 @@ class LocalPoint {
       'timestamp': timestamp,
       'state': state,
       'synced': synced ? 1 : 0,
-      'employeeId': employeeId,
+      'employee_id': employeeId,
+      'source': source,
     };
   }
 
   /// Crear desde Map (lectura de SQLite).
-  /// Nota: SQLite usa snake_case (employee_id), JSON API usa camelCase (employeeId).
   factory LocalPoint.fromMap(Map<String, dynamic> map) {
     return LocalPoint(
       id: map['id'] as int?,
@@ -49,8 +51,8 @@ class LocalPoint {
       timestamp: map['timestamp'] as int,
       state: map['state'] as String? ?? 'SIN_MOVIMIENTO',
       synced: map['synced'] != null ? (map['synced'] as int) == 1 : false,
-      // SQLite column es snake_case; camelCase como fallback para compatibilidad
       employeeId: (map['employee_id'] ?? map['employeeId']) as int?,
+      source: map['source'] as String?,
     );
   }
 
@@ -64,10 +66,11 @@ class LocalPoint {
       'timestamp': timestamp,
       'state': state,
       'employeeId': employeeId,
+      'source': source,
     };
   }
 
   @override
-  String toString() => 'LocalPoint(id: $id, lat: $lat, lng: $lng, '
+  String toString() => 'LocalPoint(id: $id, lat: $lat, lng: $lng, source: $source, '
       'speed: $speed, accuracy: $accuracy, timestamp: $timestamp, synced: $synced)';
 }

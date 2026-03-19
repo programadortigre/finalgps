@@ -22,7 +22,7 @@ class LocalStorage {
     final path = join(dbPath, _dbName);
     return openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -37,6 +37,7 @@ class LocalStorage {
         speed        REAL    NOT NULL,
         accuracy     REAL    NOT NULL,
         state        TEXT    DEFAULT "SIN_MOVIMIENTO",
+        source       TEXT,
         timestamp    INTEGER NOT NULL,
         synced       INTEGER DEFAULT 0,
         created_at   INTEGER DEFAULT 0,
@@ -57,12 +58,20 @@ class LocalStorage {
     }
     if (oldVersion < 4) {
       print('[STORAGE] Migración v4: Agregando columna employee_id');
-      // Agregar columna employee_id a instalaciones existentes
       try {
         await db.execute(
             'ALTER TABLE $_tableName ADD COLUMN employee_id INTEGER');
       } catch (e) {
         print('[STORAGE] v4 ignore: $e');
+      }
+    }
+    if (oldVersion < 5) {
+      print('[STORAGE] Migración v5: Agregando columna source');
+      try {
+        await db.execute(
+            'ALTER TABLE $_tableName ADD COLUMN source TEXT');
+      } catch (e) {
+        print('[STORAGE] v5 ignore: $e');
       }
     }
   }
@@ -93,6 +102,7 @@ class LocalStorage {
             'speed': point.speed,
             'accuracy': point.accuracy,
             'state': point.state,
+            'source': point.source,
             'timestamp': point.timestamp,
             'synced': 0,
             'created_at': DateTime.now().millisecondsSinceEpoch,
@@ -116,6 +126,7 @@ class LocalStorage {
         'speed': point.speed,
         'accuracy': point.accuracy,
         'state': point.state,
+        'source': point.source,
         'timestamp': point.timestamp,
         'synced': 0,
         'created_at': DateTime.now().millisecondsSinceEpoch,

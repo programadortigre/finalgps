@@ -40,7 +40,13 @@ router.get('/', auth, async (req, res) => {
                 COALESCE(l.accuracy, 99) as accuracy,
                 COALESCE(l.timestamp, EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000) as timestamp,
                 COALESCE(l.created_at, CURRENT_TIMESTAMP) as "lastUpdate",
-                COALESCE(l.state, 'OFFLINE') as state
+                COALESCE(l.state, 'OFFLINE') as state,
+                COALESCE(l.source, 'unknown') as source,
+                (CASE 
+                    WHEN (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000 - l.timestamp) > 600000 THEN true 
+                    ELSE false 
+                END) as is_stale,
+                COALESCE(l.confidence, 0.5) as confidence
             FROM employees e
             LEFT JOIN locations l ON e.id = l.employee_id
             WHERE e.role = 'employee'
@@ -74,7 +80,13 @@ router.get('/active', auth, async (req, res) => {
                 COALESCE(l.accuracy, 99) as accuracy,
                 COALESCE(l.timestamp, EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000) as timestamp,
                 COALESCE(l.created_at, CURRENT_TIMESTAMP) as "lastUpdate",
-                COALESCE(l.state, 'OFFLINE') as state
+                COALESCE(l.state, 'OFFLINE') as state,
+                COALESCE(l.source, 'unknown') as source,
+                (CASE 
+                    WHEN (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000 - l.timestamp) > 600000 THEN true 
+                    ELSE false 
+                END) as is_stale,
+                COALESCE(l.confidence, 0.5) as confidence
             FROM employees e
             INNER JOIN locations l ON e.id = l.employee_id
             WHERE e.role = 'employee' 
@@ -142,25 +154,39 @@ router.post('/batch', auth, async (req, res) => {
     /// FILTRADO Y SUAVIZADO DE PUNTOS
     /// ========================================================================
     for (const point of points) {
-        // Log detallado de cada punto recibido para depuración
-        console.log(`[BATCH][DETAIL] emp:${employeeId} lat:${point.lat} lng:${point.lng} acc:${point.accuracy} ts:${point.timestamp} speed:${point.speed}`);
-        // ✅ FILTRO INTELIGENTE: Marcar calidad, no descartar
-        if (point.accuracy !== undefined) {
-            if (point.accuracy > 80) {
-                point.quality = "low";
-            } else if (point.accuracy > 50) {
-                point.quality = "medium";
-            } else {
-                point.quality = "high";
-            }
-        } else {
-            point.quality = "unknown";
-        }
-        // Guardar todos los puntos, pero loguear si la calidad es baja
-        if (point.accuracy !== undefined && point.accuracy > 150) {
-            console.log(`[FILTER] Point REJECTED: accuracy=${point.accuracy}m (Too low quality)`);
+        // ✅ FILTRO INTELIGENTE PRO: No descartar puntos por precisión global exagerada
+        // Permitimos hasta 500m para "Live Status", pero marcamos calidad para "Trips"
+        const accuracy = point.accuracy || 999;
+        const state = point.state || 'UNKNOWN';
+        const eventType = point.event_type || (state === 'NO_FIX' ? 'NO_FIX' : 'LOCATION');
+        const source = point.source || (accuracy < 100 ? 'gps' : 'network');
+        const resetReason = point.reset_reason || null;
+
+        const quality = point.quality || (eventType === 'NO_FIX' || state === 'GPS_OFF' ? 'no_fix' : 'high');
+        
+        // ✅ CÁLCULO DE CONFIDENCE SCORE (0.0 - 1.0)
+        let confidence = 1.0;
+        if (accuracy > 200) confidence -= 0.3;
+        if (accuracy > 500) confidence -= 0.2;
+        if (eventType === 'NO_FIX') confidence -= 0.5;
+        if (state === 'GPS_OFF') confidence = 0.0; // GPS APAGADO = Cero confianza
+        if (source === 'network') confidence -= 0.1;
+        if (source === 'mock') confidence = 0.0;
+        point.confidence = Math.max(0.0, Math.min(1.0, confidence));
+
+        if (state === 'NO_FIX' || eventType === 'NO_FIX' || state === 'GPS_OFF') {
+            console.log(`[STATUS] emp:${employeeId} reported ${state} (Reason: ${resetReason})`);
+            point.quality = "no_fix";
+        } else if (accuracy > 800) { // Un poco más permisivo para heartbeats puros
+            console.log(`[FILTER] Point REJECTED: accuracy=${accuracy}m (Extreme noise)`);
             filtered++;
             continue;
+        } else if (accuracy > 300) {
+            point.quality = "low";
+        } else if (accuracy > 100) {
+            point.quality = "medium";
+        } else {
+            point.quality = "high";
         }
 
         if (point.quality === "low") {
@@ -296,7 +322,8 @@ router.post('/batch', auth, async (req, res) => {
                 speed: p.speed,
                 accuracy: p.accuracy,
                 timestamp: p.timestamp,
-                state: p.state || 'STOPPED'
+                state: p.state || 'STOPPED',
+                quality: p.quality || 'high' // ✅ NUEVO: Pasar calidad al worker
             }))
         });
 
@@ -311,7 +338,12 @@ router.post('/batch', auth, async (req, res) => {
             speed: lastPoint.speed,
             accuracy: lastPoint.accuracy,
             state: lastPoint.state || 'STOPPED',
-            timestamp: lastPoint.timestamp
+            timestamp: lastPoint.timestamp,
+            quality: lastPoint.quality,
+            confidence: lastPoint.confidence,
+            source: lastPoint.source,
+            event_type: lastPoint.event_type,
+            reset_reason: lastPoint.reset_reason
         };
 
         try {

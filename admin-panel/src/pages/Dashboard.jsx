@@ -135,6 +135,7 @@ const Dashboard = ({ user, onLogout }) => {
             status: loc?.state || 'OFFLINE',
             lastUpdate: loc?.lastUpdate || null,
             speed: loc?.speed || 0,
+            accuracy: loc?.accuracy || 999,
             isLive,
             isVisible: matchesSearch && matchesStatus
         };
@@ -382,9 +383,33 @@ const Dashboard = ({ user, onLogout }) => {
                                                     <div className="space-y-1">
                                                         <div className="flex items-center gap-2">
                                                             <span className="text-[10px] opacity-70">⚡ {vendor.speed ? (vendor.speed.toFixed(1) + ' km/h') : '---'}</span>
+                                                            
+                                                            {/* ✅ Dashboard Nivel Uber: Estados Compuestos */}
+                                                             {vendor.lastUpdate && (
+                                                                 <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 font-medium ${
+                                                                     vendor.is_stale ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' :
+                                                                     vendor.state === 'GPS_OFF' ? 'bg-red-600 text-white font-bold animate-pulse' :
+                                                                     vendor.reset_reason && vendor.reset_reason.includes('recovery') ? 'bg-blue-500/10 text-blue-400 animate-pulse' :
+                                                                     (vendor.confidence || 1.0) >= 0.8 ? 'bg-green-500/10 text-green-400' :
+                                                                     (vendor.confidence || 1.0) >= 0.4 ? 'bg-yellow-500/10 text-yellow-400' :
+                                                                     'bg-red-500/10 text-red-400'
+                                                                 }`}>
+                                                                     {vendor.is_stale ? '⚠️ Desactualizado' : 
+                                                                      vendor.state === 'GPS_OFF' ? '⛔ GPS Apagado' :
+                                                                      vendor.reset_reason && vendor.reset_reason.includes('recovery') ? '🔄 Recuperando' :
+                                                                      (vendor.confidence || 1.0) >= 0.8 ? '🟢 En Vivo' : 
+                                                                      (vendor.confidence || 1.0) >= 0.4 ? '🟡 Baja Precisión' : '🔴 Sin GPS'}
+                                                                 </span>
+                                                             )}
                                                         </div>
-                                                        <div className="text-slate-500">
-                                                            {vendor.lastUpdate ? new Date(vendor.lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Offline'}
+                                                        <div className="text-slate-500 flex items-center gap-2">
+                                                            <span>{vendor.lastUpdate ? new Date(vendor.lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Offline'}</span>
+                                                            {/* ✅ Tiempo Transcurrido (Stale Time) */}
+                                                            {vendor.lastUpdate && (
+                                                                <span className="text-[9px] opacity-50 italic">
+                                                                    ({Math.floor((new Date() - new Date(vendor.lastUpdate)) / 60000)}m atrás)
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </div>
                                                     {vendor.isLive && <span className="text-[9px] text-green-500 font-bold uppercase tracking-wider">Live</span>}

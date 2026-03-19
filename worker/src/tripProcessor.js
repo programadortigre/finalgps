@@ -223,12 +223,23 @@ async function processBatch(employeeId, points) {
                 }
 
                 // Insert point
-                await client.query(
-                    `INSERT INTO locations (trip_id, employee_id, latitude, longitude, speed, accuracy, state, timestamp, geom) 
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography)
-                     ON CONFLICT (employee_id, timestamp) DO NOTHING`,
-                    [tripId, employeeId, p.lat, p.lng, p.speed, p.accuracy, p.state || 'STOPPED', p.timestamp]
-                );
+                const query = `
+                    INSERT INTO locations (
+                        trip_id, employee_id, latitude, longitude, speed, accuracy, timestamp, 
+                        geom, state, quality, source, reset_reason, confidence
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, 
+                        ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, 
+                        $8, $9, $10, $11, $12
+                    )
+                    ON CONFLICT (employee_id, timestamp) DO NOTHING
+                `;
+                const values = [
+                    tripId, employeeId, p.lat, p.lng, p.speed, p.accuracy, p.timestamp,
+                    p.state || 'STOPPED', p.quality || 'high',
+                    p.source || 'gps', p.reset_reason || null, p.confidence || 1.0
+                ];
+                await client.query(query, values);
 
                 lastValidPoint = { lat: p.lat, lng: p.lng, timestamp: p.timestamp };
                 validPoints++;
@@ -262,7 +273,7 @@ async function processBatch(employeeId, points) {
                 const OSRM_CHUNK_SIZE = 100; // Límite máximo de OSRM por request
 
                 const unmatchedResult = await client.query(
-                    'SELECT id, latitude as lat, longitude as lng, speed, accuracy, timestamp FROM locations WHERE trip_id = $1 AND is_matched = FALSE ORDER BY timestamp ASC',
+                    'SELECT id, latitude as lat, longitude as lng, speed, accuracy, timestamp FROM locations WHERE trip_id = $1 AND is_matched = FALSE AND quality != \'low\' AND quality != \'no_fix\' ORDER BY timestamp ASC',
                     [tripId]
                 );
 
@@ -320,7 +331,7 @@ async function processBatch(employeeId, points) {
                             route_raw_geom AS (
                                 SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) as line
                                 FROM locations
-                                WHERE trip_id = $1
+                                WHERE trip_id = $1 AND quality != 'low' AND quality != 'no_fix'
                             ),
                             route_matched_geom AS (
                                 SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) as line
@@ -397,35 +408,31 @@ async function syncSchema() {
             // Wait for PostgreSQL to be ready
             await client.query('SELECT 1');
 
-            // 1. Check for 'state' column
-            const checkState = await client.query(`
+            // 4. Check for 'quality' column
+            const checkQualityCol = await client.query(`
                 SELECT 1 FROM information_schema.columns 
-                WHERE table_name='locations' AND column_name='state';
+                WHERE table_name='locations' AND column_name='quality';
             `);
-            if (checkState.rowCount === 0) {
-                console.log('Migrating database: Adding "state" column...');
-                await client.query('ALTER TABLE locations ADD COLUMN state VARCHAR(30) DEFAULT \'SIN_MOVIMIENTO\'');
+            if (checkQualityCol.rowCount === 0) {
+                console.log('Migrating database: Adding "quality" column...');
+                await client.query('ALTER TABLE locations ADD COLUMN quality VARCHAR(20) DEFAULT \'high\'');
             }
 
-            // ✅ NUEVO: Check for 'is_tracking_enabled' in 'employees'
-            const checkTrackingCol = await client.query(`
-                SELECT 1 FROM information_schema.columns 
-                WHERE table_name='employees' AND column_name='is_tracking_enabled';
+            // ✅ NUEVO: source, reset_reason, confidence
+            const checkNewCols = await client.query(`
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name='locations' AND column_name IN ('source', 'reset_reason', 'confidence');
             `);
-            if (checkTrackingCol.rowCount === 0) {
-                console.log('Migrating database: Adding "is_tracking_enabled" column to "employees"...');
-                await client.query('ALTER TABLE employees ADD COLUMN is_tracking_enabled BOOLEAN DEFAULT TRUE');
-            }
+            const existingCols = checkNewCols.rows.map(r => r.column_name);
 
-            // 2. Check for 'is_matched' column
-            const checkMatchedCol = await client.query(`
-                SELECT 1 FROM information_schema.columns 
-                WHERE table_name='locations' AND column_name='is_matched';
-            `);
-            if (checkMatchedCol.rowCount === 0) {
-                console.log('Migrating database: Adding "is_matched" column...');
-                await client.query('ALTER TABLE locations ADD COLUMN is_matched BOOLEAN DEFAULT FALSE');
-                await client.query('CREATE INDEX IF NOT EXISTS idx_locations_is_matched ON locations (is_matched) WHERE is_matched = FALSE');
+            if (!existingCols.includes('source')) {
+                await client.query('ALTER TABLE locations ADD COLUMN source VARCHAR(50) DEFAULT \'gps\'');
+            }
+            if (!existingCols.includes('reset_reason')) {
+                await client.query('ALTER TABLE locations ADD COLUMN reset_reason TEXT');
+            }
+            if (!existingCols.includes('confidence')) {
+                await client.query('ALTER TABLE locations ADD COLUMN confidence FLOAT DEFAULT 1.0');
             }
 
             // 3. Check for 'matched_locations' table
@@ -475,6 +482,16 @@ async function syncSchema() {
                 await client.query('ALTER TABLE trip_routes ADD COLUMN geom_raw GEOGRAPHY(LineString, 4326)');
                 await client.query('ALTER TABLE trip_routes ADD COLUMN IF NOT EXISTS point_count_matched INTEGER DEFAULT 0');
                 await client.query('ALTER TABLE trip_routes ADD COLUMN IF NOT EXISTS match_confidence FLOAT DEFAULT 0');
+            }
+
+            // 6. Check for 'quality' column in 'locations'
+            const checkQuality = await client.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='locations' AND column_name='quality';
+            `);
+            if (checkQuality.rowCount === 0) {
+                console.log('Migrating database: Adding "quality" column to "locations"...');
+                await client.query('ALTER TABLE locations ADD COLUMN quality VARCHAR(20) DEFAULT \'high\'');
             }
 
             console.log('Database schema (Worker) sync completed.');
