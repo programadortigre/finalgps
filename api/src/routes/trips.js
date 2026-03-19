@@ -246,22 +246,42 @@ router.get('/:id', auth, async (req, res) => {
 
         // Si no se usó simplificación o falló el fallback
         if (points.length === 0) {
-            console.log(`[API] Trip ${tripId}: Fetching raw locations...`);
-            const pointsResult = await db.query(`
-                SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp, state
-                FROM locations 
-                WHERE trip_id = $1 
-                ORDER BY timestamp ASC
+            console.log(`[API] Trip ${tripId}: Fetching filtered and smoothed fallback...`);
+            // ✅ MEJORA: Usar PostGIS para filtrar basura y simplificar al vuelo en el fallback
+            const fallbackResult = await db.query(`
+                WITH trip_points AS (
+                    SELECT geom::geometry, timestamp
+                    FROM locations 
+                    WHERE trip_id = $1 
+                    AND quality != 'no_fix' AND quality != 'low' 
+                    AND accuracy < 100 -- Filtro agresivo anti-jitter
+                    ORDER BY timestamp ASC
+                ),
+                smoothed_line AS (
+                    SELECT ST_SimplifyPreserveTopology(ST_MakeLine(geom ORDER BY timestamp), 0.0001) as geom_line
+                    FROM trip_points
+                )
+                SELECT ST_AsGeoJSON(geom_line) as simplified_json
+                FROM smoothed_line
+                WHERE geom_line IS NOT NULL
             `, [tripId]);
-            points = pointsResult.rows;
-            console.log(`[API] Trip ${tripId}: Found ${points.length} raw points fallback`);
-        }
-        
-        if (points.length === 0) {
-            console.log(`[API] Trip ${tripId} WARNING: No points found in either trip_routes or locations!`);
-            // Check if trip exists at all in locations with raw SQL for debugging
-            const debugCount = await db.query('SELECT COUNT(*) FROM locations WHERE trip_id = $1', [tripId]);
-            console.log(`[API] Trip ${tripId} DEBUG: Direct COUNT in locations table: ${debugCount.rows[0].count}`);
+
+            if (fallbackResult.rows.length > 0 && fallbackResult.rows[0].simplified_json) {
+                const geojson = JSON.parse(fallbackResult.rows[0].simplified_json);
+                points = geojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
+                console.log(`[API] Trip ${tripId}: Generated ${points.length} points via On-The-Fly Simplification fallback`);
+            } else {
+                // Fallback de ultra-emergencia: Puntos crudos pero filtrados
+                const emergencyResult = await db.query(`
+                    SELECT latitude as lat, longitude as lng, timestamp
+                    FROM locations 
+                    WHERE trip_id = $1 
+                    AND quality = 'high' AND accuracy < 50
+                    ORDER BY timestamp ASC LIMIT 500
+                `, [tripId]);
+                points = emergencyResult.rows;
+                console.log(`[API] Trip ${tripId}: Emergency fallback using ${points.length} raw high-quality points`);
+            }
         }
 
         // 3. Get stops

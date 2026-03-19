@@ -90,9 +90,9 @@ async function updateTripRoute(client, tripId) {
             SELECT 
                 $1,
                 geom_line::geography,
-                ST_SimplifyPreserveTopology(geom_line, 0.00001)::geography,
+                ST_SimplifyPreserveTopology(geom_line, 0.0001)::geography,
                 full_count,
-                ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.00001))
+                ST_NPoints(ST_SimplifyPreserveTopology(geom_line, 0.0001))
             FROM route
             ON CONFLICT (trip_id) DO UPDATE SET
                 geom_full = EXCLUDED.geom_full,
