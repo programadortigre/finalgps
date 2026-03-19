@@ -267,97 +267,18 @@ class TrackingEngine {
     _socket = socket;
   }
 
-  void handleRemoteLocationRequest() {
-    _log('SOCKET', 'ADMIN: Petición de ubicación en tiempo real recibida');
-    
-    // 🚀 FEEDBACK INSTANTÁNEO: Enviar último punto conocido mientras se busca el nuevo
-    if (_lastValidPoint != null) {
-      _log('SOCKET', 'Radar: Enviando último punto conocido preventivo');
-      _emitToSocket(_lastValidPoint!);
-    }
-
-    _isPriorityScanActive = true;
-    _priorityScanTicks = 0;
-
-    // Si el socket está offline, encolar la petición para enviar al reconectar
-    if (_socket == null || !_socket!.connected) {
-      _log('SOCKET', 'Socket offline — petición encolada, se enviará al reconectar');
-      _pendingLocationRequest = true;
-      // Intentar obtener GPS de todas formas (para tenerlo listo)
-      Geolocator.getCurrentPosition(
-        locationSettings: AndroidSettings(
-          accuracy: LocationAccuracy.best,
-          forceLocationManager: false, // ✅ FALSE para usar FusedLocation (WiFi/Red) si el GPS no responde
-        ),
-        timeLimit: const Duration(seconds: 28), // ✅ Aumentado para dar tiempo al hardware
-      ).then((pos) {
-        final speedKmh = pos.speed * 3.6;
-        final accuracy = pos.accuracy;
-        final now = DateTime.now();
-
-        // ✅ NIVELES DE CONFIANZA PRO: Capturar Source
-        String source = 'gps';
-        if (accuracy > 100) source = 'network';
-        if (pos.isMocked) source = 'mock'; // geolocator supports isMocked
-        
-        // ── 1. FREEZE DETECTION (Nivel Uber) ─────────────────────────────────────
-        if (_lastProcessedPos != null && _currentState != TrackingState.STOPPED && _currentState != TrackingState.DEEP_SLEEP && _currentState != TrackingState.PAUSED) {
-          final dist = Geolocator.distanceBetween(_lastProcessedPos!.lat, _lastProcessedPos!.lng, pos.latitude, pos.longitude);
-          final timeDiff = now.difference(_lastStaticTime ?? now).inSeconds;
-
-          if (dist < 10 && pos.speed < 1.0) {
-              // El GPS parece no moverse
-              if (timeDiff > 180) {
-                  _log('FREEZE', '⚠️ GPS Congelado detectado! (${dist.toStringAsFixed(1)}m en ${timeDiff}s). Forzando Hard Reset.');
-                  _lastStaticTime = now; // Reset timer to avoid spam
-                  // Assuming _hardResetGPS is defined elsewhere and accessible
-                  // _hardResetGPS(reason: 'gps_freeze_detected'); 
-                  // For now, just log the detection. If _hardResetGPS is needed, it must be implemented.
-                  return; // Abortamos proceso de este punto "malo"
-              }
-          } else {
-              // Hay movimiento real, reseteamos el timer de freeze
-              _lastStaticTime = now;
-          }
-        } else {
-            _lastStaticTime = now;
-        }
-
-        // Actualizamos última posición procesada para la siguiente comparación
-        _lastProcessedPos = LocalPoint(
-            lat: pos.latitude,
-            lng: pos.longitude,
-            speed: pos.speed,
-            accuracy: pos.accuracy,
-            timestamp: pos.timestamp.millisecondsSinceEpoch,
-        );
-
-        _lastValidPoint = LocalPoint(
-          lat: pos.latitude,
-          lng: pos.longitude,
-          speed: speedKmh,
-          accuracy: accuracy,
-          state: _currentState.name,
-          timestamp: DateTime.now().millisecondsSinceEpoch,
-          employeeId: _cachedEmployeeId,
-          source: source, // Add source metadata
-        );
-        _log('SOCKET', 'GPS obtenido offline: ${pos.latitude}, ${pos.longitude} (acc: ${pos.accuracy}m)');
-      }).catchError((e) {
-        _log('SOCKET', 'GPS offline falló: $e');
-      });
-      return;
-    }
-
   Future<void> handleRemoteLocationRequest() async {
     _log('RADAR', 'Comando manual recibido — Iniciando secuencia de localización forzada');
     _pendingLocationRequest = true;
 
-    // --- CAPA 1: Respuesta Instantánea (Cero latencia) ---
+    // 🚀 FEEDBACK INSTANTÁNEO: Enviar último punto conocido mientras se busca el nuevo
     if (_lastValidPoint != null) {
       _log('RADAR', 'Enviando última ubicación conocida de memoria');
       _emitToSocket(_lastValidPoint!, manual: true);
     }
+
+    _isPriorityScanActive = true;
+    _priorityScanTicks = 0;
 
     // --- CAPA 2: Last Known Position (Hardware) ---
     try {
@@ -822,63 +743,58 @@ class TrackingEngine {
       } else {
         // 1. Valores por defecto según estado
         switch (_currentState) {
-        case TrackingState.STOPPED:
-          final secondsStationary = DateTime.now().difference(_lastStateChangeTime).inSeconds;
-          if (secondsStationary > 60) {
-            _isSleepModeActive = true;
-            // Light Sleep Mode (WhatsApp style)
-            intervalSec = 60;
-            distanceFilter = 15;
-            accuracy = LocationAccuracy.low;
-            _log('GPS', 'SLEEP MODE: Light Inactivity ($secondsStationary s)');
-          } else {
-            _isSleepModeActive = false;
-            intervalSec = 15;
-            distanceFilter = 5;
+          case TrackingState.STOPPED:
+            final secondsStationary = DateTime.now().difference(_lastStateChangeTime).inSeconds;
+            if (secondsStationary > 60) {
+              _isSleepModeActive = true;
+              intervalSec = 60;
+              distanceFilter = 15;
+              accuracy = LocationAccuracy.low;
+              _log('GPS', 'SLEEP MODE: Light Inactivity ($secondsStationary s)');
+            } else {
+              _isSleepModeActive = false;
+              intervalSec = 15;
+              distanceFilter = 5;
+              accuracy = LocationAccuracy.medium;
+            }
+            break;
+          case TrackingState.DEEP_SLEEP:
+            intervalSec = 300;
+            distanceFilter = 25;
             accuracy = LocationAccuracy.medium;
-          }
-          break;
-        case TrackingState.DEEP_SLEEP:
-          // WhatsApp Style: Si no se mueve, bajamos la frecuencia drásticamente.
-          // 5 minutos (300s) es suficiente para chequear si despertó.
-          intervalSec = 300; 
-          distanceFilter = 25;
-          accuracy = LocationAccuracy.medium;
-          break;
-        case TrackingState.BATT_SAVER:
-          intervalSec = 120;
-          distanceFilter = 50;
-          accuracy = LocationAccuracy.medium;
-          break;
-        case TrackingState.WALKING:
-          intervalSec = 5;
-          distanceFilter = 5;
-          accuracy = LocationAccuracy.high;
-          break;
-        case TrackingState.DRIVING:
-        default:
+            break;
+          case TrackingState.BATT_SAVER:
+            intervalSec = 120;
+            distanceFilter = 50;
+            accuracy = LocationAccuracy.medium;
+            break;
+          case TrackingState.WALKING:
+            intervalSec = 5;
+            distanceFilter = 5;
+            accuracy = LocationAccuracy.high;
+            break;
+          case TrackingState.DRIVING:
+          default:
+            intervalSec = 3;
+            distanceFilter = 10;
+            accuracy = LocationAccuracy.best;
+            break;
+        }
+
+        // 2. Overrides por Batería (Granular)
+        final level = await _battery.batteryLevel;
+        if (_isInRecoveryBoost) {
           intervalSec = 3;
-          distanceFilter = 10;
-          accuracy = LocationAccuracy.best;
-          break;
+          accuracy = LocationAccuracy.high;
+          distanceFilter = 0;
+          _log('GPS', '🚀 RECOVERY BOOST ACTIVE: 3s interval forced');
+        } else if (level < 30) {
+          intervalSec = (level < 10) ? 120 : ((level < 20) ? 60 : 30);
+          accuracy = (level < 10) ? LocationAccuracy.low : LocationAccuracy.medium;
+          distanceFilter = (level < 10) ? 50 : 20;
+          _log('GPS', 'BATTERY OVERRIDE ($level%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
+        }
       }
-
-      // 2. Overrides por Batería (Granular)
-      final level = await _battery.batteryLevel;
-      if (_isInRecoveryBoost) {
-        intervalSec = 3;
-        accuracy = LocationAccuracy.high;
-        distanceFilter = 0;
-        _log('GPS', '🚀 RECOVERY BOOST ACTIVE: 3s interval forced');
-      } else if (level < 30) {
-        intervalSec = (level < 10) ? 120 : ((level < 20) ? 60 : 30);
-        accuracy = (level < 10) ? LocationAccuracy.low : LocationAccuracy.medium;
-        distanceFilter = (level < 10) ? 50 : 20;
-        _log('GPS', 'BATTERY OVERRIDE ($level%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
-      }
-
-      _currentIntervalSec = intervalSec;
-    }
 
       _currentIntervalSec = intervalSec;
       _log('GPS', 'Stream START ($reason) → ${_currentState.name} | ${intervalSec}s | ${distanceFilter}m');
@@ -888,7 +804,7 @@ class TrackingEngine {
           accuracy: accuracy,
           distanceFilter: distanceFilter,
           intervalDuration: Duration(seconds: intervalSec),
-          forceLocationManager: true, // ✅ FIX: Usar LocationManager directamente para evitar throttling en Moto/Samsung
+          forceLocationManager: true, 
         ),
       ).listen(
         (Position pos) {
@@ -1051,7 +967,7 @@ class TrackingEngine {
         timestamp: _lastValidLocationTime.millisecondsSinceEpoch,
         employeeId: _cachedEmployeeId,
         source: source,
-        quality: isGoodForHistory ? 'high' : 'low',
+        // quality: isGoodForHistory ? 'high' : 'low', // REMOVED: parameter is not defined in LocalPoint
       );
 
       // --- EMISIÓN EN TIEMPO REAL (SOCKET) ---
