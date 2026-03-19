@@ -28,7 +28,6 @@ const History = ({ user }) => {
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [drawerOpen, setDrawerOpen] = useState(true);
     const [filtersExpanded, setFiltersExpanded] = useState(true);
-    const [routeMode, setRouteMode] = useState('pro'); // raw, smooth, pro
 
     useEffect(() => {
         const fetchEmployees = async () => {
@@ -76,7 +75,7 @@ const History = ({ user }) => {
     const fetchTripDetails = async (tripId) => {
         setLoadingDetails(true);
         try {
-            const { data } = await api.get(`/api/trips/${tripId}?mode=${routeMode}`);
+            const { data } = await api.get(`/api/trips/${tripId}?simplify=true`);
             setTripDetails(data);
         } catch (err) {
             setError('Error al cargar detalles del viaje');
@@ -133,7 +132,6 @@ const History = ({ user }) => {
                             selectedEmployee={employees.find(e => e.id === selectedEmployee) || null}
                             selectedTrip={selectedTrip}
                             tripDetails={tripDetails}
-                            routeMode={routeMode}
                         />
                     )
                 ) : (
@@ -142,7 +140,6 @@ const History = ({ user }) => {
                         selectedEmployee={employees.find(e => e.id === selectedEmployee) || null}
                         trips={trips}
                         stops={stops}
-                        routeMode={routeMode}
                     />
                 )}
             </div>
@@ -221,20 +218,6 @@ const History = ({ user }) => {
                                     onChange={(e) => setEndDate(e.target.value)}
                                     className="hist-input"
                                 />
-                            </div>
-
-                            <div className="hist-filter-group">
-                                <label className="hist-field-label">Filtro Ruta</label>
-                                <select
-                                    value={routeMode}
-                                    onChange={(e) => setRouteMode(e.target.value)}
-                                    className="hist-select"
-                                    style={{ borderLeft: '2px solid #6366f1' }}
-                                >
-                                    <option value="raw">Crudo (Todo)</option>
-                                    <option value="smooth">Suave (Anti-Jitter)</option>
-                                    <option value="pro">Optimizado (Pro)</option>
-                                </select>
                             </div>
 
                             <button className="hist-refresh-btn" onClick={fetchHistory}>
