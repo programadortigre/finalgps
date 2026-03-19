@@ -280,7 +280,7 @@ class TrackingEngine {
       Geolocator.getCurrentPosition(
         locationSettings: AndroidSettings(
           accuracy: LocationAccuracy.best,
-          forceLocationManager: true, // ✅ Fuerza Hardware GPS directo
+          forceLocationManager: false, // ✅ FALSE para usar FusedLocation (WiFi/Red) si el GPS no responde
         ),
         timeLimit: const Duration(seconds: 28), // ✅ Aumentado para dar tiempo al hardware
       ).then((pos) {
@@ -345,10 +345,10 @@ class TrackingEngine {
     // 1. Intentar obtener una ubicación actual con parámetros agresivos
     Geolocator.getCurrentPosition(
       locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        forceLocationManager: true,
+        accuracy: LocationAccuracy.best, // ✅ best en lugar de bestForNavigation (muy estricto)
+        forceLocationManager: false, // ✅ FALSE: vital para gama baja en interiores / compartiendo WiFi
       ),
-      timeLimit: const Duration(seconds: 28),
+      timeLimit: const Duration(seconds: 10), // ✅ Reducido para intentar Fused rápido
     ).then((pos) {
       final point = LocalPoint(
         lat: pos.latitude,

@@ -149,6 +149,7 @@ const Dashboard = ({ user, onLogout }) => {
             accuracy: loc?.accuracy || 999,
             reliability_score: loc?.reliability_score || 1.0,
             confidence: loc?.confidence || 1.0,
+            source: loc?.source || 'unknown',
             isLive,
             isVisible: matchesSearch && matchesStatus
         };
@@ -426,6 +427,11 @@ const Dashboard = ({ user, onLogout }) => {
                                                                       vendor.reset_reason && vendor.reset_reason.includes('recovery') ? '🔄 Recuperando' :
                                                                       (vendor.confidence || 1.0) >= 0.8 ? '🟢 En Vivo' : 
                                                                       (vendor.confidence || 1.0) >= 0.4 ? '🟡 Baja Precisión' : '🔴 Sin GPS'}
+                                                                 </span>
+                                                             )}
+                                                             {vendor.source === 'geoip' && (
+                                                                 <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium" title="Ubicación aproximada rastreada por IP">
+                                                                     🌐 Estimado por IP
                                                                  </span>
                                                              )}
                                                         </div>

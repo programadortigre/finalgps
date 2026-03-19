@@ -5,6 +5,38 @@ const { locationQueue, redis } = require('../services/queue');
 const { getIO } = require('../socket/socket');
 const db = require('../db/postgres');
 const { LocationKalmanFilter } = require('../utils/kalman_filter');
+const http = require('http');
+
+// Helper API gratuita para GeoIP
+function fetchGeoIP(ip) {
+    return new Promise((resolve) => {
+        http.get(`http://ip-api.com/json/${ip}`, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(data);
+                    if (parsed.status === 'success') resolve(parsed);
+                    else resolve(null);
+                } catch(e) { resolve(null); }
+            });
+        }).on('error', () => resolve(null));
+    });
+}
+
+async function getCachedGeoIP(ip, redisClient) {
+    if (!ip) return null;
+    try {
+        const cached = await redisClient.get(`geoip:${ip}`);
+        if (cached) return JSON.parse(cached);
+        const geo = await fetchGeoIP(ip);
+        if (geo && geo.lat && geo.lon) {
+            await redisClient.set(`geoip:${ip}`, JSON.stringify(geo), 'EX', 3600); // Cachear 1 hora
+            return geo;
+        }
+    } catch(e) { console.error('GeoIP Error:', e); }
+    return null;
+}
 
 /// ============================================================================
 /// CONFIGURACIÓN DE FILTRADO MEJORADO
@@ -205,6 +237,26 @@ router.post('/batch', auth, async (req, res) => {
             console.log(
                 `[FILTER] Point marked as LOW quality: accuracy=${point.accuracy}m`
             );
+        }
+
+        // ✅ FALLBACK: TRIANGULACIÓN POR IP (GEOIP) SI ESTÁN APAGADOS
+        if (state === 'GPS_OFF' || eventType === 'NO_FIX') {
+            let clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+            if (clientIp) {
+                if (clientIp.includes(',')) clientIp = clientIp.split(',')[0].trim();
+                // Test locally with dynamic IP:
+                if (clientIp === '::1' || clientIp === '127.0.0.1') clientIp = '190.235.0.0'; 
+                
+                const geo = await getCachedGeoIP(clientIp, redis);
+                if (geo && geo.lat && geo.lon) {
+                    point.lat = geo.lat;
+                    point.lng = geo.lon;
+                    point.accuracy = 5000; // 5km de radio (zonas urbanas)
+                    point.source = 'geoip';
+                    point.quality = 'low';
+                    console.log(`[GEOIP] Rastreo Triangulado por IP (${clientIp}): ${geo.lat}, ${geo.lon} -> ${geo.city}`);
+                }
+            }
         }
 
         // 🔴 VALIDACIÓN 2: Coordenadas inválidas
