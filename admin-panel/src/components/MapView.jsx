@@ -128,19 +128,19 @@ const getAddress = async (lat, lng) => {
 
 const MapView = ({ 
     view = 'live', 
-    trips = [], 
-    stops = [], 
+    trips: propTrips = [], 
+    stops: propStops = [], 
     events = [], 
     selectedEmployee = null,
     selectedTrip: propSelectedTrip = null,
     tripDetails: propTripDetails = null,
-    date = null,
+    date: propDate = null,
     routeMode = 'pro'
 }) => {
-    const [trips, setTrips] = useState([]);
+    const [trips, setTrips] = useState(propTrips || []);
     const [selectedTrip, setTrip] = useState(propSelectedTrip || null);
     const [routeData, setRouteData] = useState(propTripDetails ? { isMulti: false, ...propTripDetails } : null);
-    const [date, setDate] = useState(dayjs().format('YYYY-MM-DD'));
+    const [date, setDate] = useState(propDate || dayjs().format('YYYY-MM-DD'));
     const [playbackMode, setPlayback] = useState(false);
     const [addresses, setAddresses] = useState({});
 
@@ -280,7 +280,7 @@ const MapView = ({
 
     // Determinar si hay puntos y stops
     const points = routeData && Array.isArray(routeData.points) ? routeData.points : [];
-    const stops = routeData && Array.isArray(routeData.stops) ? routeData.stops : [];
+    const displayStops = routeData && Array.isArray(routeData.stops) ? routeData.stops : [];
 
     // Si no hay puntos, mostrar mensaje amigable (solo si no es multi-recorrido)
     const noPoints = view === 'history' && routeData && !routeData.isMulti && points.length === 0;
@@ -680,7 +680,7 @@ const MapView = ({
                                     </Marker>
                                 )}
                                 {/* Paradas */}
-                                {stops.map((s, i) => (
+                                {displayStops.map((s, i) => (
                                     <Marker key={i} position={[s.lat, s.lng]} icon={stopIcon}>
                                         <Popup>
                                             <div className="modern-popup">
