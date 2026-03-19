@@ -214,15 +214,16 @@ router.post('/batch', auth, async (req, res) => {
         const source = point.source || (accuracy < 100 ? 'gps' : 'network');
         const resetReason = point.reset_reason || null;
         
-        // 1. Determinar calidad inicial por precisión
+        // 1. Determinar calidad inicial por precisión (AJUSTE AGRESIVO ANTI-RUIDO)
         let quality = 'high';
-        if (accuracy > 100) quality = 'low';
+        if (accuracy > 50) quality = 'low'; // Bajado de 100 a 50 para limpiar el historial
         if (state === 'NO_FIX' || eventType === 'NO_FIX' || state === 'GPS_OFF') quality = 'no_fix';
 
         // ✅ CÁLCULO DE CONFIDENCE SCORE (0.0 - 1.0)
         let confidence = 1.0;
-        if (accuracy > 200) confidence -= 0.3;
-        if (accuracy > 500) confidence -= 0.2;
+        if (accuracy > 30) confidence -= 0.2;
+        if (accuracy > 60) confidence -= 0.3;
+        if (accuracy > 150) confidence -= 0.4;
         if (eventType === 'NO_FIX') confidence -= 0.5;
         if (state === 'GPS_OFF') confidence = 0.0;
         if (source === 'network') confidence -= 0.1;

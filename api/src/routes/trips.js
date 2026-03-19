@@ -254,7 +254,7 @@ router.get('/:id', auth, async (req, res) => {
                     FROM locations 
                     WHERE trip_id = $1 
                     AND quality != 'no_fix' AND quality != 'low' 
-                    AND accuracy < 100 -- Filtro agresivo anti-jitter
+                    AND accuracy < 50 -- Filtro MUY agresivo anti-jitter (Bajado de 100)
                     ORDER BY timestamp ASC
                 ),
                 smoothed_line AS (
