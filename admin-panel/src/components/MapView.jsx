@@ -126,13 +126,34 @@ const getAddress = async (lat, lng) => {
     }
 };
 
-const MapView = ({ view, selectedEmployee, activeLocations, allLocations, selectedTrip: propSelectedTrip, tripDetails: propTripDetails }) => {
+const MapView = ({ 
+    view = 'live', 
+    trips = [], 
+    stops = [], 
+    events = [], 
+    selectedEmployee = null,
+    selectedTrip: propSelectedTrip = null,
+    tripDetails: propTripDetails = null,
+    date = null,
+    routeMode = 'pro'
+}) => {
     const [trips, setTrips] = useState([]);
     const [selectedTrip, setTrip] = useState(propSelectedTrip || null);
     const [routeData, setRouteData] = useState(propTripDetails ? { isMulti: false, ...propTripDetails } : null);
     const [date, setDate] = useState(dayjs().format('YYYY-MM-DD'));
     const [playbackMode, setPlayback] = useState(false);
     const [addresses, setAddresses] = useState({});
+
+    // ✅ RECARGAR cuando cambie el modo de ruta (Raw vs Suave)
+    useEffect(() => {
+        if (view === 'history') {
+            if (routeData?.isMulti) {
+                fetchAllTripsForDay();
+            } else if (selectedTrip && selectedTrip.id !== 'all_day') {
+                fetchTripDetails(selectedTrip);
+            }
+        }
+    }, [routeMode]);
 
     // Cargar direcciones cuando se reciben tripDetails como prop
     useEffect(() => {
@@ -203,7 +224,7 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations, select
             const newAddresses = {};
 
             for (const trip of trips) {
-                const { data } = await api.get(`/api/trips/${trip.id}?simplify=true`);
+                const { data } = await api.get(`/api/trips/${trip.id}?mode=${routeMode}`);
                 allTripsData.push({ ...trip, ...data });
 
                 if (data.points && data.points.length > 0) {
@@ -233,7 +254,7 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations, select
             // ✅ OPTIMIZADO: Usar ?simplify=true para obtener ruta compilada
             // Reduce de 238 KB → 28 KB (88% reducción)
             // Puntos: 1920 → 120 (94% reducción)
-            const { data } = await api.get(`/api/trips/${trip.id}?simplify=true`);
+            const { data } = await api.get(`/api/trips/${trip.id}?mode=${routeMode}`);
             setRouteData({ isMulti: false, ...data });
             setTrip(trip);
 

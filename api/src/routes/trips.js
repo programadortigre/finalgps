@@ -201,22 +201,30 @@ router.get('/events/history/:employeeId', auth, async (req, res) => {
 // Get details of a single trip (route + stops)
 // NUEVO: Soporta ?simplify=true para obtener ruta compilada en lugar de todos los puntos
 router.get('/:id', auth, async (req, res) => {
-    const tripId = req.params.id;
-    const simplify = req.query.simplify === 'true';  // Nuevo parámetro
-
     try {
+        const tripId = req.params.id;
+        const mode = req.query.mode || (req.query.simplify === 'true' ? 'pro' : 'raw');
+
         // 1. Get trip info
         const tripResult = await db.query('SELECT * FROM trips WHERE id = $1', [tripId]);
         if (tripResult.rows.length === 0) {
             return res.status(404).json({ error: 'Trip not found' });
         }
 
-        // 2. Get route points (Soporta simplificación)
+        // 2. Get route points based on MODE
         let points = [];
-        if (simplify) {
-            console.log(`[API] Trip ${tripId}: Fetching Pro dual-path (Raw + Matched) from trip_routes...`);
-            // ✅ PRO ARCHITECTURE: Devolvemos ambas opciones y dejamos que el sistema decida la mejor
-            // ✅ PRO ARCHITECTURE: Aplicamos un segundo nivel de limpieza (11m) al vuelo para arreglar datos viejos
+        let usedMode = mode;
+
+        if (mode === 'raw') {
+            console.log(`[API] Trip ${tripId}: Fetching ABSOLUTE RAW points...`);
+            const rawResult = await db.query(`
+                SELECT latitude as lat, longitude as lng, speed, accuracy, timestamp, state
+                FROM locations 
+                WHERE trip_id = $1 
+                ORDER BY timestamp ASC
+            `, [tripId]);
+            points = rawResult.rows;
+        } else if (mode === 'pro') {
             const routesResult = await db.query(`
                 SELECT 
                     ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom_raw::geometry, 0.0001)) as raw_json,
@@ -231,31 +239,27 @@ router.get('/:id', auth, async (req, res) => {
                 const rawGeojson = row.raw_json ? JSON.parse(row.raw_json) : null;
                 const matchedGeojson = row.matched_json ? JSON.parse(row.matched_json) : null;
                 
-                // Decisión "Pro": Si la confianza es alta (> 0.6), usamos matcheado. 
-                // Si es baja (parques, zonas rurales), usamos raw suavizado.
                 if (row.confidence > 0.6 && matchedGeojson) {
                     points = matchedGeojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-                    console.log(`[API] Trip ${tripId}: High confidence (${(row.confidence*100).toFixed(0)}%). Using SNAPPED path.`);
                 } else if (rawGeojson) {
                     points = rawGeojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-                    console.log(`[API] Trip ${tripId}: Low confidence (${(row.confidence*100).toFixed(0)}%). Using RAW (Kalman) path.`);
                 }
-            } else {
-                console.log(`[API] Trip ${tripId}: No pre-compiled Pro routes found`);
+            }
+            
+            if (points.length === 0) {
+                usedMode = 'smooth';
             }
         }
 
-        // Si no se usó simplificación o falló el fallback
-        if (points.length === 0) {
-            console.log(`[API] Trip ${tripId}: Fetching filtered and smoothed fallback...`);
-            // ✅ MEJORA: Usar PostGIS para filtrar basura y simplificar al vuelo en el fallback
+        // Modo 'smooth' (o fallback de Pro)
+        if (mode === 'smooth' || (usedMode === 'smooth' && points.length === 0)) {
             const fallbackResult = await db.query(`
                 WITH trip_points AS (
                     SELECT geom::geometry, timestamp
                     FROM locations 
                     WHERE trip_id = $1 
                     AND quality != 'no_fix' AND quality != 'low' 
-                    AND accuracy < 50 -- Filtro MUY agresivo anti-jitter (Bajado de 100)
+                    AND accuracy < 50 
                     ORDER BY timestamp ASC
                 ),
                 smoothed_line AS (
@@ -270,19 +274,15 @@ router.get('/:id', auth, async (req, res) => {
             if (fallbackResult.rows.length > 0 && fallbackResult.rows[0].simplified_json) {
                 const geojson = JSON.parse(fallbackResult.rows[0].simplified_json);
                 points = geojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-                console.log(`[API] Trip ${tripId}: Generated ${points.length} points via ULTRA-SMOOTH fallback`);
             } else {
-                // Fallback de ultra-emergencia: Solo puntos con precisión excelente y velocidad real
                 const emergencyResult = await db.query(`
                     SELECT latitude as lat, longitude as lng, timestamp
                     FROM locations 
                     WHERE trip_id = $1 
-                    AND quality = 'high' AND accuracy < 30
-                    AND speed > 0.5
-                    ORDER BY timestamp ASC LIMIT 300
+                    AND quality = 'high' AND accuracy < 35 AND speed > 0.3
+                    ORDER BY timestamp ASC LIMIT 400
                 `, [tripId]);
                 points = emergencyResult.rows;
-                console.log(`[API] Trip ${tripId}: Emergency fallback using ${points.length} premium points`);
             }
         }
 
