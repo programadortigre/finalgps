@@ -17,16 +17,19 @@ L.Icon.Default.mergeOptions({
 // Base Active Icon function to handle dynamic color
 const getActiveIcon = (state) => {
     let color = '#94a3b8'; // Default color (Slate/Gray)
+    let isPaused = state === 'PAUSED';
+    
     if (state === 'Quieto' || state === 'SIN_MOVIMIENTO' || state === 'STOPPED' || state === 'DEEP_SLEEP') color = '#94a3b8';
     if (state === 'A pie' || state === 'CAMINANDO' || state === 'WALKING') color = '#22c55e';
     if (state === 'Lento' || state === 'MOVIMIENTO_LENTO' || state === 'BATT_SAVER' || state === 'NO_SIGNAL') color = '#f59e0b';
     if (state === 'En auto' || state === 'VEHICULO' || state === 'DRIVING') color = '#6366f1';
+    if (isPaused) color = '#1e293b'; // Slate 800 for paused
 
     return L.divIcon({
         className: '',
         html: `<div style="position:relative">
         <div style="background:${color};border:3px solid white;border-radius:50%;width:18px;height:18px;box-shadow:0 2px 8px rgba(0,0,0,.3)"></div>
-        <div style="position:absolute;top:-2px;left:-2px;width:22px;height:22px;border:2px solid ${color};border-radius:50%;animation:pulse 1.5s infinite;opacity:.5"></div>
+        ${!isPaused ? `<div style="position:absolute;top:-2px;left:-2px;width:22px;height:22px;border:2px solid ${color};border-radius:50%;animation:pulse 1.5s infinite;opacity:.5"></div>` : ''}
       </div>`,
         iconSize: [18, 18],
         iconAnchor: [9, 9],
@@ -502,7 +505,7 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations, select
                     const stateColor = stateColors[loc.state] || stateColors['Quieto'];
 
                     return (
-                        <Marker key={loc.employeeId} position={[loc.lat, loc.lng]} icon={getActiveIcon(loc.state)}>
+                        <Marker key={loc.employeeId} position={[loc.lat, loc.lng]} icon={getActiveIcon(loc.is_tracking_enabled === false ? 'PAUSED' : loc.state)}>
                             <Popup>
                                 <div style={{ fontSize: '13px', minWidth: '240px', padding: '8px' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', gap: '8px' }}>

@@ -66,6 +66,7 @@ router.get('/', auth, async (req, res) => {
             SELECT DISTINCT ON (e.id)
                 e.id as "employeeId",
                 e.name,
+                e.is_tracking_enabled,
                 COALESCE(l.latitude, 0) as lat,
                 COALESCE(l.longitude, 0) as lng,
                 COALESCE(l.speed, 0) as speed,
@@ -112,6 +113,7 @@ router.get('/active', auth, async (req, res) => {
             SELECT DISTINCT ON (e.id)
                 e.id as "employeeId",
                 e.name,
+                e.is_tracking_enabled,
                 COALESCE(l.latitude, 0) as lat,
                 COALESCE(l.longitude, 0) as lng,
                 COALESCE(l.speed, 0) as speed,

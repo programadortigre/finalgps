@@ -415,6 +415,7 @@ const Dashboard = ({ user, onLogout }) => {
                                                             {/* ✅ Dashboard Nivel Uber: Estados Compuestos */}
                                                              {vendor.lastUpdate && (
                                                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 font-medium ${
+                                                                     vendor.is_tracking_enabled === false ? 'bg-slate-500/20 text-slate-400 border border-white/10' :
                                                                      vendor.is_stale ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' :
                                                                      vendor.status === 'GPS_OFF' ? 'bg-red-600 text-white font-bold animate-pulse px-2' :
                                                                      vendor.reset_reason && vendor.reset_reason.includes('recovery') ? 'bg-blue-500/10 text-blue-400 animate-pulse' :
@@ -422,7 +423,8 @@ const Dashboard = ({ user, onLogout }) => {
                                                                      (vendor.confidence || 1.0) >= 0.4 ? 'bg-yellow-500/10 text-yellow-400' :
                                                                      'bg-red-500/10 text-red-400'
                                                                  }`}>
-                                                                     {vendor.is_stale ? '⚠️ Desactualizado' : 
+                                                                     {vendor.is_tracking_enabled === false ? '⏸️ Rastreo Pausado' :
+                                                                      vendor.is_stale ? '⚠️ Desactualizado' : 
                                                                       vendor.status === 'GPS_OFF' ? `⛔ Apagado hace ${formatTimeAgo(vendor.lastUpdate)}` :
                                                                       vendor.reset_reason && vendor.reset_reason.includes('recovery') ? '🔄 Recuperando' :
                                                                       (vendor.confidence || 1.0) >= 0.8 ? '🟢 En Vivo' : 
