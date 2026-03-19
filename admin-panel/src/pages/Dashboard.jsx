@@ -6,6 +6,17 @@ import HistoryView from './History';
 import api from '../services/api';
 import { socket, connectSocket, disconnectSocket } from '../services/socket';
 
+const formatTimeAgo = (dateStr) => {
+    if (!dateStr) return '';
+    const diffMs = Date.now() - new Date(dateStr).getTime();
+    if (diffMs < 60000) return '< 1m';
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 60) return `${diffMins}m`;
+    const hours = Math.floor(diffMins / 60);
+    const mins = diffMins % 60;
+    return `${hours}h ${mins}m`;
+};
+
 const Dashboard = ({ user, onLogout }) => {
     const [employees, setEmployees] = useState([]);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
@@ -136,6 +147,8 @@ const Dashboard = ({ user, onLogout }) => {
             lastUpdate: loc?.lastUpdate || null,
             speed: loc?.speed || 0,
             accuracy: loc?.accuracy || 999,
+            reliability_score: loc?.reliability_score || 1.0,
+            confidence: loc?.confidence || 1.0,
             isLive,
             isVisible: matchesSearch && matchesStatus
         };
@@ -355,7 +368,21 @@ const Dashboard = ({ user, onLogout }) => {
                                                         vendor.isLive ? 'bg-green-400 shadow-lg shadow-green-400/50 animate-pulse' :
                                                         (vendor.status === 'OFFLINE' ? 'bg-slate-700' : 'bg-slate-500')
                                                      }`} />
-                                                    <span className="font-medium text-sm flex-1 group-hover:text-primary-300">{vendor.name}</span>
+                                                    <span className="font-medium text-sm flex-1 group-hover:text-primary-300 flex items-center gap-2">
+                                                        {vendor.name}
+                                                        {vendor.status !== 'OFFLINE' && (
+                                                            <span 
+                                                                className={`text-[9px] font-bold px-1 py-0.5 rounded ${
+                                                                    (vendor.reliability_score || 0) >= 0.9 ? 'bg-green-500/20 text-green-400' :
+                                                                    (vendor.reliability_score || 0) >= 0.6 ? 'bg-yellow-500/20 text-yellow-400' :
+                                                                    'bg-red-500/20 text-red-500'
+                                                                }`}
+                                                                title="Confiabilidad GPS (24h)"
+                                                            >
+                                                                🛡️ {Math.round((vendor.reliability_score || 1) * 100)}%
+                                                            </span>
+                                                        )}
+                                                    </span>
                                                     
                                                     {/* Locate Now Button */}
                                                     <button 
@@ -388,14 +415,14 @@ const Dashboard = ({ user, onLogout }) => {
                                                              {vendor.lastUpdate && (
                                                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 font-medium ${
                                                                      vendor.is_stale ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' :
-                                                                     vendor.status === 'GPS_OFF' ? 'bg-red-600 text-white font-bold animate-pulse' :
+                                                                     vendor.status === 'GPS_OFF' ? 'bg-red-600 text-white font-bold animate-pulse px-2' :
                                                                      vendor.reset_reason && vendor.reset_reason.includes('recovery') ? 'bg-blue-500/10 text-blue-400 animate-pulse' :
                                                                      (vendor.confidence || 1.0) >= 0.8 ? 'bg-green-500/10 text-green-400' :
                                                                      (vendor.confidence || 1.0) >= 0.4 ? 'bg-yellow-500/10 text-yellow-400' :
                                                                      'bg-red-500/10 text-red-400'
                                                                  }`}>
                                                                      {vendor.is_stale ? '⚠️ Desactualizado' : 
-                                                                      vendor.status === 'GPS_OFF' ? '⛔ GPS Apagado' :
+                                                                      vendor.status === 'GPS_OFF' ? `⛔ Apagado hace ${formatTimeAgo(vendor.lastUpdate)}` :
                                                                       vendor.reset_reason && vendor.reset_reason.includes('recovery') ? '🔄 Recuperando' :
                                                                       (vendor.confidence || 1.0) >= 0.8 ? '🟢 En Vivo' : 
                                                                       (vendor.confidence || 1.0) >= 0.4 ? '🟡 Baja Precisión' : '🔴 Sin GPS'}

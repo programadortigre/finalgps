@@ -141,6 +141,63 @@ router.get('/history/:employeeId', auth, async (req, res) => {
     }
 });
 
+// ✅ ENDPOINT: Obtener historial de eventos (GPS ON/OFF) por rango de fechas
+// GET /api/trips/events/history/:employeeId
+router.get('/events/history/:employeeId', auth, async (req, res) => {
+    const employeeId = req.params.employeeId;
+    const { startDate, endDate } = req.query;
+
+    if (req.user.role !== 'admin' && req.user.id !== parseInt(employeeId)) {
+        return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    if (!startDate || !endDate) {
+        return res.status(400).json({ error: 'startDate and endDate are required' });
+    }
+
+    try {
+        const result = await db.query(`
+            WITH ranked_locations AS (
+                SELECT 
+                    timestamp, state, reset_reason, quality, confidence,
+                    LAG(state) OVER (ORDER BY timestamp) as prev_state,
+                    LAG(timestamp) OVER (ORDER BY timestamp) as prev_timestamp
+                FROM locations
+                WHERE employee_id = $1 
+                AND timestamp >= EXTRACT(EPOCH FROM $2::timestamp) * 1000
+                AND timestamp <= EXTRACT(EPOCH FROM ($3::timestamp + INTERVAL '1 day')) * 1000
+            )
+            SELECT * FROM ranked_locations
+            WHERE state != COALESCE(prev_state, '')
+            AND (state = 'GPS_OFF' OR state = 'NO_FIX' OR prev_state = 'GPS_OFF' OR prev_state = 'NO_FIX')
+            ORDER BY timestamp DESC
+            LIMIT 1000
+        `, [employeeId, startDate, endDate]);
+
+        const events = result.rows.map(row => {
+            let eventType = 'UNKNOWN';
+            if (row.state === 'GPS_OFF' || row.state === 'NO_FIX') {
+                eventType = 'GPS_OFF';
+            } else if (row.prev_state === 'GPS_OFF' || row.prev_state === 'NO_FIX') {
+                eventType = 'GPS_ON';
+            }
+            
+            return {
+                timestamp: row.timestamp,
+                state: row.state,
+                event_type: eventType,
+                reset_reason: row.reset_reason,
+                duration_off_seconds: eventType === 'GPS_ON' ? Math.round((row.timestamp - row.prev_timestamp) / 1000) : null
+            };
+        });
+
+        res.json({ events });
+    } catch (err) {
+        console.error('[ERROR] Failed to get events history:', err.message);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // Get details of a single trip (route + stops)
 // NUEVO: Soporta ?simplify=true para obtener ruta compilada en lugar de todos los puntos
 router.get('/:id', auth, async (req, res) => {

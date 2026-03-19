@@ -19,6 +19,7 @@ const History = ({ user }) => {
 
     const [trips, setTrips] = useState([]);
     const [stops, setStops] = useState([]);
+    const [events, setEvents] = useState([]);
     const [activeTab, setActiveTab] = useState('trips');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -54,16 +55,19 @@ const History = ({ user }) => {
         setLoading(true);
         setError('');
         try {
-            const [tripsRes, stopsRes] = await Promise.all([
+            const [tripsRes, stopsRes, eventsRes] = await Promise.all([
                 api.get(`/api/trips/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}`),
-                api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}`)
+                api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}`),
+                api.get(`/api/trips/events/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}`)
             ]);
             setTrips(tripsRes.data.trips || []);
             setStops(stopsRes.data.stops || []);
+            setEvents(eventsRes.data.events || []);
         } catch (err) {
             setError('Error al cargar historial: ' + (err.response?.data?.error || err.message));
             setTrips([]);
             setStops([]);
+            setEvents([]);
         }
         setLoading(false);
     };
@@ -239,7 +243,7 @@ const History = ({ user }) => {
                     <span className="hist-drawer-title">
                         {selectedTrip
                             ? `Paradas (${tripDetails?.stops?.length ?? 0})`
-                            : `${activeTab === 'trips' ? 'Recorridos' : 'Paradas'} · ${activeTab === 'trips' ? trips.length : stops.length}`
+                            : `${activeTab === 'trips' ? 'Recorridos' : activeTab === 'events' ? 'Eventos' : 'Paradas'} · ${activeTab === 'trips' ? trips.length : activeTab === 'events' ? events.length : stops.length}`
                         }
                     </span>
                     {drawerOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
@@ -312,6 +316,13 @@ const History = ({ user }) => {
                                     <MapPin size={15} /> Paradas
                                     <span className="hist-tab-badge">{stops.length}</span>
                                 </button>
+                                <button
+                                    className={`hist-tab ${activeTab === 'events' ? 'active' : ''}`}
+                                    onClick={() => setActiveTab('events')}
+                                >
+                                    <AlertCircle size={15} /> Eventos GPS
+                                    <span className="hist-tab-badge">{events.length}</span>
+                                </button>
                             </div>
 
                             {loading ? (
@@ -354,7 +365,7 @@ const History = ({ user }) => {
                                         ))}
                                     </div>
                                 )
-                            ) : (
+                            ) : activeTab === 'stops' ? (
                                 stops.length === 0 ? (
                                     <div className="hist-empty">📍 No hay paradas en este período</div>
                                 ) : (
@@ -399,7 +410,43 @@ const History = ({ user }) => {
                                         </table>
                                     </div>
                                 )
-                            )}
+                            ) : activeTab === 'events' ? (
+                                events.length === 0 ? (
+                                    <div className="hist-empty">✨ No hay eventos de desconexión en este período</div>
+                                ) : (
+                                    <div className="hist-table-wrap">
+                                        <table className="hist-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Fecha</th>
+                                                    <th>Hora</th>
+                                                    <th>Evento</th>
+                                                    <th>Estado / Razón</th>
+                                                    <th>Duración apagado</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {events.map((ev, idx) => (
+                                                    <tr key={idx}>
+                                                        <td>{formatDate(ev.timestamp)}</td>
+                                                        <td>{formatTime(ev.timestamp)}</td>
+                                                        <td>
+                                                            <span className="hist-duration" style={{
+                                                                background: ev.event_type === 'GPS_OFF' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(34, 197, 94, 0.2)',
+                                                                color: ev.event_type === 'GPS_OFF' ? '#ef4444' : '#22c55e'
+                                                            }}>
+                                                                {ev.event_type === 'GPS_OFF' ? '⛔ GPS OFF' : '✅ GPS ON'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{opacity: 0.8}}>{ev.state} {ev.reset_reason ? `(${ev.reset_reason})` : ''}</td>
+                                                        <td>{ev.duration_off_seconds ? <span className="hist-coord">{formatDuration(ev.duration_off_seconds)}</span> : '-'}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )
+                            ) : null}
                         </>
                     )}
                 </div>

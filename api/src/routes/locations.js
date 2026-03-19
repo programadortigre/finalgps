@@ -46,7 +46,13 @@ router.get('/', auth, async (req, res) => {
                     WHEN (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000 - l.timestamp) > 600000 THEN true 
                     ELSE false 
                 END) as is_stale,
-                COALESCE(l.confidence, 0.5) as confidence
+                COALESCE(l.confidence, 0.5) as confidence,
+                (
+                    SELECT COALESCE(AVG(confidence), 1.0)
+                    FROM locations loc_sub
+                    WHERE loc_sub.employee_id = e.id 
+                    AND loc_sub.timestamp > (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000) - 86400000
+                ) as reliability_score
             FROM employees e
             LEFT JOIN locations l ON e.id = l.employee_id
             WHERE e.role = 'employee'
@@ -86,7 +92,13 @@ router.get('/active', auth, async (req, res) => {
                     WHEN (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000 - l.timestamp) > 600000 THEN true 
                     ELSE false 
                 END) as is_stale,
-                COALESCE(l.confidence, 0.5) as confidence
+                COALESCE(l.confidence, 0.5) as confidence,
+                (
+                    SELECT COALESCE(AVG(confidence), 1.0)
+                    FROM locations loc_sub
+                    WHERE loc_sub.employee_id = e.id 
+                    AND loc_sub.timestamp > (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000) - 86400000
+                ) as reliability_score
             FROM employees e
             INNER JOIN locations l ON e.id = l.employee_id
             WHERE e.role = 'employee' 
