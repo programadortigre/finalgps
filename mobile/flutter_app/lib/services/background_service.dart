@@ -13,6 +13,7 @@ import '../utils/kalman_filter.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'socket_service.dart';
+import 'package:dio/dio.dart'; // ✅ FIX: Added for Options class
 
 // ---------------------------------------------------------------------------
 // Logging

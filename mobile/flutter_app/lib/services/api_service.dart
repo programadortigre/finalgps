@@ -42,7 +42,7 @@ class ApiService {
   }
 
   /// Lazy-init Dio with the saved URL
-  Future<Dio> _getDio() async {
+  Future<Dio> getDio() async {
     if (_dio != null) return _dio!;
     final url = await getServerUrl();
     _dio = Dio(BaseOptions(
@@ -60,7 +60,7 @@ class ApiService {
 
   Future<String?> login(String email, String password) async {
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final res = await dio.post('/api/auth/login', data: {
         'email': email,
         'password': password,
@@ -97,7 +97,7 @@ class ApiService {
     final employeeId = int.tryParse(userIdStr ?? '');
     if (token == null || employeeId == null) return false;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       // Asegura que cada punto tenga employeeId
       final enrichedPoints = points.map((p) {
         final copy = Map<String, dynamic>.from(p);
@@ -135,7 +135,7 @@ class ApiService {
     final token = await _storage.read(key: 'token');
     if (token == null) return null;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final now = DateTime.now();
       final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
       
@@ -172,7 +172,7 @@ class ApiService {
     final token = await _storage.read(key: 'token');
     if (token == null) return null;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final res = await dio.get(
         '/api/locations',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -229,7 +229,7 @@ class ApiService {
     final token = await _storage.read(key: 'token');
     if (token == null) return null;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final res = await dio.get(
         '/api/trips/history/$employeeId?startDate=$startDate&endDate=$endDate',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -248,7 +248,7 @@ class ApiService {
     final token = await _storage.read(key: 'token');
     if (token == null) return null;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final res = await dio.get(
         '/api/trips/stops/history/$employeeId?startDate=$startDate&endDate=$endDate',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -267,7 +267,7 @@ class ApiService {
     final token = await _storage.read(key: 'token');
     if (token == null) return null;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final res = await dio.get(
         '/api/trips?employeeId=$employeeId&date=$date',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -284,7 +284,7 @@ class ApiService {
     final token = await _storage.read(key: 'token');
     if (token == null) return null;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final res = await dio.get(
         '/api/trips/$tripId',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -301,7 +301,7 @@ class ApiService {
     final token = await _storage.read(key: 'token');
     if (token == null) return null;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final res = await dio.get(
         '/api/employees',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -318,7 +318,7 @@ class ApiService {
     final token = await _storage.read(key: 'token');
     if (token == null) return null;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final res = await dio.get(
         '/api/trips/$tripId/stops',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -335,7 +335,7 @@ class ApiService {
       final token = await getToken();
       if (token == null) return false;
       
-      final dio = await _getDio(); // Use _getDio() instead of _dio
+      final dio = await getDio(); // Use getDio() instead of _dio
       final response = await dio.post(
         '/api/locations/status', // Added /api prefix
         data: {'state': status},
@@ -353,7 +353,7 @@ class ApiService {
     final token = await getToken();
     if (token == null) return null;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final res = await dio.get(
         '/api/employees/me',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -373,7 +373,7 @@ class ApiService {
     final userId = await getUserId();
     if (token == null || userId == null) return false;
     try {
-      final dio = await _getDio();
+      final dio = await getDio();
       final res = await dio.patch(
         '/api/employees/$userId/tracking',
         data: {'enabled': enabled},
