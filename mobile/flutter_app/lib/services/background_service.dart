@@ -707,9 +707,14 @@ class TrackingEngine {
     try {
       final isGpsEnabled = await Geolocator.isLocationServiceEnabled();
       final now = DateTime.now().millisecondsSinceEpoch;
+      
+      // ✅ FIX LIVE: Enviar última coordenada conocida para evitar que el mapa salte a la costa de áfrica (0,0)
+      final useLat = _lastValidPoint?.lat ?? _lastRawLat;
+      final useLng = _lastValidPoint?.lng ?? _lastRawLng;
+
       final point = {
-        'lat': 0.0,
-        'lng': 0.0,
+        'lat': useLat,
+        'lng': useLng,
         'speed': 0,
         'accuracy': 999,
         'state': isGpsEnabled ? 'NO_FIX' : 'GPS_OFF', // Diferenciar señal vs switch
