@@ -40,6 +40,7 @@ async function updateTripRoute(client, tripId) {
         const pointsResult = await client.query(`
             SELECT latitude, longitude FROM locations 
             WHERE trip_id = $1 
+            AND quality != 'no_fix' AND quality != 'low' AND source != 'geoip'
             ORDER BY timestamp ASC
         `, [tripId]);
 
@@ -76,7 +77,8 @@ async function updateTripRoute(client, tripId) {
                 SELECT ST_MakeLine(geom::geometry ORDER BY timestamp) AS geom_line,
                        COUNT(*) AS full_count
                 FROM locations
-                WHERE trip_id = $1 AND source != 'geoip' AND quality != 'low' AND quality != 'no_fix'
+                WHERE trip_id = $1
+                AND quality != 'no_fix' AND quality != 'low' AND source != 'geoip'
             )
             INSERT INTO trip_routes (
                 trip_id, 
@@ -254,13 +256,15 @@ async function processBatch(employeeId, points) {
                     [lastPoint.timestamp, tripId]
                 );
 
-                // Update distance (ignorando puntos estimados por IP o ruidosos)
+                // Update distance
                 await client.query(`
                     UPDATE trips SET distance_meters = (
                         SELECT COALESCE(SUM(dist), 0)
                         FROM (
                             SELECT ST_Distance(geom, LAG(geom) OVER (ORDER BY timestamp)) as dist
-                            FROM locations WHERE trip_id = $1 AND source != 'geoip' AND quality != 'low' AND quality != 'no_fix'
+                            FROM locations 
+                            WHERE trip_id = $1
+                            AND quality != 'no_fix' AND quality != 'low' AND source != 'geoip'
                         ) q WHERE dist IS NOT NULL
                     ) WHERE id = $1
                 `, [tripId]);

@@ -5,7 +5,13 @@ async function detectStops(client, tripId, employeeId) {
     const MAX_SPEED_KMH = 3.5;          // velocidad base para parada
 
     // 1. Obtener puntos (Siempre usar GPS Raw para que la parada caiga dentro de la tienda, no en la pista)
-    const query = 'SELECT id, latitude, longitude, speed, timestamp FROM locations WHERE trip_id = $1 ORDER BY timestamp ASC';
+    const query = `
+        SELECT id, latitude, longitude, speed, timestamp 
+        FROM locations 
+        WHERE trip_id = $1 
+        AND quality != 'no_fix' AND quality != 'low' AND source != 'geoip'
+        ORDER BY timestamp ASC
+    `;
 
     const res = await client.query(query, [tripId]);
     let rawPoints = res.rows;

@@ -8,7 +8,7 @@ En `/lib/services/api_service.dart` puedes modificar los 'kServerPresets' para p
 2. Obtener Dependencias
 \`\`\`bash
 flutter clean
-flutter pub get
+flutter pub get  
 \`\`\`
 
 3. Compilar APK Release

@@ -269,6 +269,13 @@ class TrackingEngine {
 
   void handleRemoteLocationRequest() {
     _log('SOCKET', 'ADMIN: Petición de ubicación en tiempo real recibida');
+    
+    // 🚀 FEEDBACK INSTANTÁNEO: Enviar último punto conocido mientras se busca el nuevo
+    if (_lastValidPoint != null) {
+      _log('SOCKET', 'Radar: Enviando último punto conocido preventivo');
+      _emitToSocket(_lastValidPoint!);
+    }
+
     _isPriorityScanActive = true;
     _priorityScanTicks = 0;
 
@@ -342,18 +349,27 @@ class TrackingEngine {
       return;
     }
 
-    // 1. Intentar obtener una ubicación actual con parámetros agresivos
+    // 1. Verificar si el GPS está encendido a nivel de sistema
+    Geolocator.isLocationServiceEnabled().then((isEnabled) {
+      if (!isEnabled) {
+        _log('SOCKET', '⚠️ GPS desactivado por el usuario. Enviando estado GPS_OFF');
+        _sendNoFixHeartbeat(reason: 'system_gps_disabled_on_request');
+        return;
+      }
+    });
+
+    // 2. Intentar obtener una ubicación actual con parámetros de ALTA PRECISIÓN (Estilo Google Find)
     Geolocator.getCurrentPosition(
       locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.best, // ✅ best en lugar de bestForNavigation (muy estricto)
-        forceLocationManager: false, // ✅ FALSE: vital para gama baja en interiores / compartiendo WiFi
+        accuracy: LocationAccuracy.best, 
+        forceLocationManager: false, 
       ),
-      timeLimit: const Duration(seconds: 10), // ✅ Reducido para intentar Fused rápido
+      timeLimit: const Duration(seconds: 25), // Google Find suele tardar hasta 20-30s para el fix "Exacto"
     ).then((pos) {
       final point = LocalPoint(
         lat: pos.latitude,
         lng: pos.longitude,
-        speed: pos.speed * 3.6, // m/s a km/h
+        speed: pos.speed * 3.6,
         accuracy: pos.accuracy,
         state: _currentState.name,
         timestamp: DateTime.now().millisecondsSinceEpoch,
@@ -361,15 +377,12 @@ class TrackingEngine {
       );
       _emitToSocket(point);
       _lastValidPoint = point;
+      _log('SOCKET', 'Radar: Ubicación exacta obtenida: ${pos.accuracy}m');
     }).catchError((e) {
-      _log('SOCKET', 'Error obteniendo ubicación actual: $e');
-      // Si falla, enviar último punto conocido
-      if (_lastValidPoint != null) {
-        _emitToSocket(_lastValidPoint!);
-      }
+      _log('SOCKET', 'Radar: Falló fix exacto ($e). Reintentando con stream...');
     });
 
-    // 2. Forzar escaneo de ALTA PRECISIÓN
+    // 3. Forzar escaneo de ALTA PRECISIÓN paralelo durante 1 minuto
     _restartLocationStream(reason: 'Admin Remote Request (Priority)');
   }
 
