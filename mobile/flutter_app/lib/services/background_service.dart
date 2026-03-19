@@ -349,24 +349,66 @@ class TrackingEngine {
       return;
     }
 
-    // 1. Verificar si el GPS está encendido a nivel de sistema
-    Geolocator.isLocationServiceEnabled().then((isEnabled) {
-      if (!isEnabled) {
-        _log('SOCKET', '⚠️ GPS desactivado por el usuario. Enviando estado GPS_OFF');
-        _sendNoFixHeartbeat(reason: 'system_gps_disabled_on_request');
-        return;
-      }
-    });
+  Future<void> handleRemoteLocationRequest() async {
+    _log('RADAR', 'Comando manual recibido — Iniciando secuencia de localización forzada');
+    _pendingLocationRequest = true;
 
-    // 2. Intentar obtener una ubicación actual con parámetros de ALTA PRECISIÓN (Estilo Google Find)
+    // --- CAPA 1: Respuesta Instantánea (Cero latencia) ---
+    if (_lastValidPoint != null) {
+      _log('RADAR', 'Enviando última ubicación conocida de memoria');
+      _emitToSocket(_lastValidPoint!, manual: true);
+    }
+
+    // --- CAPA 2: Last Known Position (Hardware) ---
+    try {
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      if (lastKnown != null) {
+        _log('RADAR', 'Enviando LastKnownPosition del sistema: ${lastKnown.accuracy}m');
+        _emitManualPosition(lastKnown, source: 'hardware_last_known');
+      }
+    } catch (e) {
+      _log('RADAR', 'Error obteniendo LastKnown: $e');
+    }
+
+    // --- CAPA 3: Quick Fix (WiFi/Network - 5 seg) ---
     Geolocator.getCurrentPosition(
       locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.best, 
-        forceLocationManager: false, 
+        accuracy: LocationAccuracy.low,
+        timeLimit: const Duration(seconds: 5),
       ),
-      timeLimit: const Duration(seconds: 25), // Google Find suele tardar hasta 20-30s para el fix "Exacto"
     ).then((pos) {
-      final point = LocalPoint(
+      _log('RADAR', 'Quick Fix obtenido (WiFi/Network): ${pos.accuracy}m');
+      _emitManualPosition(pos, source: 'quick_fix_network');
+    }).catchError((e) => _log('RADAR', 'Quick Fix falló o timeout: $e'));
+
+    // --- CAPA 4: Fix Exacto (GPS - 25 seg) ---
+    Geolocator.getCurrentPosition(
+      locationSettings: AndroidSettings(
+        accuracy: LocationAccuracy.best,
+        forceLocationManager: false,
+      ),
+      timeLimit: const Duration(seconds: 25),
+    ).then((pos) {
+      _log('RADAR', '✅ Fix Exacto obtenido: ${pos.accuracy}m');
+      _emitManualPosition(pos, source: 'high_accuracy_gps');
+      _lastValidPoint = _pointFromPosition(pos, source: 'high_accuracy_gps');
+      _pendingLocationRequest = false;
+    }).catchError((e) {
+      _log('RADAR', 'Fix exacto falló o timeout: $e');
+      _pendingLocationRequest = false;
+    });
+
+    // Iniciar el stream de alta frecuencia
+    _restartLocationStream(reason: 'Priority Scan Triggered by Radar');
+  }
+
+  void _emitManualPosition(Position pos, {required String source}) {
+    final point = _pointFromPosition(pos, source: source);
+    _emitToSocket(point, manual: true);
+  }
+
+  LocalPoint _pointFromPosition(Position pos, {String source = 'gps'}) {
+    return LocalPoint(
         lat: pos.latitude,
         lng: pos.longitude,
         speed: pos.speed * 3.6,
@@ -374,16 +416,8 @@ class TrackingEngine {
         state: _currentState.name,
         timestamp: DateTime.now().millisecondsSinceEpoch,
         employeeId: _cachedEmployeeId,
-      );
-      _emitToSocket(point);
-      _lastValidPoint = point;
-      _log('SOCKET', 'Radar: Ubicación exacta obtenida: ${pos.accuracy}m');
-    }).catchError((e) {
-      _log('SOCKET', 'Radar: Falló fix exacto ($e). Reintentando con stream...');
-    });
-
-    // 3. Forzar escaneo de ALTA PRECISIÓN paralelo durante 1 minuto
-    _restartLocationStream(reason: 'Admin Remote Request (Priority)');
+        source: source,
+    );
   }
 
   // Llamar cuando el socket reconecta — envía ubicación pendiente al admin
@@ -402,9 +436,11 @@ class TrackingEngine {
     }
   }
 
-  void _emitToSocket(LocalPoint point) {
+  Future<void> _emitToSocket(LocalPoint point, {bool manual = false}) async {
     if (_socket == null || !_socket!.connected) return;
     try {
+      final batteryLevel = await _battery.batteryLevel;
+      
       _socket!.emit('location_update', {
         'lat': point.lat,
         'lng': point.lng,
@@ -412,9 +448,11 @@ class TrackingEngine {
         'accuracy': point.accuracy,
         'state': point.state,
         'timestamp': point.timestamp,
-        'is_manual_request': true,
+        'is_manual_request': manual,
+        'battery': batteryLevel,
+        'source': point.source ?? 'gps',
       });
-      _log('SOCKET', 'Punto enviado a socket (Real-time)');
+      _log('SOCKET', 'Punto enviado (${manual ? "Manual" : "Auto"}) | Bat: $batteryLevel% | Source: ${point.source}');
     } catch (e) {
       _log('SOCKET', 'Error emitiendo a socket: $e');
     }
@@ -801,16 +839,15 @@ class TrackingEngine {
           }
           break;
         case TrackingState.DEEP_SLEEP:
-          // FIX: 60s en vez de 90s — si el usuario vuelve a caminar,
-          // la app lo detecta en máx. 60s y no en 10+ minutos.
-          // LocationAccuracy.medium es más fiable que .low para despertar.
-          intervalSec = 60;
-          distanceFilter = 15;
+          // WhatsApp Style: Si no se mueve, bajamos la frecuencia drásticamente.
+          // 5 minutos (300s) es suficiente para chequear si despertó.
+          intervalSec = 300; 
+          distanceFilter = 25;
           accuracy = LocationAccuracy.medium;
           break;
         case TrackingState.BATT_SAVER:
-          intervalSec = 60;
-          distanceFilter = 30;
+          intervalSec = 120;
+          distanceFilter = 50;
           accuracy = LocationAccuracy.medium;
           break;
         case TrackingState.WALKING:
@@ -913,35 +950,41 @@ class TrackingEngine {
 
       // Actualizamos última posición procesada para la siguiente comparación
       _lastProcessedPos = LocalPoint(
-          lat: pos.latitude,
-          lng: pos.longitude,
-          speed: speed,
-          accuracy: pos.accuracy,
-          timestamp: pos.timestamp.millisecondsSinceEpoch,
-          source: source,
+        lat: pos.latitude,
+        lng: pos.longitude,
+        speed: speed,
+        accuracy: pos.accuracy,
+        timestamp: pos.timestamp.millisecondsSinceEpoch,
+        source: source,
       );
 
-      // FILTRO 1: Descartar por baja precisión (Dinámico)
-      double maxAcc = (_currentState == TrackingState.STOPPED || _currentState == TrackingState.DEEP_SLEEP) ? 60.0 : 25.0;
-      if (pos.accuracy > maxAcc) {
-        _log('GPS', 'Descartado por muy baja precisión: ${pos.accuracy}m (max $maxAcc)');
-        _isProcessingPosition = false;
-        return;
+      // --- FILTRO DE CALIDAD DINÁMICO ---
+      bool isGoodForHistory = true;
+      double historyAccLimit = (_currentState == TrackingState.STOPPED || _currentState == TrackingState.DEEP_SLEEP) ? 50.0 : 30.0;
+      
+      if (pos.accuracy > historyAccLimit) {
+        isGoodForHistory = false;
       }
 
-      // FILTRO 2: Descartar saltos imposibles
+      // FILTRO 2: Descartar saltos imposibles (Transit Speed)
       if (_lastValidPoint != null) {
         final dist = Geolocator.distanceBetween(
           _lastValidPoint!.lat, _lastValidPoint!.lng,
           pos.latitude, pos.longitude,
         );
-        if (dist > 50 && speedKmh < 20) {
-          _log('GPS', 'Salto descartado: $dist m, velocidad: $speedKmh km/h');
-          _isProcessingPosition = false;
-          return;
+        final seconds = now.difference(DateTime.fromMillisecondsSinceEpoch(_lastValidPoint!.timestamp)).inSeconds;
+        
+        if (seconds > 0) {
+          final transitSpeedKmh = (dist / seconds) * 3.6;
+          if (transitSpeedKmh > 160) { // > 160 km/h es un salto de antena casi seguro
+            _log('GPS', 'Salto bloqueado: $dist m en $seconds s (${transitSpeedKmh.toStringAsFixed(1)} km/h)');
+            _isProcessingPosition = false;
+            return;
+          }
         }
-        // Drift detectado: < 8m y < 1 m/s
-        if (dist < 8 && speed < 1.0 && _currentState == TrackingState.STOPPED) {
+
+        // Drift detectado: < 6m y < 0.5 m/s (Evitar que el punto baile estando quieto)
+        if (dist < 6 && speed < 0.5 && _currentState == TrackingState.STOPPED) {
           _isProcessingPosition = false;
           return;
         }
@@ -953,19 +996,17 @@ class TrackingEngine {
 
       if (_currentState == TrackingState.WALKING) {
         if (speed < 0.8) {
-          // Permanecer en WALKING hasta que estemos quietos por 20s
           if (secondsInCurrentState > 20) targetState = TrackingState.STOPPED;
         } else {
-          // Resetear tiempo de cambio si hay movimiento real
           if (speed > 1.0) _lastStateChangeTime = DateTime.now();
-          if (speedKmh > 15) targetState = TrackingState.DRIVING;
+          if (speedKmh > 18) targetState = TrackingState.DRIVING;
         }
       } else if (_currentState == TrackingState.STOPPED || _currentState == TrackingState.DEEP_SLEEP) {
         final distFromLast = _lastValidPoint != null 
             ? Geolocator.distanceBetween(_lastValidPoint!.lat, _lastValidPoint!.lng, pos.latitude, pos.longitude)
             : 0.0;
 
-        if (speed > 1.0 || distFromLast > 8.0) { 
+        if (speed > 1.2 || distFromLast > 10.0) { 
           _highSpeedTicks++;
           final requiredTicks = (_currentState == TrackingState.DEEP_SLEEP) ? 1 : 2;
           if (_highSpeedTicks >= requiredTicks) targetState = TrackingState.WALKING;
@@ -982,10 +1023,10 @@ class TrackingEngine {
       }
 
       if (targetState != _currentState && _currentState != TrackingState.BATT_SAVER) {
-        _log('STATE', 'Hysteresis -> $targetState (speed=${speed.toStringAsFixed(1)}m/s after ${secondsInCurrentState}s)');
-        _setState(targetState, reason: 'Hysteresis');
+        _log('STATE', 'Hysteresis -> $targetState (speed=${speed.toStringAsFixed(1)}m/s)');
+        _setState(targetState, reason: 'Hysteresis ($speedKmh km/h)');
         _isProcessingPosition = false;
-        return; // Reiniciar stream para el nuevo estado
+        return; 
       }
 
       // 3. Filtrado de Calidad (Kalman)
@@ -1000,13 +1041,6 @@ class TrackingEngine {
         speedKmh: speedKmh,
       );
 
-      // 4. Buffering en Memoria (Solo si la precisión es aceptable para dibujo)
-      if (pos.accuracy > 25 && _currentState != TrackingState.DEEP_SLEEP) {
-         _log('GPS', 'Punto de baja calidad (${pos.accuracy}m) - omitiendo dibujo pero procesando estado');
-         _isProcessingPosition = false;
-         return; 
-      }
-
       _lastValidLocationTime = DateTime.now();
       final point = LocalPoint(
         lat: filtered['lat']!,
@@ -1017,30 +1051,37 @@ class TrackingEngine {
         timestamp: _lastValidLocationTime.millisecondsSinceEpoch,
         employeeId: _cachedEmployeeId,
         source: source,
+        quality: isGoodForHistory ? 'high' : 'low',
       );
 
-      _pointBuffer.add(point);
-      
-      // ✅ TRIGGER PRO: Si el buffer es > 5, mover a SQLite y disparar Sync de una
-      if (_pointBuffer.length >= 5) {
-        _log('SYNC', 'Buffer proactivo (~5 pts) -> SQLite & Sync');
-        _flushBufferToStorage().then((_) => _syncLoop(reason: 'Proactive Sync'));
-      }
-
-      // Enviar a socket inmediatamente si hay una petición prioritaria
-      if (_isPriorityScanActive) {
+      // --- EMISIÓN EN TIEMPO REAL (SOCKET) ---
+      // Siempre enviamos al socket si la precisión es "decente" (<100m)
+      // Esto elimina el "retraso" que sentía el usuario.
+      if (pos.accuracy < 100) {
         _emitToSocket(point);
       }
 
-      // Actualizar distancia local para UI
-      if (_lastValidPoint != null) {
-        final d = Geolocator.distanceBetween(
-          _lastValidPoint!.lat, _lastValidPoint!.lng,
-          point.lat, point.lng
-        );
-        if (d > 5) _totalDistanceKm += (d / 1000.0);
+      // --- GUARDADO PARA HISTORIAL (BUFFER) ---
+      // Solo guardamos en el buffer (que va a la BD para rutas) si es de alta calidad
+      if (isGoodForHistory) {
+          _pointBuffer.add(point);
+          
+          if (_pointBuffer.length >= 5) {
+            _flushBufferToStorage().then((_) => _syncLoop(reason: 'Buffer Full'));
+          }
+
+          // Actualizar distancia local solo con puntos buenos
+          if (_lastValidPoint != null) {
+            final d = Geolocator.distanceBetween(
+              _lastValidPoint!.lat, _lastValidPoint!.lng,
+              point.lat, point.lng
+            );
+            if (d > 5 && d < 1000) _totalDistanceKm += (d / 1000.0);
+          }
+          _lastValidPoint = point;
+      } else {
+        _log('GPS', 'Punto emitido a Live pero excluido de Historial (acc: ${pos.accuracy}m)');
       }
-      _lastValidPoint = point;
 
       // Emitir al UI inmediatamente si es relevante
       _serviceInstance?.invoke('trackingLocation', {

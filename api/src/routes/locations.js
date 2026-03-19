@@ -180,63 +180,60 @@ router.post('/batch', auth, async (req, res) => {
 
     // 🧠 APLICAR FILTRO KALMAN (Persistente por empleado en Redis)
     const filterKey = `kalman:employee:${employeeId}`;
-    const locationFilter = new LocationKalmanFilter(0, 0, 50); // Valores dummy iniciales
+    const lastPointKey = `last_location:employee:${employeeId}`;
+    const locationFilter = new LocationKalmanFilter(0, 0, 50);
+
+    let lastKnownGlobal = null;
 
     try {
-        const savedStateJson = await redis.get(filterKey);
+        const [savedStateJson, lastPointJson] = await Promise.all([
+            redis.get(filterKey),
+            redis.get(lastPointKey)
+        ]);
+
         if (savedStateJson) {
             locationFilter.setState(JSON.parse(savedStateJson));
         } else if (points.length > 0) {
-            // Inicializar con el primer punto si no hay estado previo
             locationFilter.reset(points[0].lat, points[0].lng);
         }
+
+        if (lastPointJson) {
+            lastKnownGlobal = JSON.parse(lastPointJson);
+        }
     } catch (e) {
-        console.error(`[Redis] Error loading kalman state for ${employeeId}:`, e);
+        console.error(`[Redis] Error loading state for ${employeeId}:`, e);
     }
 
     /// ========================================================================
     /// FILTRADO Y SUAVIZADO DE PUNTOS
     /// ========================================================================
     for (const point of points) {
-        // ✅ FILTRO INTELIGENTE PRO: No descartar puntos por precisión global exagerada
-        // Permitimos hasta 500m para "Live Status", pero marcamos calidad para "Trips"
         const accuracy = point.accuracy || 999;
         const state = point.state || 'UNKNOWN';
         const eventType = point.event_type || (state === 'NO_FIX' ? 'NO_FIX' : 'LOCATION');
         const source = point.source || (accuracy < 100 ? 'gps' : 'network');
         const resetReason = point.reset_reason || null;
-
-        const quality = point.quality || (eventType === 'NO_FIX' || state === 'GPS_OFF' ? 'no_fix' : 'high');
         
+        // 1. Determinar calidad inicial por precisión
+        let quality = 'high';
+        if (accuracy > 100) quality = 'low';
+        if (state === 'NO_FIX' || eventType === 'NO_FIX' || state === 'GPS_OFF') quality = 'no_fix';
+
         // ✅ CÁLCULO DE CONFIDENCE SCORE (0.0 - 1.0)
         let confidence = 1.0;
         if (accuracy > 200) confidence -= 0.3;
         if (accuracy > 500) confidence -= 0.2;
         if (eventType === 'NO_FIX') confidence -= 0.5;
-        if (state === 'GPS_OFF') confidence = 0.0; // GPS APAGADO = Cero confianza
+        if (state === 'GPS_OFF') confidence = 0.0;
         if (source === 'network') confidence -= 0.1;
         if (source === 'mock') confidence = 0.0;
         point.confidence = Math.max(0.0, Math.min(1.0, confidence));
 
-        if (state === 'NO_FIX' || eventType === 'NO_FIX' || state === 'GPS_OFF') {
-            console.log(`[STATUS] emp:${employeeId} reported ${state} (Reason: ${resetReason})`);
-            point.quality = "no_fix";
-        } else if (accuracy > 800) { // Un poco más permisivo para heartbeats puros
+        // 🔴 RECHAZO: Ruido extremo (>500m)
+        if (quality !== 'no_fix' && accuracy > 500) {
             console.log(`[FILTER] Point REJECTED: accuracy=${accuracy}m (Extreme noise)`);
             filtered++;
             continue;
-        } else if (accuracy > 300) {
-            point.quality = "low";
-        } else if (accuracy > 100) {
-            point.quality = "medium";
-        } else {
-            point.quality = "high";
-        }
-
-        if (point.quality === "low") {
-            console.log(
-                `[FILTER] Point marked as LOW quality: accuracy=${point.accuracy}m`
-            );
         }
 
         // ✅ FALLBACK: TRIANGULACIÓN POR IP (GEOIP) SI ESTÁN APAGADOS
@@ -251,105 +248,92 @@ router.post('/batch', auth, async (req, res) => {
                 if (geo && geo.lat && geo.lon) {
                     point.lat = geo.lat;
                     point.lng = geo.lon;
-                    point.accuracy = 5000; // 5km de radio (zonas urbanas)
+                    point.accuracy = 5000;
                     point.source = 'geoip';
-                    point.quality = 'low';
-                    console.log(`[GEOIP] Rastreo Triangulado por IP (${clientIp}): ${geo.lat}, ${geo.lon} -> ${geo.city}`);
+                    quality = 'no_fix';
+                    console.log(`[GEOIP] Rastreo por IP (${clientIp}): ${geo.lat}, ${geo.lon}`);
                 }
             }
         }
 
         // 🔴 VALIDACIÓN 2: Coordenadas inválidas
-        if (
-            typeof point.lat !== 'number' || typeof point.lng !== 'number' ||
+        if (typeof point.lat !== 'number' || typeof point.lng !== 'number' ||
             point.lat < MIN_LAT || point.lat > MAX_LAT ||
-            point.lng < MIN_LNG || point.lng > MAX_LNG
-        ) {
-            console.log(
-                `[FILTER] Point rejected: invalid coordinates lat=${point.lat}, lng=${point.lng}`
-            );
+            point.lng < MIN_LNG || point.lng > MAX_LNG) {
             filtered++;
             continue;
         }
 
         // 🔴 VALIDACIÓN 3: Timestamp no puede ser futuro
         const now = Date.now();
-        if (point.timestamp > now + 60000) {  // Permite 1 min de diferencia horaria
-            console.log(
-                `[FILTER] Point rejected: timestamp in future`
-            );
+        if (point.timestamp > now + 60000) {
             filtered++;
             continue;
         }
 
-        // 🔴 VALIDACIÓN 4: Distance clustering < 10m → IGNORAR DUPLICADO
-        if (lastValidPoint !== null) {
+        // 🔴 VALIDACIÓN 4: Saltos de Velocidad (Transit Speed)
+        const comparisonPoint = lastValidPoint || lastKnownGlobal;
+        if (comparisonPoint) {
             const distance = haversineDistance(
-                lastValidPoint.lat, lastValidPoint.lng,
+                comparisonPoint.lat, comparisonPoint.lng,
                 point.lat, point.lng
             );
 
-            if (distance < DISTANCE_THRESHOLD) {
-                console.log(
-                    `[FILTER] Point ignored: distance=${distance.toFixed(1)}m < ${DISTANCE_THRESHOLD}m (duplicate)`
-                );
+            // Evitar duplicados si la distancia es mínima en el mismo lote
+            if (lastValidPoint && distance < DISTANCE_THRESHOLD) {
                 filtered++;
                 continue;
             }
 
-            // 🔴 VALIDACIÓN 5: Velocidad máxima (validación inteligente)
-            const timeDiffSec = (point.timestamp - lastValidPoint.timestamp) / 1000;
+            const timeDiffSec = (point.timestamp - comparisonPoint.timestamp) / 1000;
             if (timeDiffSec > 0) {
-                const calculatedSpeedKmh = (distance / timeDiffSec) * 3.6;
+                const transitSpeedKmh = (distance / timeDiffSec) * 3.6;
 
-                // Rechazar si la velocidad calculada es irreal (> 180 km/h)
-                if (calculatedSpeedKmh > MAX_SPEED_KMH) {
-                    console.log(
-                        `[FILTER] Point rejected: speed=${calculatedSpeedKmh.toFixed(1)} km/h > ${MAX_SPEED_KMH} km/h`
-                    );
-                    filtered++;
-                    continue;
-                }
-
-                // 🔴 VALIDACIÓN 6: Aceleración máxima realista
-                const speedDiffKmh = Math.abs((point.speed || 0) - lastValidPoint.speed);
-                if (speedDiffKmh > MAX_ACCELERATION && timeDiffSec > 0) {
-                    const acceleration = speedDiffKmh / timeDiffSec;
-                    // The provided code snippet was syntactically incorrect for JavaScript.
-                    // Assuming the intent was to modify the existing acceleration check,
-                    // but without a clear, syntactically valid replacement,
-                    // the original check is retained to ensure the file remains valid.
-                    // If a specific change to the acceleration logic is desired,
-                    // please provide a syntactically correct JavaScript code block.
-                    if (acceleration > 20) { // > 20 km/h/s es irreal
-                        console.log(
-                            `[FILTER] Point rejected: acceleration=${acceleration.toFixed(1)} km/h/s (too high)`
-                        );
+                // Si la velocidad para alcanzar este punto es > 150 km/h, es un SALTO
+                if (transitSpeedKmh > 150) {
+                    console.log(`[JUMP-DETECT] 🚀 Jump detected! Speed: ${transitSpeedKmh.toFixed(1)} km/h. Marking as LOW.`);
+                    quality = 'low';
+                    // Si el salto es absurdo (>500km/h), descartar punto
+                    if (transitSpeedKmh > 500) {
                         filtered++;
                         continue;
+                    }
+                }
+
+                // 🔴 VALIDACIÓN 5: Aceleración máxima (solo si hay punto previo en el mismo lote)
+                if (lastValidPoint) {
+                    const speedDiffKmh = Math.abs((point.speed || 0) - lastValidPoint.speed);
+                    const acceleration = speedDiffKmh / timeDiffSec;
+                    if (acceleration > 40) { // > 40 km/h/s es irreal incluso para Tesla
+                        quality = 'low';
                     }
                 }
             }
         }
 
+        // 🧠 SUAVIZADO KALMAN
         const smoothedCoords = locationFilter.update(
             point.lat,
             point.lng,
-            point.accuracy || 50
+            point.accuracy || 50,
+            point.speed ? point.speed * 3.6 : 0
         );
 
-        // ✅ PUNTO VÁLIDO: Agregar a lista con coordenadas suavizadas
-        const smoothedPoint = {
+        // ✅ PUNTO VÁLIDO: Agregar a lista
+        const finalPoint = {
             ...point,
             lat: smoothedCoords.lat,
             lng: smoothedCoords.lng,
+            quality: quality, // Asignar calidad corregida
+            source: point.source || source
         };
 
-        filteredPoints.push(smoothedPoint);
+        filteredPoints.push(finalPoint);
         lastValidPoint = {
-            ...point,
-            lat: smoothedCoords.lat,
-            lng: smoothedCoords.lng,
+            lat: finalPoint.lat,
+            lng: finalPoint.lng,
+            timestamp: finalPoint.timestamp,
+            speed: finalPoint.speed || 0
         };
         inserted++;
     }
@@ -358,11 +342,22 @@ router.post('/batch', auth, async (req, res) => {
         `[FLOW-DIAG] Batch processing finished for emp ${employeeId}: Total:${points.length}, OK:${inserted}, Filtered:${filtered}`
     );
 
-    // Guardar estado actualizado en Redis (expira en 12 horas si no hay movimiento)
+    // 💾 GUARDAR ESTADO EN REDIS AL FINAL DEL LOTE
     try {
-        await redis.setex(filterKey, 43200, JSON.stringify(locationFilter.getState()));
+        if (filteredPoints.length > 0) {
+            const last = filteredPoints[filteredPoints.length - 1];
+            await Promise.all([
+                redis.set(filterKey, JSON.stringify(locationFilter.getState()), 'EX', 86400),
+                redis.set(lastPointKey, JSON.stringify({
+                    lat: last.lat,
+                    lng: last.lng,
+                    timestamp: last.timestamp,
+                    speed: last.speed
+                }), 'EX', 86400)
+            ]);
+        }
     } catch (e) {
-        console.error(`[Redis] Error saving kalman state for ${employeeId}:`, e);
+        console.error('[Redis] Error saving state:', e);
     }
 
     if (filteredPoints.length === 0) {
