@@ -10,6 +10,7 @@ class LocalPoint {
   final bool synced;
   final int? employeeId;
   final String? source; // ✅ NUEVO: gps, network, fused, heartbeat
+  final bool isManualRequest; // ✅ NUEVO: indica si fue pedido manualmente por el admin
 
   LocalPoint({
     this.id,
@@ -22,6 +23,7 @@ class LocalPoint {
     this.synced = false,
     this.employeeId,
     this.source,
+    this.isManualRequest = false,
   });
 
   /// Convertir a Map para guardar en SQLite
@@ -67,6 +69,7 @@ class LocalPoint {
       'state': state,
       'employeeId': employeeId,
       'source': source,
+      'is_manual_request': isManualRequest,
     };
   }
 

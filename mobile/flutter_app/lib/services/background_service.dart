@@ -380,7 +380,7 @@ class TrackingEngine {
         'employeeId': _cachedEmployeeId, // ✅ FIX: Missing ID
         'is_manual_request': manual,
         'battery': batteryLevel,
-        'source': point.source ?? 'gps',
+        'source': point.source ?? (manual ? 'manual' : 'gps'),
       });
       _log('SOCKET', 'Punto enviado (${manual ? "Manual" : "Auto"}) | Bat: $batteryLevel% | Source: ${point.source}');
     } catch (e) {
@@ -729,7 +729,7 @@ class TrackingEngine {
         'state': isGpsEnabled ? 'NO_FIX' : 'GPS_OFF',
         'timestamp': now,
         'reset_reason': reason,
-        'employeeId': _cachedEmployeeId, // ✅ FIX: Missing ID
+        'is_manual_request': false, // Heartbeat automático
         'source': isGpsEnabled ? 'heartbeat' : 'system_alert',
       };
       
@@ -1107,6 +1107,7 @@ class TrackingEngine {
           'lat': p.lat, 'lng': p.lng,
           'speed': p.speed, 'accuracy': p.accuracy,
           'state': p.state, 'timestamp': p.timestamp,
+          'is_manual_request': p.isManualRequest,
         }).toList();
 
         // 3. Intentar envío

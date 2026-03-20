@@ -23,6 +23,7 @@ const getActiveIcon = (state) => {
     if (state === 'A pie' || state === 'CAMINANDO' || state === 'WALKING') color = '#22c55e';
     if (state === 'Lento' || state === 'MOVIMIENTO_LENTO' || state === 'BATT_SAVER' || state === 'NO_SIGNAL') color = '#f59e0b';
     if (state === 'En auto' || state === 'VEHICULO' || state === 'DRIVING') color = '#6366f1';
+    if (state === 'GPS_OFF' || state === 'NO_FIX') color = '#ef4444'; // Red for critical status
     if (isPaused) color = '#1e293b'; // Slate 800 for paused
 
     return L.divIcon({
@@ -500,9 +501,12 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations, select
                         'NO_SIGNAL': { bg: '#fee2e2', color: '#991b1b' },
                         'En auto': { bg: '#dbeafe', color: '#0c4a6e' },
                         'VEHICULO': { bg: '#dbeafe', color: '#0c4a6e' },
-                        'DRIVING': { bg: '#dbeafe', color: '#0c4a6e' }
+                        'DRIVING': { bg: '#dbeafe', color: '#0c4a6e' },
+                        'GPS_OFF': { bg: '#fee2e2', color: '#b91c1c' },
+                        'NO_FIX': { bg: '#fef3c7', color: '#b45309' }
                     };
                     const stateColor = stateColors[loc.state] || stateColors['Quieto'];
+                    const isGpsOff = loc.state === 'GPS_OFF' || loc.state === 'NO_FIX';
 
                     return (
                         <Marker key={loc.employeeId} position={[loc.lat, loc.lng]} icon={getActiveIcon(loc.is_tracking_enabled === false ? 'PAUSED' : loc.state)}>
@@ -511,7 +515,17 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations, select
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', gap: '8px' }}>
                                         <div style={{ flex: 1 }}>
                                             <strong style={{ fontSize: '14px', color: '#0f172a', display: 'block' }}>{loc.name || `Vendedor ${loc.employeeId}`}</strong>
-                                            <span style={{ fontSize: '11px', color: '#475569' }}>ID: {loc.employeeId}</span>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                <span style={{ fontSize: '11px', color: '#475569' }}>ID: {loc.employeeId}</span>
+                                                {isGpsOff && (
+                                                    <span style={{ 
+                                                        background: '#ef4444', color: 'white', padding: '1px 5px', 
+                                                        borderRadius: '4px', fontSize: '9px', fontWeight: 'bold' 
+                                                    }}>
+                                                        GPS OFF ⚠️
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
                                         <span style={{
                                             background: stateColor.bg,
@@ -529,7 +543,14 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations, select
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', color: '#64748b', borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginBottom: '8px' }}>
                                         <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
                                             <span style={{ marginTop: '2px', fontSize: '12px' }}>📍</span>
-                                            <span style={{ fontSize: '12px' }}>{addr}</span>
+                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                <span style={{ fontSize: '12px' }}>{addr}</span>
+                                                {isGpsOff && (
+                                                    <small style={{ color: '#ef4444', fontWeight: 'bold', fontSize: '10px' }}>
+                                                        (Última ubicación GPS conocida)
+                                                    </small>
+                                                )}
+                                            </div>
                                         </div>
                                         <div style={{ display: 'flex', gap: '12px', fontSize: '12px' }}>
                                             <span title="Última actualización">🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}</span>

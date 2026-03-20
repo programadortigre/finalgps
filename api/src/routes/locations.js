@@ -239,8 +239,8 @@ router.post('/batch', auth, async (req, res) => {
             continue;
         }
 
-        // ✅ FALLBACK: TRIANGULACIÓN POR IP (GEOIP) SI ESTÁN APAGADOS
-        if (state === 'GPS_OFF' || eventType === 'NO_FIX') {
+        // ✅ FALLBACK: TRIANGULACIÓN POR IP (GEOIP) SOLO SI ES MANUAL Y NO HAY GPS
+        if ((state === 'GPS_OFF' || eventType === 'NO_FIX') && point.is_manual_request === true) {
             let clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
             if (clientIp) {
                 if (clientIp.includes(',')) clientIp = clientIp.split(',')[0].trim();
@@ -375,19 +375,23 @@ router.post('/batch', auth, async (req, res) => {
     }
 
     try {
-        // Push filtered points to processing queue
-        await locationQueue.add('process-batch', {
-            employeeId,
-            points: filteredPoints.map(p => ({
-                lat: p.lat,
-                lng: p.lng,
-                speed: p.speed,
-                accuracy: p.accuracy,
-                timestamp: p.timestamp,
-                state: p.state || 'STOPPED',
-                quality: p.quality || 'high' // ✅ NUEVO: Pasar calidad al worker
-            }))
-        });
+        // ✅ HISTORY PROTECTION: Solo guardar en DB si hay GPS o es movimiento real
+        const pointsForHistory = filteredPoints.filter(p => p.state !== 'GPS_OFF' && p.state !== 'NO_FIX');
+
+        if (pointsForHistory.length > 0) {
+            await locationQueue.add('process-batch', {
+                employeeId,
+                points: pointsForHistory.map(p => ({
+                    lat: p.lat,
+                    lng: p.lng,
+                    speed: p.speed,
+                    accuracy: p.accuracy,
+                    timestamp: p.timestamp,
+                    state: p.state || 'STOPPED',
+                    quality: p.quality || 'high'
+                }))
+            });
+        }
 
         // Real-time update for admins (solo último punto válido)
         // ✅ USAR REDIS PUB/SUB para escalabilidad cross-instance
