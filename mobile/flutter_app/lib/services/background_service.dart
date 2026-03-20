@@ -71,6 +71,7 @@ class TrackingEngine {
 
   // Socket status cache
   bool _isSocketConnectedByAdmin = true;
+  String? _lastSentGpsState; // ✅ Para evitar latidos repetidos innecesarios
 
   // FIX C5: guardamos la referencia al ServiceInstance para siempre estar disponible
   ServiceInstance? _serviceInstance;
@@ -276,6 +277,9 @@ class TrackingEngine {
     if (_lastValidPoint != null) {
       _log('RADAR', 'Enviando última ubicación conocida de memoria');
       _emitToSocket(_lastValidPoint!, manual: true);
+    } else {
+      // ⚠️ CASO GPS OFF: Si no hay punto válido, forzar heartbeat con GeoIP manual
+      await _sendNoFixHeartbeat(reason: 'Manual Location Request', isManual: true);
     }
 
     if (_serviceInstance is AndroidServiceInstance) {
@@ -711,10 +715,19 @@ class TrackingEngine {
   }
 
   // ✅ NUEVO: Enviar heartbeat al servidor cuando el GPS falla pero el app está viva
-  Future<void> _sendNoFixHeartbeat({String reason = 'unknown'}) async {
-    _log('WATCHDOG', 'Enviando Heartbeat "NO_FIX" ($reason) al servidor...');
+  // OPTIMIZACIÓN "PLAN SILENCIOSO": Solo envía si el estado cambió o si es manual
+  Future<void> _sendNoFixHeartbeat({String reason = 'unknown', bool isManual = false}) async {
     try {
       final isGpsEnabled = await Geolocator.isLocationServiceEnabled();
+      final currentState = isGpsEnabled ? 'NO_FIX' : 'GPS_OFF';
+      
+      // ✅ FILTRO DE BATERÍA: Si el estado no ha cambiado y NO es manual, enmudecer.
+      if (!isManual && _lastSentGpsState == currentState) {
+        return; 
+      }
+
+      _log('WATCHDOG-SILENT', 'Enviando Aviso de Cambio de Estado: $currentState ($reason)...');
+      
       final now = DateTime.now().millisecondsSinceEpoch;
       
       // ✅ FIX LIVE: Enviar última coordenada conocida para evitar que el mapa salte a la costa de áfrica (0,0)
@@ -726,21 +739,27 @@ class TrackingEngine {
         'lng': useLng,
         'speed': 0,
         'accuracy': 999,
-        'state': isGpsEnabled ? 'NO_FIX' : 'GPS_OFF',
-        'timestamp': _lastValidPoint?.timestamp ?? now,
+        'state': currentState,
+        'timestamp': now,
+        'gps_timestamp': _lastValidPoint?.timestamp ?? now,
         'reset_reason': reason,
-        'is_manual_request': false, // Heartbeat automático
+        'is_manual_request': isManual, 
         'source': isGpsEnabled ? 'heartbeat' : 'system_alert',
       };
       
-      _api.uploadBatch([point]);
+      await _api.uploadBatch([point]);
       
       if (_socket != null && _socket!.connected) {
           _socket!.emit('location_update', {
             ...point,
-            'is_manual_request': false,
+            'employeeId': _cachedEmployeeId,
+            'name': 'Actualización de Estado'
           });
       }
+
+      // Recordar último estado enviado para no repetir
+      _lastSentGpsState = currentState;
+      
     } catch (e) {
       _log('WATCHDOG', 'Error enviando heartbeat: $e');
     }
@@ -996,6 +1015,7 @@ class TrackingEngine {
       );
 
       _lastValidLocationTime = DateTime.now();
+      _lastSentGpsState = 'OK'; // ✅ Reset el tracker silencioso al recibir GPS real
       final point = LocalPoint(
         lat: filtered['lat']!,
         lng: filtered['lng']!,

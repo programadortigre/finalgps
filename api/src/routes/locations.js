@@ -283,7 +283,8 @@ router.post('/batch', auth, async (req, res) => {
             );
 
             // Evitar duplicados si la distancia es mínima en el mismo lote
-            if (lastValidPoint && distance < DISTANCE_THRESHOLD) {
+            // EXCEPCIÓN: Si el estado cambia (ej. a GPS_OFF), DEBEMOS dejarlo pasar para el log de eventos
+            if (lastValidPoint && distance < DISTANCE_THRESHOLD && state === lastValidPoint.state) {
                 filtered++;
                 continue;
             }
@@ -336,7 +337,8 @@ router.post('/batch', auth, async (req, res) => {
             lat: finalPoint.lat,
             lng: finalPoint.lng,
             timestamp: finalPoint.timestamp,
-            speed: finalPoint.speed || 0
+            speed: finalPoint.speed || 0,
+            state: finalPoint.state // ✅ Guardamos el estado para detectar cambios
         };
         inserted++;
     }
@@ -355,7 +357,8 @@ router.post('/batch', auth, async (req, res) => {
                     lat: last.lat,
                     lng: last.lng,
                     timestamp: last.timestamp,
-                    speed: last.speed
+                    speed: last.speed,
+                    state: last.state // ✅ Cachear estado
                 }), 'EX', 86400)
             ]);
         }
@@ -405,12 +408,13 @@ router.post('/batch', auth, async (req, res) => {
             speed: lastPoint.speed,
             accuracy: lastPoint.accuracy,
             state: lastPoint.state || 'STOPPED',
-            timestamp: lastPoint.timestamp,
+            timestamp: lastPoint.gps_timestamp || lastPoint.timestamp, // ✅ Use point's original GPS time if available
             quality: lastPoint.quality,
             confidence: lastPoint.confidence,
             source: lastPoint.source,
             event_type: lastPoint.event_type,
-            reset_reason: lastPoint.reset_reason
+            reset_reason: lastPoint.reset_reason,
+            server_time: lastPoint.timestamp // Info adicional de pulso
         };
 
         try {
