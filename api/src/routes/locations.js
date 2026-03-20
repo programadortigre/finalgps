@@ -286,6 +286,10 @@ router.post('/batch', auth, async (req, res) => {
 
         // 🔴 VALIDACIÓN 4: Saltos de Velocidad (Transit Speed)
         const comparisonPoint = lastValidPoint || lastKnownGlobal;
+        const pointType = point.point_type || 'normal';
+        const isManual = pointType === 'manual';
+        const isRecovery = pointType === 'recovery';
+        
         if (comparisonPoint) {
             const distance = haversineDistance(
                 comparisonPoint.lat, comparisonPoint.lng,
@@ -295,9 +299,6 @@ router.post('/batch', auth, async (req, res) => {
             // Evitar duplicados si la distancia es mínima en el mismo lote
             // EXCEPCIÓN: Si el estado cambia (ej. a GPS_OFF) o si es una PETICIÓN MANUAL, dejar pasar
             const isStateChange = lastStateInRedis && lastStateInRedis !== (point.state || 'WALKING');
-            const pointType = point.point_type || 'normal';
-            const isManual = pointType === 'manual';
-            const isRecovery = pointType === 'recovery';
 
             // 🧠 DEDUPLICACIÓN (Paranoia de Ingeniero): 
             // Si es el MISMO punto exacto (<1m) y muy reciente (<5s), ignorar.

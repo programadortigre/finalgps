@@ -1161,7 +1161,7 @@ class TrackingEngine {
           'lat': p.lat, 'lng': p.lng,
           'speed': p.speed, 'accuracy': p.accuracy,
           'state': p.state, 'timestamp': p.timestamp,
-          'is_manual_request': p.isManualRequest,
+          'is_manual_request': p.pointType == 'manual',
         }).toList();
 
         // 3. Intentar envío
