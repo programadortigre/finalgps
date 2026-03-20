@@ -553,8 +553,10 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations, select
                                             </div>
                                         </div>
                                         <div style={{ display: 'flex', gap: '12px', fontSize: '12px' }}>
-                                            <span title="Última actualización">🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}</span>
-                                            <span title="Velocidad">📈 {loc.speed ? (loc.speed.toFixed(1) + ' km/h') : '0 km/h'}</span>
+                                            <span title="Última señal recibida">🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}</span>
+                                            {loc.speed !== undefined && !isGpsOff && (
+                                                <span title="Velocidad actual">📈 {Math.round(loc.speed)} km/h</span>
+                                            )}
                                         </div>
                                     </div>
 

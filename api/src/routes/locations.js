@@ -375,8 +375,9 @@ router.post('/batch', auth, async (req, res) => {
     }
 
     try {
-        // ✅ HISTORY PROTECTION: Solo guardar en DB si hay GPS o es movimiento real
-        const pointsForHistory = filteredPoints.filter(p => p.state !== 'GPS_OFF' && p.state !== 'NO_FIX');
+        // ✅ HISTORY PROTECTION: Permitimos GPS_OFF para el LOG de eventos, 
+        // pero el worker los ignorará para distancias y rutas por su estado.
+        const pointsForHistory = filteredPoints; 
 
         if (pointsForHistory.length > 0) {
             await locationQueue.add('process-batch', {

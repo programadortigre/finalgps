@@ -45,7 +45,7 @@ const Dashboard = ({ user, onLogout }) => {
                 [data.employeeId]: { 
                     ...(prev[data.employeeId] || {}), 
                     ...data, 
-                    lastUpdate: new Date().toISOString() 
+                    lastUpdate: data.timestamp ? new Date(data.timestamp).toISOString() : new Date().toISOString()
                 }
             }));
             // Mark as live active when receiving real-time update

@@ -727,7 +727,7 @@ class TrackingEngine {
         'speed': 0,
         'accuracy': 999,
         'state': isGpsEnabled ? 'NO_FIX' : 'GPS_OFF',
-        'timestamp': now,
+        'timestamp': _lastValidPoint?.timestamp ?? now,
         'reset_reason': reason,
         'is_manual_request': false, // Heartbeat automático
         'source': isGpsEnabled ? 'heartbeat' : 'system_alert',
