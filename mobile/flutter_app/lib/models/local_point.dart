@@ -9,8 +9,10 @@ class LocalPoint {
   final String state;
   final bool synced;
   final int? employeeId;
-  final String? source; // ✅ NUEVO: gps, network, fused, heartbeat
-  final bool isManualRequest; // ✅ NUEVO: indica si fue pedido manualmente por el admin
+  final String? source; // ✅ gps, network, fused, heartbeat
+  final String? pointType; // ✅ normal, recovery, manual, gps_off
+  final int? batteryLevel; // ✅ 0-100
+  final bool? isCharging; // ✅ true/false
 
   LocalPoint({
     this.id,
@@ -23,7 +25,9 @@ class LocalPoint {
     this.synced = false,
     this.employeeId,
     this.source,
-    this.isManualRequest = false,
+    this.pointType = 'normal',
+    this.batteryLevel,
+    this.isCharging,
   });
 
   /// Convertir a Map para guardar en SQLite
@@ -39,6 +43,9 @@ class LocalPoint {
       'synced': synced ? 1 : 0,
       'employee_id': employeeId,
       'source': source,
+      'point_type': pointType,
+      'battery_level': batteryLevel,
+      'is_charging': isCharging != null ? (isCharging! ? 1 : 0) : null,
     };
   }
 
@@ -55,6 +62,9 @@ class LocalPoint {
       synced: map['synced'] != null ? (map['synced'] as int) == 1 : false,
       employeeId: (map['employee_id'] ?? map['employeeId']) as int?,
       source: map['source'] as String?,
+      pointType: map['point_type'] as String? ?? 'normal',
+      batteryLevel: map['battery_level'] as int?,
+      isCharging: map['is_charging'] != null ? (map['is_charging'] as int) == 1 : null,
     );
   }
 
@@ -69,11 +79,13 @@ class LocalPoint {
       'state': state,
       'employeeId': employeeId,
       'source': source,
-      'is_manual_request': isManualRequest,
+      'point_type': pointType,
+      'battery': batteryLevel,
+      'is_charging': isCharging,
     };
   }
 
   @override
   String toString() => 'LocalPoint(id: $id, lat: $lat, lng: $lng, source: $source, '
-      'speed: $speed, accuracy: $accuracy, timestamp: $timestamp, synced: $synced)';
+      'speed: $speed, accuracy: $accuracy, timestamp: $timestamp, battery: $batteryLevel, charging: $isCharging)';
 }

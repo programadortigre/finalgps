@@ -130,11 +130,56 @@ const getAddress = async (lat, lng) => {
     }
 };
 
-const MapView = ({ view, selectedEmployee, activeLocations, allLocations, selectedTrip: propSelectedTrip, tripDetails: propTripDetails }) => {
+const GAP_THRESHOLD_MS = 20 * 60 * 1000; // 20 min unificado
+
+// Helper function to split points into segments based on time gaps
+const getSegments = (points) => {
+    if (!points || points.length < 2) return [];
+
+    const segments = [];
+    let currentSegment = { type: 'normal', points: [points[0]] };
+
+    for (let i = 1; i < points.length; i++) {
+        const prevPoint = points[i - 1];
+        const currentPoint = points[i];
+        const timeDiff = currentPoint.timestamp - prevPoint.timestamp;
+
+        if (timeDiff > GAP_THRESHOLD_MS) {
+            // End current normal segment
+            if (currentSegment.points.length > 1) {
+                segments.push(currentSegment);
+            } else if (currentSegment.points.length === 1) {
+                // If only one point in segment, it's an isolated point, not a line
+                // We can choose to ignore it or handle it differently. For now, ignore.
+            }
+
+            // Add a gap segment
+            segments.push({
+                type: 'gap',
+                points: [prevPoint, currentPoint],
+                duration: Math.round(timeDiff / 60000) // Duration in minutes
+            });
+
+            // Start a new normal segment
+            currentSegment = { type: 'normal', points: [currentPoint] };
+        } else {
+            currentSegment.points.push(currentPoint);
+        }
+    }
+
+    // Add the last segment if it exists
+    if (currentSegment.points.length > 1) {
+        segments.push(currentSegment);
+    }
+
+    return segments;
+};
+
+const MapView = ({ view = 'live', initialEmployeeId = null, selectedDate = null, selectedEmployee, activeLocations, allLocations, selectedTrip: propSelectedTrip, tripDetails: propTripDetails }) => {
     const [trips, setTrips] = useState([]);
     const [selectedTrip, setTrip] = useState(propSelectedTrip || null);
     const [routeData, setRouteData] = useState(propTripDetails ? { isMulti: false, ...propTripDetails } : null);
-    const [date, setDate] = useState(dayjs().format('YYYY-MM-DD'));
+    const [date, setDate] = useState(selectedDate || dayjs().format('YYYY-MM-DD'));
     const [playbackMode, setPlayback] = useState(false);
     const [addresses, setAddresses] = useState({});
 
@@ -506,10 +551,30 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations, select
                         'NO_FIX': { bg: '#fef3c7', color: '#b45309' }
                     };
                     const stateColor = stateColors[loc.state] || stateColors['Quieto'];
+                    const diffMins = dayjs().diff(dayjs(loc.lastUpdate), 'minute');
+                    const isStale = diffMins > 20; // GAP_THRESHOLD
                     const isGpsOff = loc.state === 'GPS_OFF' || loc.state === 'NO_FIX';
+                    const markerOpacity = (isGpsOff || isStale) ? 0.6 : 1;
 
                     return (
-                        <Marker key={loc.employeeId} position={[loc.lat, loc.lng]} icon={getActiveIcon(loc.is_tracking_enabled === false ? 'PAUSED' : loc.state)}>
+                        <Marker 
+                            key={loc.employeeId} 
+                            position={[loc.lat, loc.lng]} 
+                            icon={L.divIcon({
+                                className: 'custom-div-icon',
+                                html: `
+                                    <div class="marker-container" style="opacity: ${markerOpacity}">
+                                        <div class="marker-pulse ${isGpsOff ? 'pulse-off' : isStale ? 'pulse-stale' : 'pulse-active'}"></div>
+                                        <div class="marker-core ${isGpsOff ? 'core-off' : isStale ? 'core-stale' : 'core-active'}">
+                                            <div class="marker-initial">${(loc.name || 'U').charAt(0).toUpperCase()}</div>
+                                        </div>
+                                    </div>
+                                `,
+                                iconSize: [40, 40],
+                                iconAnchor: [20, 20],
+                                popupAnchor: [0, -20]
+                            })}
+                        >
                             <Popup>
                                 <div style={{ fontSize: '13px', minWidth: '240px', padding: '8px' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', gap: '8px' }}>
@@ -637,13 +702,31 @@ const MapView = ({ view, selectedEmployee, activeLocations, allLocations, select
                         ) : (
                             <>
                                 <FitBounds positions={points} />
-                                {/* Dibujar línea solo si hay más de 1 punto */}
-                                {points.length > 1 && (
-                                    <>
-                                        <Polyline positions={points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />
-                                        <Polyline positions={points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />
-                                    </>
-                                )}
+                                {/* Dibujar líneas segmentadas por GAPs */}
+                                {getSegments(points).map((seg, i) => (
+                                    <React.Fragment key={`seg-${i}`}>
+                                        {seg.type === 'normal' && seg.points.length > 1 && (
+                                            <>
+                                                <Polyline positions={seg.points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />
+                                                <Polyline positions={seg.points.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />
+                                            </>
+                                        )}
+                                        {seg.type === 'gap' && (
+                                            <Polyline 
+                                                positions={seg.points.map(p => [p.lat, p.lng])} 
+                                                color="#94a3b8" 
+                                                weight={2} 
+                                                dashArray="10, 10"
+                                            >
+                                                <Popup>
+                                                    <div style={{ fontSize: '11px' }}>
+                                                        ⚠️ Desconexión de {seg.duration} min
+                                                    </div>
+                                                </Popup>
+                                            </Polyline>
+                                        )}
+                                    </React.Fragment>
+                                ))}
                                 {/* Siempre mostrar marcador de inicio */}
                                 {points[0] && (
                                     <Marker position={[points[0].lat, points[0].lng]}>

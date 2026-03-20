@@ -50,7 +50,7 @@ class TrackingEngine {
 
   // ── Estado interno ─────────────────────────────────────────────────────────
   TrackingState _currentState = TrackingState.STOPPED;
-  DateTime _lastValidLocationTime = DateTime.now();
+  DateTime _lastValidLocationTime = DateTime.parse("2020-01-01 00:00:00"); // ✅ Inicialización segura
   LocalPoint? _lastValidPoint;
   int _duplicatePointCount = 0;
   double _lastRawLat = 0;
@@ -71,7 +71,11 @@ class TrackingEngine {
 
   // Socket status cache
   bool _isSocketConnectedByAdmin = true;
-  String? _lastSentGpsState; // ✅ Para evitar latidos repetidos innecesarios
+  String? _lastSentGpsState;
+  final List<Map<String, dynamic>> _offlineBuffer = [];
+  static const int _maxBufferSize = 500;
+  static const int _gapThresholdMs = 20 * 60 * 1000; // 20 min unificado
+ // ✅ Para evitar latidos repetidos innecesarios
 
   // FIX C5: guardamos la referencia al ServiceInstance para siempre estar disponible
   ServiceInstance? _serviceInstance;
@@ -373,19 +377,24 @@ class TrackingEngine {
     if (_socket == null || !_socket!.connected) return;
     try {
       final batteryLevel = await _battery.batteryLevel;
+      final batteryState = await _battery.batteryState;
+      final isCharging = batteryState == BatteryState.charging || batteryState == BatteryState.full;
       
-      _socket!.emit('location_update', {
+      final payload = {
         'lat': point.lat,
         'lng': point.lng,
         'speed': point.speed,
         'accuracy': point.accuracy,
         'state': point.state,
         'timestamp': point.timestamp,
-        'employeeId': _cachedEmployeeId, // ✅ FIX: Missing ID
-        'is_manual_request': manual,
+        'employeeId': _cachedEmployeeId,
+        'point_type': manual ? 'manual' : (point.pointType ?? 'normal'),
         'battery': batteryLevel,
+        'is_charging': isCharging,
         'source': point.source ?? (manual ? 'manual' : 'gps'),
-      });
+      };
+
+      _socket!.emit('location_update', payload);
       _log('SOCKET', 'Punto enviado (${manual ? "Manual" : "Auto"}) | Bat: $batteryLevel% | Source: ${point.source}');
     } catch (e) {
       _log('SOCKET', 'Error emitiendo a socket: $e');
@@ -734,6 +743,10 @@ class TrackingEngine {
       final useLat = _lastValidPoint?.lat ?? _lastRawLat;
       final useLng = _lastValidPoint?.lng ?? _lastRawLng;
 
+      final batteryLevel = await _battery.batteryLevel;
+      final batteryState = await _battery.batteryState;
+      final isCharging = batteryState == BatteryState.charging || batteryState == BatteryState.full;
+
       final point = {
         'lat': useLat,
         'lng': useLng,
@@ -743,11 +756,13 @@ class TrackingEngine {
         'timestamp': now,
         'gps_timestamp': _lastValidPoint?.timestamp ?? now,
         'reset_reason': reason,
-        'is_manual_request': isManual, 
+        'point_type': isManual ? 'manual' : 'gps_off', // ✅ Estandarizado
         'source': isGpsEnabled ? 'heartbeat' : 'system_alert',
+        'battery': batteryLevel,
+        'is_charging': isCharging,
       };
       
-      await _api.uploadBatch([point]);
+      await _addToBufferAndFlush(point);
       
       if (_socket != null && _socket!.connected) {
           _socket!.emit('location_update', {
@@ -1014,8 +1029,22 @@ class TrackingEngine {
         speedKmh: speedKmh,
       );
 
-      _lastValidLocationTime = DateTime.now();
-      _lastSentGpsState = 'OK'; // ✅ Reset el tracker silencioso al recibir GPS real
+      _lastSentGpsState = 'OK'; 
+      
+      // ✅ Detección unificada de GAP (20 min)
+      String pointType = 'normal';
+      if (_lastValidPoint != null) {
+        final gap = _lastValidLocationTime.millisecondsSinceEpoch - _lastValidPoint!.timestamp;
+        if (gap > _gapThresholdMs) {
+          pointType = 'recovery';
+          _log('GAP', 'Gap detectado: ${gap~/60000} min. Marcando como RECOVERY.');
+        }
+      }
+
+      final batteryLevel = await _battery.batteryLevel;
+      final batteryState = await _battery.batteryState;
+      final isCharging = batteryState == BatteryState.charging || batteryState == BatteryState.full;
+
       final point = LocalPoint(
         lat: filtered['lat']!,
         lng: filtered['lng']!,
@@ -1025,8 +1054,13 @@ class TrackingEngine {
         timestamp: _lastValidLocationTime.millisecondsSinceEpoch,
         employeeId: _cachedEmployeeId,
         source: source,
-        // quality: isGoodForHistory ? 'high' : 'low', // REMOVED: parameter is not defined in LocalPoint
+        batteryLevel: batteryLevel,
+        isCharging: isCharging,
+        pointType: pointType,
       );
+
+      // --- Gestión de Buffer Offline ---
+      await _addToBufferAndFlush(point.toJson());
 
       // --- EMISIÓN EN TIEMPO REAL (SOCKET) ---
       // Siempre enviamos al socket si la precisión es "decente" (<100m)
@@ -1159,6 +1193,34 @@ class TrackingEngine {
       _retryBackoffSeconds = 60;
     } finally {
       _isSyncing = false;
+    }
+  }
+
+  /// 🔁 Gestión de Buffer Offline y Subida en Bloque
+  Future<void> _addToBufferAndFlush(Map<String, dynamic> point) async {
+    // 1. Añadir al buffer (limitar tamaño)
+    if (_offlineBuffer.length >= _maxBufferSize) {
+      _offlineBuffer.removeAt(0); // Descartar el más viejo si está lleno
+    }
+    _offlineBuffer.add(point);
+
+    // 2. Intentar subir todo el buffer
+    if (_offlineBuffer.isEmpty) return;
+
+    try {
+      _log('API', 'Intentando subir buffer: ${_offlineBuffer.length} puntos...');
+      final success = await _api.uploadBatch(List.from(_offlineBuffer));
+      
+      if (success) {
+        _log('API', '✅ Buffer subido con éxito. Limpiando.');
+        _offlineBuffer.clear();
+      } else {
+        _log('API', '⚠️ Falló subida de buffer. Se mantiene para reintento (${_offlineBuffer.length} pts)');
+      }
+    } on DioException catch (e) {
+      _log('API', '❌ Error de red Dio subiendo buffer: ${e.message}');
+    } catch (e) {
+      _log('API', '❌ Error inesperado subiendo buffer: $e');
     }
   }
 }

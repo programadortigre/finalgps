@@ -97,12 +97,18 @@ const History = ({ user }) => {
 
     const formatTime = (dateStr) => {
         if (!dateStr) return '-';
-        return new Date(dateStr).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+        // Convert string formatted numbers to actual numbers
+        const date = isNaN(dateStr) ? new Date(dateStr) : new Date(Number(dateStr));
+        if (isNaN(date.getTime())) return 'Fecha Inválida';
+        return date.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
     };
 
     const formatDate = (dateStr) => {
         if (!dateStr) return '-';
-        return new Date(dateStr).toLocaleDateString('es-PE');
+        // Convert string formatted numbers to actual numbers
+        const date = isNaN(dateStr) ? new Date(dateStr) : new Date(Number(dateStr));
+        if (isNaN(date.getTime())) return 'Fecha Inválida';
+        return date.toLocaleDateString('es-PE');
     };
 
     const formatDuration = (seconds) => {

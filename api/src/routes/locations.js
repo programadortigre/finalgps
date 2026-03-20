@@ -42,8 +42,10 @@ async function getCachedGeoIP(ip, redisClient) {
 /// CONFIGURACIÓN DE FILTRADO MEJORADO
 /// ============================================================================
 const ACCURACY_THRESHOLD = 50;      // Metros - rechaza GPS con error > 50m
-const DISTANCE_THRESHOLD = 4;    // Metros (Aumentado de 2 a 4 para evitar jitter)
-const MAX_SPEED_KMH = 120;       // km/h (Bajado de 180 para filtrar saltos urbanos)
+const DISTANCE_THRESHOLD = 5; // metros para considerar movimiento
+const GAP_THRESHOLD_MS = 20 * 60 * 1000; // 20 min unificado
+const SPEED_DESK_LIMIT = 200; // km/h
+const MAX_SPEED_KMH = 120;       // km/h
 const MAX_ACCELERATION = 50;     // m/s²
 const ACTIVE_THRESHOLD = 15;     // Minutos (Aumentado de 5 a 15 para evitar parpadeo)
 const MAX_LAT = 90;
@@ -183,14 +185,17 @@ router.post('/batch', auth, async (req, res) => {
     // 🧠 APLICAR FILTRO KALMAN (Persistente por empleado en Redis)
     const filterKey = `kalman:employee:${employeeId}`;
     const lastPointKey = `last_location:employee:${employeeId}`;
+    const lastStateKey = `last_state:employee:${employeeId}`; // Nuevo para el estado
     const locationFilter = new LocationKalmanFilter(0, 0, 50);
 
     let lastKnownGlobal = null;
+    let lastStateInRedis = null;
 
     try {
-        const [savedStateJson, lastPointJson] = await Promise.all([
+        const [savedStateJson, lastPointJson, lastStateJson] = await Promise.all([
             redis.get(filterKey),
-            redis.get(lastPointKey)
+            redis.get(lastPointKey),
+            redis.get(lastStateKey)
         ]);
 
         if (savedStateJson) {
@@ -201,6 +206,9 @@ router.post('/batch', auth, async (req, res) => {
 
         if (lastPointJson) {
             lastKnownGlobal = JSON.parse(lastPointJson);
+        }
+        if (lastStateJson) {
+            lastStateInRedis = lastStateJson;
         }
     } catch (e) {
         console.error(`[Redis] Error loading state for ${employeeId}:`, e);
@@ -215,6 +223,8 @@ router.post('/batch', auth, async (req, res) => {
         const eventType = point.event_type || (state === 'NO_FIX' ? 'NO_FIX' : 'LOCATION');
         const source = point.source || (accuracy < 100 ? 'gps' : 'network');
         const resetReason = point.reset_reason || null;
+        const battery = point.battery || null;
+        const isCharging = point.is_charging || false;
         
         // 1. Determinar calidad inicial por precisión (AJUSTE AGRESIVO ANTI-RUIDO)
         let quality = 'high';
@@ -283,8 +293,21 @@ router.post('/batch', auth, async (req, res) => {
             );
 
             // Evitar duplicados si la distancia es mínima en el mismo lote
-            // EXCEPCIÓN: Si el estado cambia (ej. a GPS_OFF), DEBEMOS dejarlo pasar para el log de eventos
-            if (lastValidPoint && distance < DISTANCE_THRESHOLD && state === lastValidPoint.state) {
+            // EXCEPCIÓN: Si el estado cambia (ej. a GPS_OFF) o si es una PETICIÓN MANUAL, dejar pasar
+            const isStateChange = lastStateInRedis && lastStateInRedis !== (point.state || 'WALKING');
+            const pointType = point.point_type || 'normal';
+            const isManual = pointType === 'manual';
+            const isRecovery = pointType === 'recovery';
+
+            // 🧠 DEDUPLICACIÓN (Paranoia de Ingeniero): 
+            // Si es el MISMO punto exacto (<1m) y muy reciente (<5s), ignorar.
+            if (lastValidPoint && distance < 1 && (point.timestamp - lastValidPoint.timestamp) < 5000) {
+                filtered++;
+                continue;
+            }
+
+            // Filtro de redundancia normal
+            if (lastValidPoint && distance < DISTANCE_THRESHOLD && !isStateChange && pointType === 'normal') {
                 filtered++;
                 continue;
             }
@@ -293,24 +316,17 @@ router.post('/batch', auth, async (req, res) => {
             if (timeDiffSec > 0) {
                 const transitSpeedKmh = (distance / timeDiffSec) * 3.6;
 
-                // Si la velocidad para alcanzar este punto es > 150 km/h, es un SALTO
-                if (transitSpeedKmh > 150) {
-                    console.log(`[JUMP-DETECT] 🚀 Jump detected! Speed: ${transitSpeedKmh.toFixed(1)} km/h. Marking as LOW.`);
-                    quality = 'low';
-                    // Si el salto es absurdo (>500km/h), descartar punto
-                    if (transitSpeedKmh > 500) {
-                        filtered++;
-                        continue;
-                    }
+                // 🚀 Filtro de Velocidad Inteligente
+                // Si es recovery, PERMITIMOS el salto porque venimos de un gap largo.
+                // Si es normal, descartamos si es > SPEED_DESK_LIMIT (200 km/h).
+                if (pointType === 'normal' && transitSpeedKmh > SPEED_DESK_LIMIT) {
+                    console.log(`[JUMP-DETECT] 🚀 Velocity Spike! ${transitSpeedKmh.toFixed(1)} km/h. Discarding.`);
+                    filtered++;
+                    continue;
                 }
-
-                // 🔴 VALIDACIÓN 5: Aceleración máxima (solo si hay punto previo en el mismo lote)
-                if (lastValidPoint) {
-                    const speedDiffKmh = Math.abs((point.speed || 0) - lastValidPoint.speed);
-                    const acceleration = speedDiffKmh / timeDiffSec;
-                    if (acceleration > 40) { // > 40 km/h/s es irreal incluso para Tesla
-                        quality = 'low';
-                    }
+                
+                if (transitSpeedKmh > 150) {
+                    quality = 'low';
                 }
             }
         }
@@ -329,7 +345,10 @@ router.post('/batch', auth, async (req, res) => {
             lat: smoothedCoords.lat,
             lng: smoothedCoords.lng,
             quality: quality, // Asignar calidad corregida
-            source: point.source || source
+            source: point.source || source,
+            battery: battery,
+            is_charging: isCharging,
+            point_type: pointType
         };
 
         filteredPoints.push(finalPoint);
@@ -359,7 +378,8 @@ router.post('/batch', auth, async (req, res) => {
                     timestamp: last.timestamp,
                     speed: last.speed,
                     state: last.state // ✅ Cachear estado
-                }), 'EX', 86400)
+                }), 'EX', 86400),
+                redis.set(lastStateKey, last.state || 'WALKING', 'EX', 86400) // Guardar solo el estado
             ]);
         }
     } catch (e) {
@@ -392,7 +412,8 @@ router.post('/batch', auth, async (req, res) => {
                     accuracy: p.accuracy,
                     timestamp: p.timestamp,
                     state: p.state || 'STOPPED',
-                    quality: p.quality || 'high'
+                    quality: p.quality || 'high',
+                    point_type: p.point_type || 'normal'
                 }))
             });
         }
@@ -414,7 +435,11 @@ router.post('/batch', auth, async (req, res) => {
             source: lastPoint.source,
             event_type: lastPoint.event_type,
             reset_reason: lastPoint.reset_reason,
-            server_time: lastPoint.timestamp // Info adicional de pulso
+            battery: lastPoint.battery, // ✅ Nuevo telemetry
+            is_charging: lastPoint.is_charging, // ✅ Nuevo telemetry
+            is_manual_request: lastPoint.is_manual_request || false,
+            point_type: lastPoint.point_type || 'normal',
+            server_time: new Date().toISOString() // Info adicional de pulso
         };
 
         try {

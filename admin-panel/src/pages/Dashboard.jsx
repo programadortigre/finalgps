@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Menu, X, Activity, History, Users, Search, ChevronDown, Power, PowerOff, Radar, RefreshCw } from 'lucide-react';
+import { LogOut, Menu, X, Activity, History, Users, Search, ChevronDown, Power, PowerOff, Radar, RefreshCw, Battery, Zap } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
 import HistoryView from './History';
@@ -45,7 +45,7 @@ const Dashboard = ({ user, onLogout }) => {
                 [data.employeeId]: { 
                     ...(prev[data.employeeId] || {}), 
                     ...data, 
-                    lastUpdate: data.timestamp ? new Date(data.timestamp).toISOString() : new Date().toISOString()
+                    lastUpdate: data.timestamp ? (isNaN(data.timestamp) ? new Date(data.timestamp).toISOString() : new Date(Number(data.timestamp)).toISOString()) : new Date().toISOString()
                 }
             }));
             // Mark as live active when receiving real-time update
@@ -410,41 +410,49 @@ const Dashboard = ({ user, onLogout }) => {
                                                 <div className="text-xs text-slate-400 space-y-1 pl-5 flex justify-between items-end">
                                                     <div className="space-y-1">
                                                         <div className="flex items-center gap-2">
-                                                            <span className="text-[10px] opacity-70">⚡ {vendor.speed ? (vendor.speed.toFixed(1) + ' km/h') : '---'}</span>
-                                                            
-                                                            {/* ✅ Dashboard Nivel Uber: Estados Compuestos */}
-                                                             {vendor.lastUpdate && (
-                                                                 <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 font-medium ${
-                                                                     vendor.is_tracking_enabled === false ? 'bg-slate-500/20 text-slate-400 border border-white/10' :
-                                                                     vendor.is_stale ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' :
-                                                                     vendor.status === 'GPS_OFF' ? 'bg-red-600 text-white font-bold animate-pulse px-2' :
-                                                                     vendor.reset_reason && vendor.reset_reason.includes('recovery') ? 'bg-blue-500/10 text-blue-400 animate-pulse' :
-                                                                     (vendor.confidence || 1.0) >= 0.8 ? 'bg-green-500/10 text-green-400' :
-                                                                     (vendor.confidence || 1.0) >= 0.4 ? 'bg-yellow-500/10 text-yellow-400' :
-                                                                     'bg-red-500/10 text-red-400'
-                                                                 }`}>
-                                                                     {vendor.is_tracking_enabled === false ? '⏸️ Rastreo Pausado' :
-                                                                      vendor.is_stale ? '⚠️ Desactualizado' : 
-                                                                      vendor.status === 'GPS_OFF' ? `⛔ Apagado hace ${formatTimeAgo(vendor.lastUpdate)}` :
-                                                                      vendor.reset_reason && vendor.reset_reason.includes('recovery') ? '🔄 Recuperando' :
-                                                                      (vendor.confidence || 1.0) >= 0.8 ? '🟢 En Vivo' : 
-                                                                      (vendor.confidence || 1.0) >= 0.4 ? '🟡 Baja Precisión' : '🔴 Sin GPS'}
-                                                                 </span>
-                                                             )}
-                                                             {vendor.source === 'geoip' && (
-                                                                 <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium" title="Ubicación aproximada rastreada por IP">
-                                                                     🌐 Estimado por IP
-                                                                 </span>
-                                                             )}
+                                                            <span className="text-[10px] opacity-70 flex items-center gap-1">🏎️ {vendor.speed ? (vendor.speed.toFixed(1) + ' km/h') : '---'}
+                                                            {vendor.battery !== undefined && (
+                                                                <>
+                                                                    <span className="mx-1 opacity-20">|</span>
+                                                                    <span className="flex items-center gap-0.5" title={vendor.is_charging ? "Cargando" : "Nivel de batería"}>
+                                                                        {vendor.is_charging ? <Zap size={10} className="text-yellow-400" /> : <Battery size={10} />}
+                                                                        {vendor.battery}%
+                                                                    </span>
+                                                                </>
+                                                            )}
+                                                            </span>
+                                                            {vendor.lastUpdate && (() => {
+                                                                const diffMs = vendor.lastUpdate ? (Date.now() - new Date(vendor.lastUpdate).getTime()) : Infinity;
+                                                                const diffMins = Math.floor(diffMs / 60000);
+                                                                const isStaleReal = diffMins > 20;
+
+                                                                return (
+                                                                    <div className="flex flex-wrap gap-1 mt-0.5">
+                                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 font-medium ${
+                                                                            vendor.is_tracking_enabled === false ? 'bg-slate-500/20 text-slate-400 border border-white/10' :
+                                                                            isStaleReal ? 'bg-slate-800 text-slate-400 border border-slate-700 font-bold' :
+                                                                            vendor.status === 'GPS_OFF' ? 'bg-red-600 text-white font-bold animate-pulse px-2' :
+                                                                            vendor.point_type === 'recovery' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                                                                            (vendor.confidence || 1.0) >= 0.8 ? 'bg-green-500/10 text-green-400' :
+                                                                            'bg-red-500/10 text-red-400'
+                                                                        }`}>
+                                                                            {vendor.is_tracking_enabled === false ? '⏸️ Pausado' :
+                                                                             isStaleReal ? `🕳️ Sin señal (${diffMins}m)` : 
+                                                                             vendor.status === 'GPS_OFF' ? `⛔ Apagado` :
+                                                                             vendor.point_type === 'recovery' ? '🔄 Recuperado' :
+                                                                             (vendor.confidence || 1.0) >= 0.8 ? '🟢 Live' : '🔴 NO GPS'}
+                                                                        </span>
+                                                                        {vendor.point_type === 'manual' && (
+                                                                            <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold flex items-center gap-1 animate-pulse" title="Actualizado Manualmente">
+                                                                                ⚡ MANUAL
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })()}
                                                         </div>
                                                         <div className="text-slate-500 flex items-center gap-2">
                                                             <span>{vendor.lastUpdate ? new Date(vendor.lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Offline'}</span>
-                                                            {/* ✅ Tiempo Transcurrido (Stale Time) */}
-                                                            {vendor.lastUpdate && (
-                                                                <span className="text-[9px] opacity-50 italic">
-                                                                    ({Math.floor((new Date() - new Date(vendor.lastUpdate)) / 60000)}m atrás)
-                                                                </span>
-                                                            )}
                                                         </div>
                                                     </div>
                                                     {vendor.isLive && <span className="text-[9px] text-green-500 font-bold uppercase tracking-wider">Live</span>}
