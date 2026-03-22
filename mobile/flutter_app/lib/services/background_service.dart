@@ -55,7 +55,7 @@ class TrackingEngine {
   int _duplicatePointCount = 0;
   double _lastRawLat = 0;
   double _lastRawLng = 0;
-  LocationKalmanFilter? _locationFilter;
+
   double _totalDistanceKm = 0.0; // Source of Truth for distance
 
   // PRO: Buffering & Caching
@@ -452,12 +452,6 @@ class TrackingEngine {
         _log('RESTORE', 'Último punto restaurado: ${lastPoint.lat}, ${lastPoint.lng} '
             '@ ${_lastValidLocationTime.toIso8601String()}');
 
-        // Inicializar el Kalman filter en la última posición conocida
-        _locationFilter = LocationKalmanFilter(
-          initialLat: lastPoint.lat,
-          initialLng: lastPoint.lng,
-          gpsAccuracy: lastPoint.accuracy,
-        );
       } else {
         _log('RESTORE', 'Sin estado previo en SQLite — arranque fresco');
       }
@@ -830,39 +824,39 @@ class TrackingEngine {
         switch (_currentState) {
           case TrackingState.STOPPED:
             final secondsStationary = DateTime.now().difference(_lastStateChangeTime).inSeconds;
-            if (secondsStationary > 120) { // Aumentado a 2m para ahorro
+            if (secondsStationary > 120) { // Sleep mode
               _isSleepModeActive = true;
-              intervalSec = 120; // 2 minutos
-              distanceFilter = 20;
-              accuracy = LocationAccuracy.low;
-              _log('GPS', 'SLEEP MODE: Light Inactivity ($secondsStationary s)');
+              intervalSec = 60; 
+              distanceFilter = 15; 
+              accuracy = LocationAccuracy.low; // Ahorro máximo
+              _log('GPS', 'SLEEP MODE: Lowering Accuracy');
             } else {
               _isSleepModeActive = false;
-              intervalSec = 30; // 15s -> 30s
+              intervalSec = 20; 
               distanceFilter = 10;
-              accuracy = LocationAccuracy.medium;
+              accuracy = LocationAccuracy.medium; // "Balanced" mode
             }
             break;
           case TrackingState.DEEP_SLEEP:
-            intervalSec = 600; // 5m -> 10m
-            distanceFilter = 50;
-            accuracy = LocationAccuracy.low; // medium -> low
+            intervalSec = 600; 
+            distanceFilter = 30;
+            accuracy = LocationAccuracy.low;
             break;
           case TrackingState.BATT_SAVER:
-            intervalSec = 180; // 2m -> 3m
-            distanceFilter = 100;
+            intervalSec = 180; 
+            distanceFilter = 50;
             accuracy = LocationAccuracy.low;
             break;
           case TrackingState.WALKING:
-            intervalSec = 10; // 5s -> 10s
-            distanceFilter = 10;
-            accuracy = LocationAccuracy.high;
+            intervalSec = 5; 
+            distanceFilter = 5; 
+            accuracy = LocationAccuracy.medium; // "Balanced" mode para evitar rebotes en ciudad
             break;
           case TrackingState.DRIVING:
           default:
-            intervalSec = 5; // 3s -> 5s (Reduce calor)
-            distanceFilter = 15;
-            accuracy = LocationAccuracy.high; // best -> high
+            intervalSec = 5;
+            distanceFilter = 10; 
+            accuracy = LocationAccuracy.high; // "Outdoor" mode
             break;
         }
 
@@ -889,7 +883,7 @@ class TrackingEngine {
           accuracy: accuracy,
           distanceFilter: distanceFilter,
           intervalDuration: Duration(seconds: intervalSec),
-          forceLocationManager: true, 
+          forceLocationManager: false, // Usa FusedLocationProvider de Google (Uber/Google Maps mode)
         ),
       ).listen(
         (Position pos) {
@@ -959,15 +953,38 @@ class TrackingEngine {
         source: source,
       );
 
-      // --- FILTRO DE CALIDAD DINÁMICO ---
+      // --- FILTRO DE CALIDAD DINÁMICO (Por Velocidad) ---
       bool isGoodForHistory = true;
-      double historyAccLimit = (_currentState == TrackingState.STOPPED || _currentState == TrackingState.DEEP_SLEEP) ? 50.0 : 30.0;
-      
+      double historyAccLimit;
+      if (speed < 1.5) historyAccLimit = 12.0;       // Caminando (exige más precisión)
+      else if (speed < 10.0) historyAccLimit = 15.0; // Bici / lento
+      else historyAccLimit = (_currentState == TrackingState.STOPPED) ? 25.0 : 20.0; // Auto / Quieto
+
       if (pos.accuracy > historyAccLimit) {
         isGoodForHistory = false;
       }
 
-      // FILTRO 2: Descartar saltos imposibles (Transit Speed)
+      // --- SUAVIZADO MATEMÁTICO (Simplified Kalman / Accuracy Weighting) ---
+      double smoothedLat = pos.latitude;
+      double smoothedLng = pos.longitude;
+
+      if (_lastValidPoint != null && isGoodForHistory) {
+        // Peso inversamente proporcional al error. Menos accuracy (ej 5m) = Más peso (0.2).
+        double weight = 1.0 / (pos.accuracy > 0 ? pos.accuracy : 1.0); 
+        
+        // EWMA Dinámico según velocidad
+        double alpha = (speedKmh > 40) ? 0.85 : 0.65; // A mayor velocidad, confiamos más en la posición nueva pura
+        
+        // Combinamos la nueva(ponderada) con la vieja(peso 1 base)
+        double rawSmoothLat = (pos.latitude * weight + _lastValidPoint!.lat) / (weight + 1.0);
+        double rawSmoothLng = (pos.longitude * weight + _lastValidPoint!.lng) / (weight + 1.0);
+
+        // Aplicamos el suavizado inercial EWMA sobre el resultado compensado
+        smoothedLat = (rawSmoothLat * alpha) + (_lastValidPoint!.lat * (1.0 - alpha));
+        smoothedLng = (rawSmoothLng * alpha) + (_lastValidPoint!.lng * (1.0 - alpha));
+      }
+
+      // FILTRO 2: Descartar saltos imposibles y picos de ruido
       if (_lastValidPoint != null) {
         final dist = Geolocator.distanceBetween(
           _lastValidPoint!.lat, _lastValidPoint!.lng,
@@ -977,15 +994,25 @@ class TrackingEngine {
         
         if (seconds > 0) {
           final transitSpeedKmh = (dist / seconds) * 3.6;
-          if (transitSpeedKmh > 160) { // > 160 km/h es un salto de antena casi seguro
+          
+          // 1. Salto brutal general
+          if (transitSpeedKmh > 160) {
             _log('GPS', 'Salto bloqueado: $dist m en $seconds s (${transitSpeedKmh.toStringAsFixed(1)} km/h)');
+            _isProcessingPosition = false;
+            return;
+          }
+          
+          // 2. Filtro de Picos de Ruido de Precisión (Consistency Filter)
+          // Si el salto computado es mucho mayor a la velocidad que reporta el GPS, es un pico malo.
+          if (dist > 25.0 && transitSpeedKmh > (speedKmh + 30.0) && pos.accuracy > 12.0) {
+            _log('GPS', 'Pico (Spike) filtrado: Salto de ${dist.toStringAsFixed(1)}m imposible a velocidad actual ${speedKmh.toStringAsFixed(1)}km/h');
             _isProcessingPosition = false;
             return;
           }
         }
 
-        // Drift detectado: < 6m y < 0.5 m/s (Evitar que el punto baile estando quieto)
-        if (dist < 6 && speed < 0.5 && _currentState == TrackingState.STOPPED) {
+        // Drift detectado: < 3m y < 0.5 m/s (Evitar que el punto baile estando quieto)
+        if (dist < 3 && speed < 0.5 && _currentState == TrackingState.STOPPED) {
           _isProcessingPosition = false;
           return;
         }
@@ -995,19 +1022,26 @@ class TrackingEngine {
       final secondsInCurrentState = DateTime.now().difference(_lastStateChangeTime).inSeconds;
       TrackingState targetState = _currentState;
 
+      // --- DETECCIÓN DE REPOSO (Lógica de Ticks Estacionarios) ---
+      final distFromLast = _lastValidPoint != null 
+          ? Geolocator.distanceBetween(_lastValidPoint!.lat, _lastValidPoint!.lng, pos.latitude, pos.longitude)
+          : 0.0;
+
+      if (speed < 0.5 && distFromLast < 5.0) {
+        _stationaryTicks++;
+      } else {
+        _stationaryTicks = 0;
+      }
+
       if (_currentState == TrackingState.WALKING) {
-        if (speed < 0.8) {
-          if (secondsInCurrentState > 20) targetState = TrackingState.STOPPED;
+        if (speed < 0.6 || _stationaryTicks > 3) { 
+          if (secondsInCurrentState > 30 || _stationaryTicks > 5) targetState = TrackingState.STOPPED;
         } else {
-          if (speed > 1.0) _lastStateChangeTime = DateTime.now();
+          if (speed > 0.8) _lastStateChangeTime = DateTime.now();
           if (speedKmh > 18) targetState = TrackingState.DRIVING;
         }
       } else if (_currentState == TrackingState.STOPPED || _currentState == TrackingState.DEEP_SLEEP) {
-        final distFromLast = _lastValidPoint != null 
-            ? Geolocator.distanceBetween(_lastValidPoint!.lat, _lastValidPoint!.lng, pos.latitude, pos.longitude)
-            : 0.0;
-
-        if (speed > 1.2 || distFromLast > 10.0) { 
+        if (speed > 0.8 || distFromLast > 8.0) { 
           _highSpeedTicks++;
           final requiredTicks = (_currentState == TrackingState.DEEP_SLEEP) ? 1 : 2;
           if (_highSpeedTicks >= requiredTicks) targetState = TrackingState.WALKING;
@@ -1016,8 +1050,8 @@ class TrackingEngine {
           if (pos.accuracy < 25) _lastStateChangeTime = DateTime.now().subtract(Duration(seconds: secondsInCurrentState));
         }
       } else if (_currentState == TrackingState.DRIVING) {
-        if (speedKmh < 10) {
-          if (secondsInCurrentState > 30) targetState = TrackingState.WALKING;
+        if (speedKmh < 10 || _stationaryTicks > 3) {
+          if (secondsInCurrentState > 30 || _stationaryTicks > 5) targetState = TrackingState.WALKING;
         } else {
           if (speedKmh > 15) _lastStateChangeTime = DateTime.now();
         }
@@ -1029,18 +1063,6 @@ class TrackingEngine {
         _isProcessingPosition = false;
         return; 
       }
-
-      // 3. Filtrado de Calidad (Kalman)
-      _locationFilter ??= LocationKalmanFilter(
-        initialLat: pos.latitude,
-        initialLng: pos.longitude,
-        gpsAccuracy: pos.accuracy,
-      );
-      final filtered = _locationFilter!.update(
-        pos.latitude, pos.longitude,
-        gpsAccuracy: pos.accuracy,
-        speedKmh: speedKmh,
-      );
 
       _lastSentGpsState = 'OK'; 
       
@@ -1059,8 +1081,8 @@ class TrackingEngine {
       final isCharging = batteryState == BatteryState.charging || batteryState == BatteryState.full;
 
       final point = LocalPoint(
-        lat: filtered['lat']!,
-        lng: filtered['lng']!,
+        lat: smoothedLat,
+        lng: smoothedLng,
         speed: speedKmh,
         accuracy: pos.accuracy,
         state: _currentState.name,
