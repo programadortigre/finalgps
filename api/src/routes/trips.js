@@ -40,11 +40,11 @@ router.get('/', auth, async (req, res) => {
     }
 });
 
-// ✅ ENDPOINT: Obtener historial de paradas por rango de fechas
-// GET /api/trips/stops/history/:employeeId
+// ✅ ENDPOINT: Obtener historial de paradas por rango de fechas (CON PAGINACIÓN)
+// GET /api/trips/stops/history/:employeeId?page=1&limit=50
 router.get('/stops/history/:employeeId', auth, async (req, res) => {
     const employeeId = req.params.employeeId;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, page = 1, limit = 50 } = req.query;
 
     // Validar autorización (admin o propietario)
     if (req.user.role !== 'admin' && req.user.id !== parseInt(employeeId)) {
@@ -55,28 +55,64 @@ router.get('/stops/history/:employeeId', auth, async (req, res) => {
         return res.status(400).json({ error: 'startDate and endDate are required (YYYY-MM-DD)' });
     }
 
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(10, parseInt(limit)));
+    const offset = (pageNum - 1) * limitNum;
+
     try {
+        // Total count
+        const countResult = await db.query(`
+            SELECT COUNT(*) as total FROM stops s
+            INNER JOIN trips t ON s.trip_id = t.id
+            WHERE s.employee_id = $1
+            AND DATE(s.start_time) >= $2
+            AND DATE(s.start_time) <= $3
+        `, [employeeId, startDate, endDate]);
+
         const result = await db.query(`
             SELECT 
                 s.id,
                 s.latitude,
                 s.longitude,
+                TO_CHAR(s.start_time, 'YYYY-MM-DD') as stop_date,
+                TO_CHAR(s.start_time, 'HH24:MI') as start_time_formatted,
+                TO_CHAR(s.end_time, 'HH24:MI') as end_time_formatted,
+                EXTRACT(EPOCH FROM (s.end_time - s.start_time))::int as duration_seconds,
+                t.id as trip_id,
                 s.start_time,
                 s.end_time,
-                s.duration_seconds,
-                t.id as trip_id,
-                DATE(s.start_time) as stop_date
+                s.duration_seconds as duration_seconds_original
             FROM stops s
             INNER JOIN trips t ON s.trip_id = t.id
             WHERE s.employee_id = $1
             AND DATE(s.start_time) >= $2
             AND DATE(s.start_time) <= $3
             ORDER BY s.start_time DESC
-        `, [employeeId, startDate, endDate]);
+            LIMIT $4 OFFSET $5
+        `, [employeeId, startDate, endDate, limitNum, offset]);
+
+        const stops = result.rows.map(stop => ({
+            id: stop.id,
+            latitude: parseFloat(stop.latitude).toFixed(5),
+            longitude: parseFloat(stop.longitude).toFixed(5),
+            stop_date: stop.stop_date,
+            start_time_formatted: stop.start_time_formatted,
+            end_time_formatted: stop.end_time_formatted,
+            duration_formatted: stop.duration_seconds ? `${Math.floor(stop.duration_seconds / 60)}m ${stop.duration_seconds % 60}s` : '-',
+            trip_id: stop.trip_id,
+            // Mantener para compatibilidad
+            start_time: stop.start_time,
+            end_time: stop.end_time,
+            duration_seconds: stop.duration_seconds
+        }));
 
         res.json({
-            count: result.rows.length,
-            stops: result.rows
+            count: stops.length,
+            total: parseInt(countResult.rows[0].total),
+            page: pageNum,
+            limit: limitNum,
+            hasMore: (pageNum * limitNum) < parseInt(countResult.rows[0].total),
+            stops: stops
         });
     } catch (err) {
         console.error('[ERROR] Failed to get stops history:', err.message);
@@ -84,11 +120,11 @@ router.get('/stops/history/:employeeId', auth, async (req, res) => {
     }
 });
 
-// ✅ ENDPOINT: Obtener historial de viajes por rango de fechas
-// GET /api/trips/history/:employeeId
+// ✅ ENDPOINT: Obtener historial de viajes por rango de fechas (CON PAGINACIÓN Y DATOS PRE-PROCESADOS)
+// GET /api/trips/history/:employeeId?page=1&limit=50
 router.get('/history/:employeeId', auth, async (req, res) => {
     const employeeId = req.params.employeeId;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, page = 1, limit = 50 } = req.query;
 
     // Validar autorización (admin o propietario)
     if (req.user.role !== 'admin' && req.user.id !== parseInt(employeeId)) {
@@ -99,40 +135,69 @@ router.get('/history/:employeeId', auth, async (req, res) => {
         return res.status(400).json({ error: 'startDate and endDate are required (YYYY-MM-DD)' });
     }
 
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(10, parseInt(limit)));
+    const offset = (pageNum - 1) * limitNum;
+
     try {
-        console.log(`[TRIPS] History request: employeeId=${employeeId}, dates=${startDate} to ${endDate}, role=${req.user.role}`);
+        console.log(`[TRIPS] History request: employeeId=${employeeId}, dates=${startDate} to ${endDate}, page=${pageNum}, limit=${limitNum}`);
         
+        // Total count
+        const countResult = await db.query(`
+            SELECT COUNT(*) as total FROM trips t
+            WHERE t.employee_id = $1
+            AND DATE(t.start_time) >= $2
+            AND DATE(t.start_time) <= $3
+        `, [employeeId, startDate, endDate]);
+
+        // Paginated results with pre-formatted data
         const result = await db.query(`
             SELECT 
                 t.id,
-                t.start_time,
-                t.end_time,
-                t.distance_meters,
+                TO_CHAR(t.start_time, 'YYYY-MM-DD') as trip_date,
+                TO_CHAR(t.start_time, 'HH24:MI') as start_time_formatted,
+                TO_CHAR(t.end_time, 'HH24:MI') as end_time_formatted,
+                EXTRACT(EPOCH FROM (t.end_time - t.start_time))::int as duration_seconds,
+                ROUND((t.distance_meters::numeric / 1000)::numeric, 2) as distance_km,
                 t.is_active,
                 (SELECT COUNT(*) FROM stops WHERE trip_id = t.id) as stop_count,
                 (SELECT COUNT(*) FROM locations WHERE trip_id = t.id) as point_count,
-                DATE(t.start_time) as trip_date
+                t.start_time,
+                t.end_time,
+                t.distance_meters
             FROM trips t
             WHERE t.employee_id = $1
             AND DATE(t.start_time) >= $2
             AND DATE(t.start_time) <= $3
             ORDER BY t.start_time DESC
-        `, [employeeId, startDate, endDate]);
+            LIMIT $4 OFFSET $5
+        `, [employeeId, startDate, endDate, limitNum, offset]);
 
         console.log(`[TRIPS] Found ${result.rows.length} trips for employee ${employeeId}`);
 
         const trips = result.rows.map(trip => ({
-            ...trip,
-            duration_minutes: trip.end_time ? 
-                Math.round((new Date(trip.end_time) - new Date(trip.start_time)) / 60000) : 
-                null,
-            duration_hours: trip.end_time ?
-                ((new Date(trip.end_time) - new Date(trip.start_time)) / 3600000).toFixed(2) :
-                null
+            id: trip.id,
+            trip_date: trip.trip_date,
+            start_time_formatted: trip.start_time_formatted,
+            end_time_formatted: trip.end_time_formatted,
+            duration_hours: (trip.duration_seconds / 3600).toFixed(2),
+            duration_minutes: Math.floor(trip.duration_seconds / 60),
+            distance_km: trip.distance_km,
+            distance_meters: trip.distance_meters,
+            stop_count: trip.stop_count,
+            point_count: trip.point_count,
+            is_active: trip.is_active,
+            // Mantener timestamps originales para compatibilidad
+            start_time: trip.start_time,
+            end_time: trip.end_time
         }));
 
         res.json({
             count: trips.length,
+            total: parseInt(countResult.rows[0].total),
+            page: pageNum,
+            limit: limitNum,
+            hasMore: (pageNum * limitNum) < parseInt(countResult.rows[0].total),
             trips: trips
         });
     } catch (err) {
@@ -141,11 +206,11 @@ router.get('/history/:employeeId', auth, async (req, res) => {
     }
 });
 
-// ✅ ENDPOINT: Obtener historial de eventos (GPS ON/OFF) por rango de fechas
-// GET /api/trips/events/history/:employeeId
+// ✅ ENDPOINT: Obtener historial de eventos (GPS ON/OFF) por rango de fechas (CON PAGINACIÓN)
+// GET /api/trips/events/history/:employeeId?page=1&limit=50
 router.get('/events/history/:employeeId', auth, async (req, res) => {
     const employeeId = req.params.employeeId;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, page = 1, limit = 50 } = req.query;
 
     if (req.user.role !== 'admin' && req.user.id !== parseInt(employeeId)) {
         return res.status(403).json({ error: 'Not authorized' });
@@ -155,7 +220,28 @@ router.get('/events/history/:employeeId', auth, async (req, res) => {
         return res.status(400).json({ error: 'startDate and endDate are required' });
     }
 
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(10, parseInt(limit)));
+    const offset = (pageNum - 1) * limitNum;
+
     try {
+        // Total count
+        const countResult = await db.query(`
+            WITH ranked_locations AS (
+                SELECT 
+                    timestamp, state, reset_reason, quality, confidence,
+                    LAG(state) OVER (ORDER BY timestamp) as prev_state,
+                    LAG(timestamp) OVER (ORDER BY timestamp) as prev_timestamp
+                FROM locations
+                WHERE employee_id = $1 
+                AND timestamp >= EXTRACT(EPOCH FROM $2::timestamp) * 1000
+                AND timestamp <= EXTRACT(EPOCH FROM ($3::timestamp + INTERVAL '1 day')) * 1000
+            )
+            SELECT COUNT(*) as total FROM ranked_locations
+            WHERE state != COALESCE(prev_state, '')
+            AND (state = 'GPS_OFF' OR state = 'NO_FIX' OR prev_state = 'GPS_OFF' OR prev_state = 'NO_FIX')
+        `, [employeeId, startDate, endDate]);
+
         const result = await db.query(`
             WITH ranked_locations AS (
                 SELECT 
@@ -171,8 +257,8 @@ router.get('/events/history/:employeeId', auth, async (req, res) => {
             WHERE state != COALESCE(prev_state, '')
             AND (state = 'GPS_OFF' OR state = 'NO_FIX' OR prev_state = 'GPS_OFF' OR prev_state = 'NO_FIX')
             ORDER BY timestamp DESC
-            LIMIT 1000
-        `, [employeeId, startDate, endDate]);
+            LIMIT $4 OFFSET $5
+        `, [employeeId, startDate, endDate, limitNum, offset]);
 
         const events = result.rows.map(row => {
             let eventType = 'UNKNOWN';
@@ -182,16 +268,30 @@ router.get('/events/history/:employeeId', auth, async (req, res) => {
                 eventType = 'GPS_ON';
             }
             
+            const eventDate = new Date(row.timestamp);
+            const durationOff = eventType === 'GPS_ON' ? Math.round((row.timestamp - row.prev_timestamp) / 1000) : null;
+            const durationOffFormatted = durationOff ? `${Math.floor(durationOff / 60)}m ${durationOff % 60}s` : null;
+            
             return {
                 timestamp: row.timestamp,
+                event_date: eventDate.toLocaleDateString('es-PE'),
+                event_time: eventDate.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }),
                 state: row.state,
                 event_type: eventType,
                 reset_reason: row.reset_reason,
-                duration_off_seconds: eventType === 'GPS_ON' ? Math.round((row.timestamp - row.prev_timestamp) / 1000) : null
+                duration_off_seconds: durationOff,
+                duration_off_formatted: durationOffFormatted
             };
         });
 
-        res.json({ events });
+        res.json({ 
+            count: events.length,
+            total: parseInt(countResult.rows[0].total),
+            page: pageNum,
+            limit: limitNum,
+            hasMore: (pageNum * limitNum) < parseInt(countResult.rows[0].total),
+            events 
+        });
     } catch (err) {
         console.error('[ERROR] Failed to get events history:', err.message);
         res.status(500).json({ error: 'Internal server error' });

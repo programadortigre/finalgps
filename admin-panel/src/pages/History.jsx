@@ -1,7 +1,68 @@
-import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, MapPin, ChevronRight, ArrowLeft, Loader, AlertCircle, CalendarDays, ChevronDown, ChevronUp, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
+import { Calendar, Clock, MapPin, ChevronRight, ArrowLeft, Loader, AlertCircle, CalendarDays, ChevronDown, ChevronUp, X, TrendingUp, Briefcase } from 'lucide-react';
 import api from '../services/api';
 import MapView from '../components/MapView';
+
+// ✅ Componente memoizado para tarjeta de viaje
+const TripCard = memo(({ trip, onClick, employee }) => (
+    <div className="trip-card" onClick={onClick}>
+        <div className="trip-header">
+            <div className="trip-badge">{trip.trip_date}</div>
+            <div className="trip-time-range">
+                <Clock size={14} />
+                <span>{trip.start_time_formatted} → {trip.end_time_formatted}</span>
+            </div>
+        </div>
+        <div className="trip-content">
+            <div className="trip-metric">
+                <div className="metric-label">Distancia</div>
+                <div className="metric-value">{trip.distance_km} km</div>
+            </div>
+            <div className="trip-metric">
+                <div className="metric-label">Duración</div>
+                <div className="metric-value">{trip.duration_hours}h</div>
+            </div>
+            <div className="trip-metric">
+                <div className="metric-label">Paradas</div>
+                <div className="metric-value">{trip.stop_count}</div>
+            </div>
+        </div>
+        <div className="trip-footer">
+            Ver detalles <ChevronRight size={16} />
+        </div>
+    </div>
+));
+TripCard.displayName = 'TripCard';
+
+// ✅ Componente memoizado para fila de parada
+const StopRow = memo(({ stop }) => (
+    <div className="stop-row">
+        <div className="stop-time">
+            <div className="stop-date-badge">{stop.stop_date}</div>
+            <div className="stop-time-badge">{stop.start_time_formatted}</div>
+        </div>
+        <div className="stop-duration">{stop.duration_formatted}</div>
+        <div className="stop-location">
+            <MapPin size={13} />
+            <code>{stop.latitude}, {stop.longitude}</code>
+        </div>
+    </div>
+));
+StopRow.displayName = 'StopRow';
+
+// ✅ Componente memoizado para fila de evento
+const EventRow = memo(({ event }) => (
+    <div className="event-row">
+        <div className="event-date">{event.event_date}</div>
+        <div className="event-time">{event.event_time}</div>
+        <div className={`event-badge ${event.event_type === 'GPS_OFF' ? 'off' : 'on'}`}>
+            {event.event_type === 'GPS_OFF' ? '⛔ OFF' : '✅ ON'}
+        </div>
+        <div className="event-reason">{event.state}</div>
+        {event.duration_off_formatted && <div className="event-duration">{event.duration_off_formatted}</div>}
+    </div>
+));
+EventRow.displayName = 'EventRow';
 
 const History = ({ user }) => {
     const [employees, setEmployees] = useState([]);
@@ -13,7 +74,7 @@ const History = ({ user }) => {
     });
     const [endDate, setEndDate] = useState(() => {
         const d = new Date();
-        d.setDate(d.getDate() + 1);  // ✅ FIX: Incluir también mañana para atrapar viajes con timezone offset
+        d.setDate(d.getDate() + 1);
         return d.toISOString().split('T')[0];
     });
 
@@ -26,16 +87,23 @@ const History = ({ user }) => {
     const [selectedTrip, setSelectedTrip] = useState(null);
     const [tripDetails, setTripDetails] = useState(null);
     const [loadingDetails, setLoadingDetails] = useState(false);
-    const [drawerOpen, setDrawerOpen] = useState(true);
-    const [filtersExpanded, setFiltersExpanded] = useState(true);
+
+    const [tripsPage, setTripsPage] = useState(1);
+    const [stopsPage, setStopsPage] = useState(1);
+    const [eventsPage, setEventsPage] = useState(1);
+    const itemsPerPage = 50;
+
+    const [paginationInfo, setPaginationInfo] = useState({
+        trips: { total: 0, hasMore: false },
+        stops: { total: 0, hasMore: false },
+        events: { total: 0, hasMore: false }
+    });
 
     useEffect(() => {
         const fetchEmployees = async () => {
             try {
                 const { data } = await api.get('/api/trips/employees');
                 setEmployees(data);
-                // ✅ FIX: Preseleccionar el primer empleado al cargar
-                // Esperar a que data esté disponible antes de preseleccionar
                 if (data.length > 0) {
                     setSelectedEmployee(data[0].id);
                 }
@@ -46,23 +114,34 @@ const History = ({ user }) => {
         fetchEmployees();
     }, []);
 
-    useEffect(() => {
-        if (!selectedEmployee) return;
-        fetchHistory();
-    }, [selectedEmployee, startDate, endDate]);
-
-    const fetchHistory = async () => {
+    const fetchHistory = useCallback(async () => {
         setLoading(true);
         setError('');
+        setTripsPage(1);
+        setStopsPage(1);
+        setEventsPage(1);
+        
+        if (!selectedEmployee) {
+            setLoading(false);
+            return;
+        }
+
         try {
             const [tripsRes, stopsRes, eventsRes] = await Promise.all([
-                api.get(`/api/trips/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}`),
-                api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}`),
-                api.get(`/api/trips/events/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}`)
+                api.get(`/api/trips/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}`),
+                api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}`),
+                api.get(`/api/trips/events/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}`)
             ]);
+            
             setTrips(tripsRes.data.trips || []);
             setStops(stopsRes.data.stops || []);
             setEvents(eventsRes.data.events || []);
+
+            setPaginationInfo({
+                trips: { total: tripsRes.data.total || 0, hasMore: tripsRes.data.hasMore || false },
+                stops: { total: stopsRes.data.total || 0, hasMore: stopsRes.data.hasMore || false },
+                events: { total: eventsRes.data.total || 0, hasMore: eventsRes.data.hasMore || false }
+            });
         } catch (err) {
             setError('Error al cargar historial: ' + (err.response?.data?.error || err.message));
             setTrips([]);
@@ -70,9 +149,62 @@ const History = ({ user }) => {
             setEvents([]);
         }
         setLoading(false);
-    };
+    }, [selectedEmployee, startDate, endDate]);
 
-    const fetchTripDetails = async (tripId) => {
+    useEffect(() => {
+        if (!selectedEmployee) return;
+        fetchHistory();
+    }, [selectedEmployee, startDate, endDate, fetchHistory]);
+
+    const loadMoreTrips = useCallback(async () => {
+        if (loading) return;
+        const nextPage = tripsPage + 1;
+        try {
+            const { data } = await api.get(`/api/trips/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}`);
+            setTrips(prev => [...prev, ...(data.trips || [])]);
+            setTripsPage(nextPage);
+            setPaginationInfo(prev => ({
+                ...prev,
+                trips: { total: data.total, hasMore: data.hasMore }
+            }));
+        } catch (err) {
+            setError('Error al cargar más viajes');
+        }
+    }, [selectedEmployee, startDate, endDate, tripsPage, loading]);
+
+    const loadMoreStops = useCallback(async () => {
+        if (loading) return;
+        const nextPage = stopsPage + 1;
+        try {
+            const { data } = await api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}`);
+            setStops(prev => [...prev, ...(data.stops || [])]);
+            setStopsPage(nextPage);
+            setPaginationInfo(prev => ({
+                ...prev,
+                stops: { total: data.total, hasMore: data.hasMore }
+            }));
+        } catch (err) {
+            setError('Error al cargar más paradas');
+        }
+    }, [selectedEmployee, startDate, endDate, stopsPage, loading]);
+
+    const loadMoreEvents = useCallback(async () => {
+        if (loading) return;
+        const nextPage = eventsPage + 1;
+        try {
+            const { data } = await api.get(`/api/trips/events/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}`);
+            setEvents(prev => [...prev, ...(data.events || [])]);
+            setEventsPage(nextPage);
+            setPaginationInfo(prev => ({
+                ...prev,
+                events: { total: data.total, hasMore: data.hasMore }
+            }));
+        } catch (err) {
+            setError('Error al cargar más eventos');
+        }
+    }, [selectedEmployee, startDate, endDate, eventsPage, loading]);
+
+    const fetchTripDetails = useCallback(async (tripId) => {
         setLoadingDetails(true);
         try {
             const { data } = await api.get(`/api/trips/${tripId}?simplify=true`);
@@ -81,56 +213,31 @@ const History = ({ user }) => {
             setError('Error al cargar detalles del viaje');
         }
         setLoadingDetails(false);
-    };
+    }, []);
 
-    const handleTripClick = (trip) => {
+    const handleTripClick = useCallback((trip) => {
         setSelectedTrip(trip);
         fetchTripDetails(trip.id);
-        setDrawerOpen(false);
-    };
+    }, [fetchTripDetails]);
 
-    const handleBack = () => {
+    const handleBack = useCallback(() => {
         setSelectedTrip(null);
         setTripDetails(null);
-        setDrawerOpen(true);
-    };
+    }, []);
 
-    const formatTime = (dateStr) => {
-        if (!dateStr) return '-';
-        // Convert string formatted numbers to actual numbers
-        const date = isNaN(dateStr) ? new Date(dateStr) : new Date(Number(dateStr));
-        if (isNaN(date.getTime())) return 'Fecha Inválida';
-        return date.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
-    };
-
-    const formatDate = (dateStr) => {
-        if (!dateStr) return '-';
-        // Convert string formatted numbers to actual numbers
-        const date = isNaN(dateStr) ? new Date(dateStr) : new Date(Number(dateStr));
-        if (isNaN(date.getTime())) return 'Fecha Inválida';
-        return date.toLocaleDateString('es-PE');
-    };
-
-    const formatDuration = (seconds) => {
-        if (!seconds) return '-';
-        const mins = Math.floor(seconds / 60);
-        if (mins > 60) {
-            const hours = Math.floor(mins / 60);
-            return `${hours}h ${mins % 60}m`;
-        }
-        return `${mins}m ${seconds % 60}s`;
-    };
+    const employeeName = useMemo(() => {
+        return employees.find(e => e.id === selectedEmployee)?.name || 'Vendedor';
+    }, [employees, selectedEmployee]);
 
     return (
-        <div className="hist-layout">
-
-            {/* Full-screen map */}
-            <div className="hist-map-full">
+        <div className="hist-container">
+            {/* Mapa a fondo */}
+            <div className="hist-map-section">
                 {selectedTrip && tripDetails ? (
                     loadingDetails ? (
-                        <div className="hist-map-loading">
-                            <Loader className="spin" size={36} />
-                            <span>Cargando ruta...</span>
+                        <div className="hist-loading-overlay">
+                            <Loader size={40} className="spin" />
+                            <p>Cargando ruta...</p>
                         </div>
                     ) : (
                         <MapView
@@ -150,312 +257,224 @@ const History = ({ user }) => {
                 )}
             </div>
 
-            {/* Floating filter bar */}
-            <div className="hist-filterbar">
-                {selectedTrip ? (
-                    /* Trip detail header */
-                    <div className="hist-detail-bar">
-                        <button className="hist-back-btn" onClick={handleBack}>
-                            <ArrowLeft size={16} /> Volver
-                        </button>
-                        <div className="hist-detail-info">
-                            <span className="hist-detail-title">
-                                {employees.find(e => e.id === selectedEmployee)?.name || 'Vendedor'}
-                            </span>
-                            <span className="hist-detail-meta">
-                                {formatDate(selectedTrip.start_time)} · {formatTime(selectedTrip.start_time)} – {formatTime(selectedTrip.end_time)}
-                            </span>
-                        </div>
-                        <div className="hist-mini-stats">
-                            <div className="hist-mini-stat">
-                                <span className="hist-mini-label">Distancia</span>
-                                <span className="hist-mini-value">{(selectedTrip.distance_meters / 1000).toFixed(2)} km</span>
-                            </div>
-                            <div className="hist-mini-stat">
-                                <span className="hist-mini-label">Duración</span>
-                                <span className="hist-mini-value">{selectedTrip.duration_hours} h</span>
-                            </div>
-                            <div className="hist-mini-stat">
-                                <span className="hist-mini-label">Paradas</span>
-                                <span className="hist-mini-value">{selectedTrip.stop_count}</span>
-                            </div>
-                            <div className="hist-mini-stat">
-                                <span className="hist-mini-label">Puntos GPS</span>
-                                <span className="hist-mini-value">{selectedTrip.point_count}</span>
-                            </div>
-                        </div>
+            {/* Barra de filtros superior */}
+            <div className="hist-top-bar">
+                <div className="hist-filter-controls">
+                    <div className="hist-select-group">
+                        <label>Vendedor</label>
+                        <select
+                            value={selectedEmployee || ''}
+                            onChange={(e) => setSelectedEmployee(parseInt(e.target.value))}
+                        >
+                            <option value="">Seleccionar...</option>
+                            {employees.map(emp => (
+                                <option key={emp.id} value={emp.id}>{emp.name}</option>
+                            ))}
+                        </select>
                     </div>
-                ) : (
-                    /* Filter controls */
-                    <div className="hist-filters">
-                        <div className="hist-filter-row">
-                            <CalendarDays size={16} style={{ color: '#60a5fa', flexShrink: 0 }} />
-                            <span className="hist-filter-label">Historial</span>
 
-                            <div className="hist-filter-group">
-                                <label className="hist-field-label">Vendedor</label>
-                                <select
-                                    value={selectedEmployee || ''}
-                                    onChange={(e) => setSelectedEmployee(parseInt(e.target.value))}
-                                    className="hist-select"
-                                >
-                                    <option value="">Seleccionar...</option>
-                                    {employees.map(emp => (
-                                        <option key={emp.id} value={emp.id}>{emp.name}</option>
-                                    ))}
-                                </select>
-                            </div>
+                    <div className="hist-select-group">
+                        <label>Desde</label>
+                        <input
+                            type="date"
+                            value={startDate}
+                            onChange={(e) => setStartDate(e.target.value)}
+                        />
+                    </div>
 
-                            <div className="hist-filter-group">
-                                <label className="hist-field-label">Desde</label>
-                                <input
-                                    type="date"
-                                    value={startDate}
-                                    onChange={(e) => setStartDate(e.target.value)}
-                                    className="hist-input"
-                                />
-                            </div>
+                    <div className="hist-select-group">
+                        <label>Hasta</label>
+                        <input
+                            type="date"
+                            value={endDate}
+                            onChange={(e) => setEndDate(e.target.value)}
+                        />
+                    </div>
 
-                            <div className="hist-filter-group">
-                                <label className="hist-field-label">Hasta</label>
-                                <input
-                                    type="date"
-                                    value={endDate}
-                                    onChange={(e) => setEndDate(e.target.value)}
-                                    className="hist-input"
-                                />
-                            </div>
+                    <button className="hist-btn-refresh" onClick={fetchHistory} disabled={loading}>
+                        {loading ? <Loader size={16} className="spin" /> : '🔄'}
+                        Actualizar
+                    </button>
+                </div>
 
-                            <button className="hist-refresh-btn" onClick={fetchHistory}>
-                                Actualizar
-                            </button>
-                        </div>
-
-                        {error && (
-                            <div className="hist-error">
-                                <AlertCircle size={14} /> {error}
-                            </div>
-                        )}
+                {error && (
+                    <div className="hist-error-banner">
+                        <AlertCircle size={16} />
+                        {error}
                     </div>
                 )}
             </div>
 
-            {/* Bottom drawer */}
-            <div className={`hist-drawer ${drawerOpen ? 'open' : 'collapsed'}`}>
-                {/* Drawer handle */}
-                <button className="hist-drawer-handle" onClick={() => setDrawerOpen(!drawerOpen)}>
-                    <div className="hist-handle-bar" />
-                    {drawerOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-                    <span className="hist-drawer-title">
-                        {selectedTrip
-                            ? `Paradas (${tripDetails?.stops?.length ?? 0})`
-                            : `${activeTab === 'trips' ? 'Recorridos' : activeTab === 'events' ? 'Eventos' : 'Paradas'} · ${activeTab === 'trips' ? trips.length : activeTab === 'events' ? events.length : stops.length}`
-                        }
-                    </span>
-                    {drawerOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-                </button>
+            {/* Panel de datos a la derecha */}
+            <div className={`hist-right-panel ${selectedTrip ? 'detail' : 'list'}`}>
+                {selectedTrip ? (
+                    // DETAIL VIEW
+                    <div className="hist-detail-view">
+                        <div className="hist-detail-header">
+                            <button className="hist-btn-back" onClick={handleBack}>
+                                <ArrowLeft size={18} />
+                            </button>
+                            <div>
+                                <h2>{employeeName}</h2>
+                                <p>{selectedTrip.trip_date} · {selectedTrip.start_time_formatted} a {selectedTrip.end_time_formatted}</p>
+                            </div>
+                        </div>
 
-                <div className="hist-drawer-body">
-                    {selectedTrip && tripDetails ? (
-                        /* Stops detail list */
-                        <div className="hist-stops-detail">
-                            {tripDetails.stops?.length > 0 ? (
-                                <table className="hist-table">
-                                    <thead>
-                                        <tr>
-                                            <th>#</th>
-                                            <th>Inicio</th>
-                                            <th>Fin</th>
-                                            <th>Duración</th>
-                                            <th>Ubicación</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {tripDetails.stops.map((stop, idx) => (
-                                            <tr key={idx}>
-                                                <td><span className="hist-stop-num">{idx + 1}</span></td>
-                                                <td>{formatTime(stop.start_time)}</td>
-                                                <td>{formatTime(stop.end_time)}</td>
-                                                <td><span className="hist-duration">{formatDuration(stop.duration_seconds)}</span></td>
-                                                <td>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                        <span className="hist-coord" style={{ fontSize: '11px', opacity: 0.7 }}>
-                                                            {stop.lat.toFixed(5)}, {stop.lng.toFixed(5)}
-                                                        </span>
-                                                        <a 
-                                                            href={`https://www.google.com/maps?q=${stop.lat},${stop.lng}`}
-                                                            target="_blank" rel="noopener noreferrer" 
-                                                            className="gmaps-link-small"
-                                                            style={{ 
-                                                                padding: '4px 8px', fontSize: '10px', background: 'rgba(255,255,255,0.05)', 
-                                                                border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px',
-                                                                color: '#60a5fa', textDecoration: 'none', fontWeight: '600'
-                                                            }}
-                                                        >
-                                                            🗺️ Ver Maps
-                                                        </a>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                        <div className="hist-detail-metrics">
+                            <div className="metric-card">
+                                <div className="metric-icon">📏</div>
+                                <div>
+                                    <div className="metric-label">Distancia</div>
+                                    <div className="metric-value">{selectedTrip.distance_km} km</div>
+                                </div>
+                            </div>
+                            <div className="metric-card">
+                                <div className="metric-icon">⏱️</div>
+                                <div>
+                                    <div className="metric-label">Duración</div>
+                                    <div className="metric-value">{selectedTrip.duration_hours}h</div>
+                                </div>
+                            </div>
+                            <div className="metric-card">
+                                <div className="metric-icon">📍</div>
+                                <div>
+                                    <div className="metric-label">Paradas</div>
+                                    <div className="metric-value">{selectedTrip.stop_count}</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="hist-stops-list">
+                            <h3>Paradas ({tripDetails?.stops?.length || 0})</h3>
+                            {tripDetails?.stops?.length > 0 ? (
+                                <div className="stops-container">
+                                    {tripDetails.stops.map((stop, idx) => (
+                                        <div key={idx} className="stop-item">
+                                            <div className="stop-number">{idx + 1}</div>
+                                            <div className="stop-details">
+                                                <div className="stop-times">
+                                                    {formatTime(stop.start_time)} → {formatTime(stop.end_time)}
+                                                </div>
+                                                <div className="stop-duration">{formatDuration(stop.duration_seconds)}</div>
+                                                <div className="stop-coords">
+                                                    {stop.lat?.toFixed(5)}, {stop.lng?.toFixed(5)}
+                                                </div>
+                                            </div>
+                                            <a
+                                                href={`https://www.google.com/maps?q=${stop.lat},${stop.lng}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="stop-maps-btn"
+                                            >
+                                                🗺️
+                                            </a>
+                                        </div>
+                                    ))}
+                                </div>
                             ) : (
-                                <div className="hist-empty">🛑 Sin paradas en este viaje</div>
+                                <div className="hist-empty">Sin paradas</div>
                             )}
                         </div>
-                    ) : (
-                        /* Trips / Stops list */
-                        <>
-                            <div className="hist-tabs">
-                                <button
-                                    className={`hist-tab ${activeTab === 'trips' ? 'active' : ''}`}
-                                    onClick={() => setActiveTab('trips')}
-                                >
-                                    <Clock size={15} /> Recorridos
-                                    <span className="hist-tab-badge">{trips.length}</span>
-                                </button>
-                                <button
-                                    className={`hist-tab ${activeTab === 'stops' ? 'active' : ''}`}
-                                    onClick={() => setActiveTab('stops')}
-                                >
-                                    <MapPin size={15} /> Paradas
-                                    <span className="hist-tab-badge">{stops.length}</span>
-                                </button>
-                                <button
-                                    className={`hist-tab ${activeTab === 'events' ? 'active' : ''}`}
-                                    onClick={() => setActiveTab('events')}
-                                >
-                                    <AlertCircle size={15} /> Eventos GPS
-                                    <span className="hist-tab-badge">{events.length}</span>
-                                </button>
-                            </div>
+                    </div>
+                ) : (
+                    // LIST VIEW
+                    <div className="hist-list-view">
+                        <div className="hist-list-tabs">
+                            <button
+                                className={`tab-btn ${activeTab === 'trips' ? 'active' : ''}`}
+                                onClick={() => setActiveTab('trips')}
+                            >
+                                <TrendingUp size={16} />
+                                Recorridos <span className="tab-count">{paginationInfo.trips.total}</span>
+                            </button>
+                            <button
+                                className={`tab-btn ${activeTab === 'stops' ? 'active' : ''}`}
+                                onClick={() => setActiveTab('stops')}
+                            >
+                                <MapPin size={16} />
+                                Paradas <span className="tab-count">{paginationInfo.stops.total}</span>
+                            </button>
+                            <button
+                                className={`tab-btn ${activeTab === 'events' ? 'active' : ''}`}
+                                onClick={() => setActiveTab('events')}
+                            >
+                                <AlertCircle size={16} />
+                                Eventos <span className="tab-count">{paginationInfo.events.total}</span>
+                            </button>
+                        </div>
 
-                            {loading ? (
-                                <div className="hist-loading">
-                                    <Loader className="spin" size={28} /> Cargando...
+                        <div className="hist-list-content">
+                            {loading && (
+                                <div className="hist-loading-state">
+                                    <Loader size={32} className="spin" />
+                                    <p>Cargando...</p>
                                 </div>
-                            ) : activeTab === 'trips' ? (
-                                trips.length === 0 ? (
-                                    <div className="hist-empty">🗺️ No hay recorridos en este período</div>
-                                ) : (
-                                    <div className="hist-trips-grid">
-                                        {trips.map(trip => (
-                                            <button
-                                                key={trip.id}
-                                                className="hist-trip-card"
-                                                onClick={() => handleTripClick(trip)}
-                                            >
-                                                <div className="hist-trip-date-row">
-                                                    <span className="hist-trip-date">{formatDate(trip.start_time)}</span>
-                                                    <span className="hist-trip-time">{formatTime(trip.start_time)} – {formatTime(trip.end_time)}</span>
-                                                </div>
-                                                <div className="hist-trip-stats">
-                                                    <div className="hist-trip-stat">
-                                                        <span className="tsl">Distancia</span>
-                                                        <span className="tsv">{(trip.distance_meters / 1000).toFixed(2)} km</span>
-                                                    </div>
-                                                    <div className="hist-trip-stat">
-                                                        <span className="tsl">Duración</span>
-                                                        <span className="tsv">{trip.duration_hours} h</span>
-                                                    </div>
-                                                    <div className="hist-trip-stat">
-                                                        <span className="tsl">Paradas</span>
-                                                        <span className="tsv">{trip.stop_count}</span>
-                                                    </div>
-                                                </div>
-                                                <div className="hist-trip-view">
-                                                    Ver ruta <ChevronRight size={14} />
-                                                </div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                )
-                            ) : activeTab === 'stops' ? (
-                                stops.length === 0 ? (
-                                    <div className="hist-empty">📍 No hay paradas en este período</div>
-                                ) : (
-                                    <div className="hist-table-wrap">
-                                        <table className="hist-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Fecha</th>
-                                                    <th>Inicio</th>
-                                                    <th>Fin</th>
-                                                    <th>Duración</th>
-                                                    <th>Ubicación</th>
-                                                    <th></th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {stops.map((stop, idx) => (
-                                                    <tr key={idx}>
-                                                        <td>{formatDate(stop.start_time)}</td>
-                                                        <td>{formatTime(stop.start_time)}</td>
-                                                        <td>{formatTime(stop.end_time)}</td>
-                                                        <td><span className="hist-duration">{formatDuration(stop.duration_seconds)}</span></td>
-                                                        <td>
-                                                            <span className="hist-coord">
-                                                                {stop.latitude.toFixed(4)}, {stop.longitude.toFixed(4)}
-                                                            </span>
-                                                        </td>
-                                                        <td>
-                                                            <button
-                                                                className="hist-view-btn"
-                                                                onClick={() => {
-                                                                    const trip = trips.find(t => t.id === stop.trip_id);
-                                                                    if (trip) handleTripClick(trip);
-                                                                }}
-                                                            >
-                                                                Ver
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )
-                            ) : activeTab === 'events' ? (
-                                events.length === 0 ? (
-                                    <div className="hist-empty">✨ No hay eventos de desconexión en este período</div>
-                                ) : (
-                                    <div className="hist-table-wrap">
-                                        <table className="hist-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Fecha</th>
-                                                    <th>Hora</th>
-                                                    <th>Evento</th>
-                                                    <th>Estado / Razón</th>
-                                                    <th>Duración apagado</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {events.map((ev, idx) => (
-                                                    <tr key={idx}>
-                                                        <td>{formatDate(ev.timestamp)}</td>
-                                                        <td>{formatTime(ev.timestamp)}</td>
-                                                        <td>
-                                                            <span className="hist-duration" style={{
-                                                                background: ev.event_type === 'GPS_OFF' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(34, 197, 94, 0.2)',
-                                                                color: ev.event_type === 'GPS_OFF' ? '#ef4444' : '#22c55e'
-                                                            }}>
-                                                                {ev.event_type === 'GPS_OFF' ? '⛔ GPS OFF' : '✅ GPS ON'}
-                                                            </span>
-                                                        </td>
-                                                        <td style={{opacity: 0.8}}>{ev.state} {ev.reset_reason ? `(${ev.reset_reason})` : ''}</td>
-                                                        <td>{ev.duration_off_seconds ? <span className="hist-coord">{formatDuration(ev.duration_off_seconds)}</span> : '-'}</td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )
-                            ) : null}
-                        </>
-                    )}
-                </div>
+                            )}
+
+                            {!loading && activeTab === 'trips' && (
+                                <>
+                                    {trips.length === 0 ? (
+                                        <div className="hist-empty">📍 Sin recorridos</div>
+                                    ) : (
+                                        <div className="trips-list">
+                                            {trips.map(trip => (
+                                                <TripCard
+                                                    key={trip.id}
+                                                    trip={trip}
+                                                    onClick={() => handleTripClick(trip)}
+                                                    employee={employeeName}
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+                                    {paginationInfo.trips.hasMore && (
+                                        <button className="hist-btn-loadmore" onClick={loadMoreTrips}>
+                                            Cargar más ({trips.length}/{paginationInfo.trips.total})
+                                        </button>
+                                    )}
+                                </>
+                            )}
+
+                            {!loading && activeTab === 'stops' && (
+                                <>
+                                    {stops.length === 0 ? (
+                                        <div className="hist-empty">📍 Sin paradas</div>
+                                    ) : (
+                                        <div className="stops-list">
+                                            {stops.map((stop, idx) => (
+                                                <StopRow key={idx} stop={stop} />
+                                            ))}
+                                        </div>
+                                    )}
+                                    {paginationInfo.stops.hasMore && (
+                                        <button className="hist-btn-loadmore" onClick={loadMoreStops}>
+                                            Cargar más ({stops.length}/{paginationInfo.stops.total})
+                                        </button>
+                                    )}
+                                </>
+                            )}
+
+                            {!loading && activeTab === 'events' && (
+                                <>
+                                    {events.length === 0 ? (
+                                        <div className="hist-empty">✨ Sin eventos</div>
+                                    ) : (
+                                        <div className="events-list">
+                                            {events.map((event, idx) => (
+                                                <EventRow key={idx} event={event} />
+                                            ))}
+                                        </div>
+                                    )}
+                                    {paginationInfo.events.hasMore && (
+                                        <button className="hist-btn-loadmore" onClick={loadMoreEvents}>
+                                            Cargar más ({events.length}/{paginationInfo.events.total})
+                                        </button>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
 
             <style>{`
@@ -767,59 +786,71 @@ const History = ({ user }) => {
 
                 .hist-table th {
                     background: rgba(255,255,255,0.04);
-                    padding: 10px 14px;
+                    padding: 12px 16px;
                     text-align: left;
                     font-size: 11px;
-                    font-weight: 600;
-                    color: #475569;
+                    font-weight: 700;
+                    color: #64748b;
                     text-transform: uppercase;
-                    letter-spacing: 0.05em;
+                    letter-spacing: 0.08em;
                     white-space: nowrap;
+                    border-bottom: 1px solid rgba(255,255,255,0.08);
                 }
 
                 .hist-table td {
-                    padding: 10px 14px;
-                    border-top: 1px solid rgba(255,255,255,0.04);
-                    color: #cbd5e1;
+                    padding: 14px 16px;
+                    border-top: 1px solid rgba(255,255,255,0.02);
+                    color: #e2e8f0;
+                    background: transparent;
+                    line-height: 1.5;
                 }
 
-                .hist-table tr:hover td { background: rgba(255,255,255,0.03); }
+                .hist-table td strong {
+                    color: #f1f5f9;
+                    font-weight: 600;
+                }
+
+                .hist-table tr:hover td { 
+                    background: rgba(255,255,255,0.04) !important;
+                    transition: background 0.1s ease;
+                }
 
                 .hist-stop-num {
                     display: inline-flex;
                     align-items: center;
                     justify-content: center;
-                    width: 22px;
-                    height: 22px;
+                    width: 24px;
+                    height: 24px;
                     background: rgba(37,99,235,0.25);
                     color: #93c5fd;
                     border-radius: 50%;
-                    font-size: 11px;
+                    font-size: 12px;
                     font-weight: 700;
                 }
 
                 .hist-duration {
                     display: inline-block;
-                    padding: 3px 8px;
+                    padding: 4px 10px;
                     background: rgba(245,158,11,0.15);
-                    color: #fbbf24;
-                    border-radius: 999px;
-                    font-size: 11px;
+                    color: #fcd34d;
+                    border-radius: 6px;
+                    font-size: 12px;
                     font-weight: 600;
+                    white-space: nowrap;
                 }
 
                 .hist-coord {
                     display: inline-block;
-                    padding: 3px 8px;
+                    padding: 4px 10px;
                     background: rgba(37,99,235,0.15);
                     color: #93c5fd;
                     border-radius: 6px;
-                    font-size: 11px;
-                    font-family: monospace;
+                    font-size: 12px;
+                    font-family: 'Monaco', 'Courier New', monospace;
                 }
 
                 .hist-view-btn {
-                    padding: 5px 12px;
+                    padding: 6px 14px;
                     background: #2563eb;
                     color: white;
                     border: none;
@@ -827,9 +858,32 @@ const History = ({ user }) => {
                     cursor: pointer;
                     font-size: 12px;
                     font-weight: 600;
-                    transition: background 0.15s;
+                    transition: all 0.15s ease;
+                    white-space: nowrap;
                 }
-                .hist-view-btn:hover { background: #1d4ed8; }
+                .hist-view-btn:hover { 
+                    background: #1d4ed8;
+                    transform: translateY(-1px);
+                }
+
+                .hist-load-more {
+                    display: block;
+                    margin: 20px auto;
+                    padding: 10px 24px;
+                    background: rgba(37,99,235,0.2);
+                    color: #60a5fa;
+                    border: 1px solid rgba(37,99,235,0.3);
+                    border-radius: 8px;
+                    cursor: pointer;
+                    font-size: 13px;
+                    font-weight: 600;
+                    transition: all 0.15s ease;
+                }
+                .hist-load-more:hover {
+                    background: rgba(37,99,235,0.3);
+                    border-color: rgba(37,99,235,0.5);
+                    transform: translateY(-2px);
+                }
 
                 /* ─── Stops detail in drawer ─── */
                 .hist-stops-detail { width: 100%; }
@@ -845,6 +899,8 @@ const History = ({ user }) => {
                     .hist-mini-stats { gap: 10px; }
                     .hist-drawer.open { height: 55%; max-height: 60vh; }
                     .hist-trips-grid { grid-template-columns: 1fr; }
+                    .hist-table th,
+                    .hist-table td { padding: 10px 12px; font-size: 12px; }
                 }
             `}</style>
         </div>
