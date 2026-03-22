@@ -133,13 +133,20 @@ router.patch('/:id/tracking', auth, async (req, res) => {
             return res.status(404).json({ error: 'Employee not found' });
         }
 
-        // Enviar señal en tiempo real al empleado
+        // Enviar señal en tiempo real al empleado (si fue el admin)
         const io = getIO();
         if (io) {
             io.to(`user:${id}`).emit('remote_tracking_toggle', {
                 enabled: enabled,
                 timestamp: new Date(),
                 message: enabled ? 'Admin enabled tracking' : 'Admin disabled tracking'
+            });
+
+            // Enviar señal a los administradores para actualizar el Dashboard
+            io.to('admins').emit('tracking_status_changed', {
+                employeeId: parseInt(id),
+                enabled: enabled,
+                timestamp: new Date()
             });
         }
 

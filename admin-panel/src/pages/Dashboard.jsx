@@ -52,6 +52,13 @@ const Dashboard = ({ user, onLogout }) => {
             setLiveActiveIds(prev => new Set([...prev, data.employeeId]));
         });
 
+        socket.on('tracking_status_changed', (data) => {
+            if (!data.employeeId) return;
+            setEmployees(prev => prev.map(emp => 
+                emp.id === data.employeeId ? { ...emp, is_tracking_enabled: data.enabled } : emp
+            ));
+        });
+
         socket.on('disconnect', () => setIsConnected(false));
         socket.on('connect', () => setIsConnected(true));
 
@@ -95,6 +102,7 @@ const Dashboard = ({ user, onLogout }) => {
 
         return () => {
             socket.off('location_update');
+            socket.off('tracking_status_changed');
             socket.off('disconnect');
             socket.off('connect');
             disconnectSocket();
@@ -445,8 +453,10 @@ const Dashboard = ({ user, onLogout }) => {
                                                                     <div className="flex flex-wrap gap-1 mt-0.5">
                                                                         <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 font-medium ${
                                                                             vendor.is_tracking_enabled === false ? 'bg-slate-500/20 text-slate-400 border border-white/10' :
+                                                                            diffMins >= 500000 ? 'bg-slate-800 text-slate-400 border border-slate-700 font-bold' :
                                                                             isStaleReal ? 'bg-slate-800 text-slate-400 border border-slate-700 font-bold' :
                                                                             vendor.status === 'GPS_OFF' ? 'bg-red-600 text-white font-bold animate-pulse px-2' :
+                                                                            vendor.status === 'PAUSED' ? 'bg-slate-500/20 text-slate-400 border border-white/10' :
                                                                             vendor.point_type === 'recovery' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
                                                                             (vendor.confidence || 1.0) >= 0.8 ? 'bg-green-500/10 text-green-400' :
                                                                             'bg-red-500/10 text-red-400'
@@ -455,6 +465,7 @@ const Dashboard = ({ user, onLogout }) => {
                                                                              diffMins >= 500000 ? '🕳️ Sin datos' :
                                                                              isStaleReal ? `🕳️ Sin señal (${timeLabel})` : 
                                                                              vendor.status === 'GPS_OFF' ? `⛔ Apagado` :
+                                                                             vendor.status === 'PAUSED' ? `⏸️ Pausado` :
                                                                              vendor.point_type === 'recovery' ? '🔄 Recuperado' :
                                                                              (vendor.confidence || 1.0) >= 0.8 ? '🟢 Live' : '🔴 NO GPS'}
                                                                         </span>
