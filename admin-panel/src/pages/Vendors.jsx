@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Users, UserPlus, Trash2, Pencil, X, Check, Eye, EyeOff, Radio, Power, PowerOff } from 'lucide-react';
 import api from '../services/api';
+import { socket } from '../services/socket';
 
 const defaultForm = { name: '', email: '', password: '', role: 'employee' };
 
@@ -89,7 +90,22 @@ const Vendors = () => {
         setLoading(false);
     };
 
-    useEffect(() => { fetchEmployees(); }, []);
+    useEffect(() => { 
+        fetchEmployees(); 
+        
+        const handleTrackingChanged = (data) => {
+            if (!data.employeeId) return;
+            setEmployees(prev => prev.map(emp => 
+                emp.id === data.employeeId ? { ...emp, is_tracking_enabled: data.enabled } : emp
+            ));
+        };
+
+        socket.on('tracking_status_changed', handleTrackingChanged);
+
+        return () => {
+            socket.off('tracking_status_changed', handleTrackingChanged);
+        };
+    }, []);
 
     const handleDelete = async (id, name) => {
         if (!window.confirm(`¿Eliminar a ${name}? Esta acción borrará todos sus datos.`)) return;

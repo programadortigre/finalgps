@@ -446,28 +446,38 @@ const Dashboard = ({ user, onLogout }) => {
                                                                 const isStaleReal = diffMins > 20;
                                                                 
                                                                 let timeLabel = `${diffMins}m`;
-                                                                if (diffMins > 1440 && diffMins < 500000) timeLabel = '>24h';
-                                                                if (diffMins >= 500000) timeLabel = 'Sin datos';
+                                                                if (diffMins > 1440) timeLabel = '>24h';
+
+                                                                let statusText = '🔴 NO GPS';
+                                                                let statusClass = 'bg-red-500/10 text-red-400';
+
+                                                                if (vendor.is_tracking_enabled === false || vendor.status === 'PAUSED') {
+                                                                    statusText = '⏸️ Pausado';
+                                                                    statusClass = 'bg-slate-500/20 text-slate-400 border border-white/10';
+                                                                } else if (vendor.status === 'OFFLINE') {
+                                                                    statusText = '🔌 Desconectado';
+                                                                    statusClass = 'bg-slate-500/20 text-slate-400 border border-white/10';
+                                                                } else if (diffMins >= 500000 || !vendor.lastUpdate) {
+                                                                    statusText = '🕳️ Sin datos';
+                                                                    statusClass = 'bg-slate-800 text-slate-400 border border-slate-700 font-bold';
+                                                                } else if (vendor.status === 'GPS_OFF') {
+                                                                    statusText = '⛔ Apagado';
+                                                                    statusClass = 'bg-red-600 text-white font-bold animate-pulse px-2';
+                                                                } else if (isStaleReal) {
+                                                                    statusText = `🕳️ Sin señal (${timeLabel})`;
+                                                                    statusClass = 'bg-slate-800 text-slate-400 border border-slate-700 font-bold';
+                                                                } else if (vendor.point_type === 'recovery') {
+                                                                    statusText = '🔄 Recuperado';
+                                                                    statusClass = 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
+                                                                } else if ((vendor.confidence || 1.0) >= 0.8) {
+                                                                    statusText = '🟢 Live';
+                                                                    statusClass = 'bg-green-500/10 text-green-400';
+                                                                }
 
                                                                 return (
                                                                     <div className="flex flex-wrap gap-1 mt-0.5">
-                                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 font-medium ${
-                                                                            vendor.is_tracking_enabled === false ? 'bg-slate-500/20 text-slate-400 border border-white/10' :
-                                                                            diffMins >= 500000 ? 'bg-slate-800 text-slate-400 border border-slate-700 font-bold' :
-                                                                            isStaleReal ? 'bg-slate-800 text-slate-400 border border-slate-700 font-bold' :
-                                                                            vendor.status === 'GPS_OFF' ? 'bg-red-600 text-white font-bold animate-pulse px-2' :
-                                                                            vendor.status === 'PAUSED' ? 'bg-slate-500/20 text-slate-400 border border-white/10' :
-                                                                            vendor.point_type === 'recovery' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
-                                                                            (vendor.confidence || 1.0) >= 0.8 ? 'bg-green-500/10 text-green-400' :
-                                                                            'bg-red-500/10 text-red-400'
-                                                                        }`}>
-                                                                            {vendor.is_tracking_enabled === false ? '⏸️ Pausado' :
-                                                                             diffMins >= 500000 ? '🕳️ Sin datos' :
-                                                                             isStaleReal ? `🕳️ Sin señal (${timeLabel})` : 
-                                                                             vendor.status === 'GPS_OFF' ? `⛔ Apagado` :
-                                                                             vendor.status === 'PAUSED' ? `⏸️ Pausado` :
-                                                                             vendor.point_type === 'recovery' ? '🔄 Recuperado' :
-                                                                             (vendor.confidence || 1.0) >= 0.8 ? '🟢 Live' : '🔴 NO GPS'}
+                                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 font-medium ${statusClass}`}>
+                                                                            {statusText}
                                                                         </span>
                                                                         {vendor.point_type === 'manual' && (
                                                                             <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold flex items-center gap-1 animate-pulse" title="Actualizado Manualmente">
