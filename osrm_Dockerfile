@@ -1,7 +1,33 @@
 FROM osrm/osrm-backend:latest
 
-# Copiar script entrypoint
-COPY osrm_entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+WORKDIR /data
 
-ENTRYPOINT ["/entrypoint.sh"]
+# Crear script de inicialización
+RUN echo '#!/bin/bash' > /init.sh && \
+    echo 'set -e' >> /init.sh && \
+    echo 'echo "[OSRM] Iniciando..."' >> /init.sh && \
+    echo 'if [ ! -f /data/peru-latest.osrm ]; then' >> /init.sh && \
+    echo '  if [ ! -f /data/peru-latest.osm.pbf ]; then' >> /init.sh && \
+    echo '    echo "[OSRM] Descargando datos de Perú (esto puede tomar 10+ minutos)..."' >> /init.sh && \
+    echo '    wget --progress=bar:force -O /data/peru-latest.osm.pbf https://download.geofabrik.de/south-america/peru-latest.osm.pbf || true' >> /init.sh && \
+    echo '  fi' >> /init.sh && \
+    echo '  if [ -f /data/peru-latest.osm.pbf ]; then' >> /init.sh && \
+    echo '    echo "[OSRM] Compilando datos (esto puede tomar 10-20 minutos)..."' >> /init.sh && \
+    echo '    osrm-extract -p /opt/osrm/profiles/car.lua /data/peru-latest.osm.pbf' >> /init.sh && \
+    echo '    osrm-partition /data/peru-latest.osrm' >> /init.sh && \
+    echo '    osrm-customize /data/peru-latest.osrm' >> /init.sh && \
+    echo '    echo "[OSRM] ✅ Datos compilados exitosamente"' >> /init.sh && \
+    echo '  else' >> /init.sh && \
+    echo '    echo "[OSRM] ⚠️  No se pudo descargar Peru OSM. Continuando sin datos..."' >> /init.sh && \
+    echo '  fi' >> /init.sh && \
+    echo 'fi' >> /init.sh && \
+    echo 'echo "[OSRM] Iniciando servicio..."' >> /init.sh && \
+    echo 'if [ -f /data/peru-latest.osrm ]; then' >> /init.sh && \
+    echo '  exec osrm-routed --algorithm mld /data/peru-latest.osrm --port 5000' >> /init.sh && \
+    echo 'else' >> /init.sh && \
+    echo '  echo "[OSRM] ERROR: No hay datos de OSRM disponibles"' >> /init.sh && \
+    echo '  sleep infinity' >> /init.sh && \
+    echo 'fi' >> /init.sh && \
+    chmod +x /init.sh
+
+ENTRYPOINT ["/init.sh"]

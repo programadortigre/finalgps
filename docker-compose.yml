@@ -84,13 +84,14 @@ services:
       start_period: 60s
 
   osrm:
-    build:
-      context: .
-      dockerfile: osrm_Dockerfile
+    image: osrm/osrm-backend
     container_name: gps-osrm
     restart: always
     volumes:
       - ./osrm_data:/data
+    command: osrm-routed --algorithm mld /data/peru-260321.osrm
+    ports:
+      - "5000:5000"
     networks: [ tracking-net ]
 
   admin-panel:
