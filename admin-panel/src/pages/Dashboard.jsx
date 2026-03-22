@@ -397,9 +397,12 @@ const Dashboard = ({ user, onLogout }) => {
                                                         className={`p-1.5 rounded-lg transition-all ${
                                                             vendor.isLive ? 'text-primary-400 hover:bg-primary-500/20' : 'text-slate-500 hover:bg-white/10 opacity-60'
                                                         }`}
-                                                        title={vendor.isLive ? "Localizar ahora" : "Localizar al reconectar"}
+                                                        title={
+                                                            vendor.status === 'OFFLINE' || !vendor.isLive ? "Localizar al reconectar" :
+                                                            vendor.status === 'GPS_OFF' ? "Localizar por IP (GPS Apagado)" : "Localizar ahora"
+                                                        }
                                                     >
-                                                        <Radar size={14} />
+                                                        <Radar size={14} className={vendor.status === 'GPS_OFF' ? 'text-amber-500' : ''} />
                                                     </button>
 
                                                     {/* Quick Control */}

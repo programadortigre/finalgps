@@ -277,12 +277,16 @@ class TrackingEngine {
     _log('RADAR', 'Comando manual recibido — Iniciando secuencia de localización forzada');
     _pendingLocationRequest = true;
 
-    // 🚀 FEEDBACK INSTANTÁNEO: Enviar último punto conocido mientras se busca el nuevo
-    if (_lastValidPoint != null) {
+    // 🚀 FEEDBACK INSTANTÁNEO: Enviar último punto conocido o forzar IP Location si el GPS está apagado
+    final bool isGpsEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!isGpsEnabled) {
+      _log('RADAR', 'GPS OFF detectado. Forzando GeoIP...');
+      await _sendNoFixHeartbeat(reason: 'Manual Location Request', isManual: true);
+    } else if (_lastValidPoint != null) {
       _log('RADAR', 'Enviando última ubicación conocida de memoria');
       _emitToSocket(_lastValidPoint!, manual: true);
     } else {
-      // ⚠️ CASO GPS OFF: Si no hay punto válido, forzar heartbeat con GeoIP manual
+      // ⚠️ CASO GPS OFF o Sin Datos: forzar heartbeat con GeoIP manual
       await _sendNoFixHeartbeat(reason: 'Manual Location Request', isManual: true);
     }
 
@@ -757,12 +761,21 @@ class TrackingEngine {
         'gps_timestamp': _lastValidPoint?.timestamp ?? now,
         'reset_reason': reason,
         'point_type': isManual ? 'manual' : 'gps_off', // ✅ Estandarizado
+        'is_manual_request': isManual, // ✅ Necesario para activar GeoIP en backend
         'source': isGpsEnabled ? 'heartbeat' : 'system_alert',
         'battery': batteryLevel,
         'is_charging': isCharging,
       };
       
       await _addToBufferAndFlush(point);
+      
+      // ✅ Si es manual y no hay GPS, enviar por HTTP Inmediato para que el backend calcule el GeoIP
+      // Evitamos emitirlo por el socket directamente porque enviaría las coordenadas "viejas" usadas por fallback.
+      if (isManual) {
+        _log('RADAR', 'Forzando SyncLoop Inmediato para procesar GeoIP...');
+        _syncLoop(reason: 'Manual IP Location Request');
+        return;
+      }
       
       if (_socket != null && _socket!.connected) {
           _socket!.emit('location_update', {
