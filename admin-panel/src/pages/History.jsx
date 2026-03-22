@@ -1,80 +1,85 @@
-import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
-import { Calendar, Clock, MapPin, ChevronRight, ArrowLeft, Loader, AlertCircle, CalendarDays, ChevronDown, ChevronUp, X, TrendingUp, Briefcase } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
+import { Search, Calendar, Clock, MapPin, ChevronRight, ArrowLeft, Loader, AlertCircle, ChevronUp, ChevronDown, TrendingUp, X, Navigation } from 'lucide-react';
 import api from '../services/api';
 import MapView from '../components/MapView';
 
-// ✅ Componente memoizado para tarjeta de viaje
-const TripCard = memo(({ trip, onClick, employee }) => (
-    <div className="trip-card" onClick={onClick}>
-        <div className="trip-header">
-            <div className="trip-badge">{trip.trip_date}</div>
-            <div className="trip-time-range">
-                <Clock size={14} />
-                <span>{trip.start_time_formatted} → {trip.end_time_formatted}</span>
-            </div>
+/* ── helpers ── */
+const formatTime = (t) => {
+    if (!t) return '--:--';
+    const d = new Date(t);
+    return d.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+};
+const formatDuration = (s) => {
+    if (!s || s <= 0) return '0m';
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+};
+
+/* ── Trip card ── */
+const TripCard = memo(({ trip, onClick }) => (
+    <button className="hx-trip-card" onClick={onClick}>
+        <div className="hx-trip-top">
+            <span className="hx-trip-date">{trip.trip_date}</span>
+            <span className="hx-trip-time"><Clock size={12} /> {trip.start_time_formatted} → {trip.end_time_formatted}</span>
         </div>
-        <div className="trip-content">
-            <div className="trip-metric">
-                <div className="metric-label">Distancia</div>
-                <div className="metric-value">{trip.distance_km} km</div>
-            </div>
-            <div className="trip-metric">
-                <div className="metric-label">Duración</div>
-                <div className="metric-value">{trip.duration_hours}h</div>
-            </div>
-            <div className="trip-metric">
-                <div className="metric-label">Paradas</div>
-                <div className="metric-value">{trip.stop_count}</div>
-            </div>
+        <div className="hx-trip-stats">
+            <div className="hx-stat"><span className="hx-stat-val">{trip.distance_km}</span><span className="hx-stat-lbl">km</span></div>
+            <div className="hx-stat"><span className="hx-stat-val">{trip.duration_hours}</span><span className="hx-stat-lbl">horas</span></div>
+            <div className="hx-stat"><span className="hx-stat-val">{trip.stop_count}</span><span className="hx-stat-lbl">paradas</span></div>
         </div>
-        <div className="trip-footer">
-            Ver detalles <ChevronRight size={16} />
-        </div>
-    </div>
+        <div className="hx-trip-cta">Ver ruta <ChevronRight size={14} /></div>
+    </button>
 ));
 TripCard.displayName = 'TripCard';
 
-// ✅ Componente memoizado para fila de parada
+/* ── Stop row ── */
 const StopRow = memo(({ stop }) => (
-    <div className="stop-row">
-        <div className="stop-time">
-            <div className="stop-date-badge">{stop.stop_date}</div>
-            <div className="stop-time-badge">{stop.start_time_formatted}</div>
+    <div className="hx-stop-row">
+        <div className="hx-stop-time-col">
+            <span className="hx-stop-date-tag">{stop.stop_date}</span>
+            <span className="hx-stop-time-tag">{stop.start_time_formatted}</span>
         </div>
-        <div className="stop-duration">{stop.duration_formatted}</div>
-        <div className="stop-location">
-            <MapPin size={13} />
+        <div className="hx-stop-dur">{stop.duration_formatted}</div>
+        <div className="hx-stop-loc">
+            <MapPin size={12} />
             <code>{stop.latitude}, {stop.longitude}</code>
         </div>
     </div>
 ));
 StopRow.displayName = 'StopRow';
 
-// ✅ Componente memoizado para fila de evento
+/* ── Event row ── */
 const EventRow = memo(({ event }) => (
-    <div className="event-row">
-        <div className="event-date">{event.event_date}</div>
-        <div className="event-time">{event.event_time}</div>
-        <div className={`event-badge ${event.event_type === 'GPS_OFF' ? 'off' : 'on'}`}>
+    <div className="hx-event-row">
+        <span className="hx-ev-date">{event.event_date}</span>
+        <span className="hx-ev-time">{event.event_time}</span>
+        <span className={`hx-ev-badge ${event.event_type === 'GPS_OFF' ? 'off' : 'on'}`}>
             {event.event_type === 'GPS_OFF' ? '⛔ OFF' : '✅ ON'}
-        </div>
-        <div className="event-reason">{event.state}</div>
-        {event.duration_off_formatted && <div className="event-duration">{event.duration_off_formatted}</div>}
+        </span>
+        <span className="hx-ev-reason">{event.state}</span>
+        {event.duration_off_formatted && <span className="hx-ev-dur">{event.duration_off_formatted}</span>}
     </div>
 ));
 EventRow.displayName = 'EventRow';
 
+/* ══════════════════════════════════════════ */
+/*  MAIN COMPONENT                            */
+/* ══════════════════════════════════════════ */
 const History = ({ user }) => {
+    /* ── state ── */
     const [employees, setEmployees] = useState([]);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchOpen, setSearchOpen] = useState(false);
+    const searchRef = useRef(null);
+
     const [startDate, setStartDate] = useState(() => {
-        const d = new Date();
-        d.setDate(d.getDate() - 7);
+        const d = new Date(); d.setDate(d.getDate() - 7);
         return d.toISOString().split('T')[0];
     });
     const [endDate, setEndDate] = useState(() => {
-        const d = new Date();
-        d.setDate(d.getDate() + 1);
+        const d = new Date(); d.setDate(d.getDate() + 1);
         return d.toISOString().split('T')[0];
     });
 
@@ -99,44 +104,44 @@ const History = ({ user }) => {
         events: { total: 0, hasMore: false }
     });
 
+    /* drawer: 'collapsed' | 'half' | 'full' */
+    const [drawerState, setDrawerState] = useState('half');
+
+    /* ── close search on outside click ── */
+    useEffect(() => {
+        const handler = (e) => {
+            if (searchRef.current && !searchRef.current.contains(e.target)) setSearchOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    /* ── fetch employees ── */
     useEffect(() => {
         const fetchEmployees = async () => {
             try {
                 const { data } = await api.get('/api/trips/employees');
                 setEmployees(data);
-                if (data.length > 0) {
-                    setSelectedEmployee(data[0].id);
-                }
-            } catch (err) {
-                setError('Error al cargar vendedores');
-            }
+                if (data.length > 0) setSelectedEmployee(data[0].id);
+            } catch { setError('Error al cargar vendedores'); }
         };
         fetchEmployees();
     }, []);
 
+    /* ── fetch history ── */
     const fetchHistory = useCallback(async () => {
-        setLoading(true);
-        setError('');
-        setTripsPage(1);
-        setStopsPage(1);
-        setEventsPage(1);
-        
-        if (!selectedEmployee) {
-            setLoading(false);
-            return;
-        }
-
+        setLoading(true); setError('');
+        setTripsPage(1); setStopsPage(1); setEventsPage(1);
+        if (!selectedEmployee) { setLoading(false); return; }
         try {
             const [tripsRes, stopsRes, eventsRes] = await Promise.all([
                 api.get(`/api/trips/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}`),
                 api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}`),
                 api.get(`/api/trips/events/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}`)
             ]);
-            
             setTrips(tripsRes.data.trips || []);
             setStops(stopsRes.data.stops || []);
             setEvents(eventsRes.data.events || []);
-
             setPaginationInfo({
                 trips: { total: tripsRes.data.total || 0, hasMore: tripsRes.data.hasMore || false },
                 stops: { total: stopsRes.data.total || 0, hasMore: stopsRes.data.hasMore || false },
@@ -144,18 +149,14 @@ const History = ({ user }) => {
             });
         } catch (err) {
             setError('Error al cargar historial: ' + (err.response?.data?.error || err.message));
-            setTrips([]);
-            setStops([]);
-            setEvents([]);
+            setTrips([]); setStops([]); setEvents([]);
         }
         setLoading(false);
     }, [selectedEmployee, startDate, endDate]);
 
-    useEffect(() => {
-        if (!selectedEmployee) return;
-        fetchHistory();
-    }, [selectedEmployee, startDate, endDate, fetchHistory]);
+    useEffect(() => { if (selectedEmployee) fetchHistory(); }, [selectedEmployee, startDate, endDate, fetchHistory]);
 
+    /* ── pagination loaders ── */
     const loadMoreTrips = useCallback(async () => {
         if (loading) return;
         const nextPage = tripsPage + 1;
@@ -163,13 +164,8 @@ const History = ({ user }) => {
             const { data } = await api.get(`/api/trips/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}`);
             setTrips(prev => [...prev, ...(data.trips || [])]);
             setTripsPage(nextPage);
-            setPaginationInfo(prev => ({
-                ...prev,
-                trips: { total: data.total, hasMore: data.hasMore }
-            }));
-        } catch (err) {
-            setError('Error al cargar más viajes');
-        }
+            setPaginationInfo(prev => ({ ...prev, trips: { total: data.total, hasMore: data.hasMore } }));
+        } catch { setError('Error al cargar más viajes'); }
     }, [selectedEmployee, startDate, endDate, tripsPage, loading]);
 
     const loadMoreStops = useCallback(async () => {
@@ -179,13 +175,8 @@ const History = ({ user }) => {
             const { data } = await api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}`);
             setStops(prev => [...prev, ...(data.stops || [])]);
             setStopsPage(nextPage);
-            setPaginationInfo(prev => ({
-                ...prev,
-                stops: { total: data.total, hasMore: data.hasMore }
-            }));
-        } catch (err) {
-            setError('Error al cargar más paradas');
-        }
+            setPaginationInfo(prev => ({ ...prev, stops: { total: data.total, hasMore: data.hasMore } }));
+        } catch { setError('Error al cargar más paradas'); }
     }, [selectedEmployee, startDate, endDate, stopsPage, loading]);
 
     const loadMoreEvents = useCallback(async () => {
@@ -195,29 +186,24 @@ const History = ({ user }) => {
             const { data } = await api.get(`/api/trips/events/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}`);
             setEvents(prev => [...prev, ...(data.events || [])]);
             setEventsPage(nextPage);
-            setPaginationInfo(prev => ({
-                ...prev,
-                events: { total: data.total, hasMore: data.hasMore }
-            }));
-        } catch (err) {
-            setError('Error al cargar más eventos');
-        }
+            setPaginationInfo(prev => ({ ...prev, events: { total: data.total, hasMore: data.hasMore } }));
+        } catch { setError('Error al cargar más eventos'); }
     }, [selectedEmployee, startDate, endDate, eventsPage, loading]);
 
+    /* ── trip detail ── */
     const fetchTripDetails = useCallback(async (tripId) => {
         setLoadingDetails(true);
         try {
             const { data } = await api.get(`/api/trips/${tripId}?simplify=true`);
             setTripDetails(data);
-        } catch (err) {
-            setError('Error al cargar detalles del viaje');
-        }
+        } catch { setError('Error al cargar detalles del viaje'); }
         setLoadingDetails(false);
     }, []);
 
     const handleTripClick = useCallback((trip) => {
         setSelectedTrip(trip);
         fetchTripDetails(trip.id);
+        setDrawerState('half');
     }, [fetchTripDetails]);
 
     const handleBack = useCallback(() => {
@@ -225,278 +211,230 @@ const History = ({ user }) => {
         setTripDetails(null);
     }, []);
 
-    const employeeName = useMemo(() => {
-        return employees.find(e => e.id === selectedEmployee)?.name || 'Vendedor';
-    }, [employees, selectedEmployee]);
+    /* ── derived ── */
+    const employeeName = useMemo(() => employees.find(e => e.id === selectedEmployee)?.name || 'Vendedor', [employees, selectedEmployee]);
 
+    const filteredEmployees = useMemo(() => {
+        if (!searchQuery.trim()) return employees;
+        const q = searchQuery.toLowerCase();
+        return employees.filter(e => e.name.toLowerCase().includes(q));
+    }, [employees, searchQuery]);
+
+    const selectEmployee = (emp) => {
+        setSelectedEmployee(emp.id);
+        setSearchQuery('');
+        setSearchOpen(false);
+    };
+
+    const toggleDrawer = () => {
+        setDrawerState(prev => prev === 'collapsed' ? 'half' : prev === 'half' ? 'full' : 'collapsed');
+    };
+
+    /* ══════════════════ RENDER ══════════════════ */
     return (
-        <div className="hist-container">
-            {/* Mapa a fondo */}
-            <div className="hist-map-section">
+        <div className="hx-root">
+            {/* ─── FULL-SCREEN MAP ─── */}
+            <div className="hx-map">
                 {selectedTrip && tripDetails ? (
                     loadingDetails ? (
-                        <div className="hist-loading-overlay">
-                            <Loader size={40} className="spin" />
-                            <p>Cargando ruta...</p>
-                        </div>
+                        <div className="hx-map-loader"><Loader size={36} className="spin" /><p>Cargando ruta…</p></div>
                     ) : (
-                        <MapView
-                            view="history"
-                            selectedEmployee={employees.find(e => e.id === selectedEmployee) || null}
-                            selectedTrip={selectedTrip}
-                            tripDetails={tripDetails}
-                        />
+                        <MapView view="history" selectedEmployee={employees.find(e => e.id === selectedEmployee) || null} selectedTrip={selectedTrip} tripDetails={tripDetails} />
                     )
                 ) : (
-                    <MapView
-                        view="history"
-                        selectedEmployee={employees.find(e => e.id === selectedEmployee) || null}
-                        trips={trips}
-                        stops={stops}
-                    />
+                    <MapView view="history" selectedEmployee={employees.find(e => e.id === selectedEmployee) || null} trips={trips} stops={stops} />
                 )}
             </div>
 
-            {/* Barra de filtros superior */}
-            <div className="hist-top-bar">
-                <div className="hist-filter-controls">
-                    <div className="hist-select-group">
-                        <label>Vendedor</label>
-                        <select
-                            value={selectedEmployee || ''}
-                            onChange={(e) => setSelectedEmployee(parseInt(e.target.value))}
-                        >
-                            <option value="">Seleccionar...</option>
-                            {employees.map(emp => (
-                                <option key={emp.id} value={emp.id}>{emp.name}</option>
-                            ))}
-                        </select>
-                    </div>
-
-                    <div className="hist-select-group">
-                        <label>Desde</label>
+            {/* ─── FLOATING SEARCH BAR ─── */}
+            <div className="hx-search-wrap" ref={searchRef}>
+                <div className="hx-search-bar">
+                    <Search size={18} className="hx-search-icon" />
+                    {selectedEmployee && !searchOpen ? (
+                        <button className="hx-vendor-chip" onClick={() => setSearchOpen(true)}>
+                            <Navigation size={13} />
+                            <span>{employeeName}</span>
+                            <X size={14} className="hx-chip-x" onClick={(e) => { e.stopPropagation(); setSelectedEmployee(null); setSearchOpen(true); }} />
+                        </button>
+                    ) : (
                         <input
-                            type="date"
-                            value={startDate}
-                            onChange={(e) => setStartDate(e.target.value)}
+                            className="hx-search-input"
+                            type="text"
+                            placeholder="Buscar vendedor…"
+                            value={searchQuery}
+                            onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true); }}
+                            onFocus={() => setSearchOpen(true)}
+                            autoComplete="off"
                         />
-                    </div>
-
-                    <div className="hist-select-group">
-                        <label>Hasta</label>
-                        <input
-                            type="date"
-                            value={endDate}
-                            onChange={(e) => setEndDate(e.target.value)}
-                        />
-                    </div>
-
-                    <button className="hist-btn-refresh" onClick={fetchHistory} disabled={loading}>
-                        {loading ? <Loader size={16} className="spin" /> : '🔄'}
-                        Actualizar
-                    </button>
+                    )}
                 </div>
 
-                {error && (
-                    <div className="hist-error-banner">
-                        <AlertCircle size={16} />
-                        {error}
+                {searchOpen && (
+                    <div className="hx-search-dropdown">
+                        {filteredEmployees.length === 0 ? (
+                            <div className="hx-search-empty">No se encontraron vendedores</div>
+                        ) : (
+                            filteredEmployees.map(emp => (
+                                <button
+                                    key={emp.id}
+                                    className={`hx-search-item ${emp.id === selectedEmployee ? 'active' : ''}`}
+                                    onClick={() => selectEmployee(emp)}
+                                >
+                                    <div className="hx-search-avatar">{emp.name.charAt(0).toUpperCase()}</div>
+                                    <span>{emp.name}</span>
+                                </button>
+                            ))
+                        )}
                     </div>
                 )}
             </div>
 
-            {/* Panel de datos a la derecha */}
-            <div className={`hist-right-panel ${selectedTrip ? 'detail' : 'list'}`}>
-                {selectedTrip ? (
-                    // DETAIL VIEW
-                    <div className="hist-detail-view">
-                        <div className="hist-detail-header">
-                            <button className="hist-btn-back" onClick={handleBack}>
-                                <ArrowLeft size={18} />
-                            </button>
-                            <div>
-                                <h2>{employeeName}</h2>
-                                <p>{selectedTrip.trip_date} · {selectedTrip.start_time_formatted} a {selectedTrip.end_time_formatted}</p>
-                            </div>
-                        </div>
+            {/* ─── FLOATING DATE CONTROLS ─── */}
+            <div className="hx-date-float">
+                <div className="hx-date-field">
+                    <Calendar size={13} />
+                    <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                </div>
+                <span className="hx-date-sep">→</span>
+                <div className="hx-date-field">
+                    <Calendar size={13} />
+                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                </div>
+            </div>
 
-                        <div className="hist-detail-metrics">
-                            <div className="metric-card">
-                                <div className="metric-icon">📏</div>
-                                <div>
-                                    <div className="metric-label">Distancia</div>
-                                    <div className="metric-value">{selectedTrip.distance_km} km</div>
-                                </div>
-                            </div>
-                            <div className="metric-card">
-                                <div className="metric-icon">⏱️</div>
-                                <div>
-                                    <div className="metric-label">Duración</div>
-                                    <div className="metric-value">{selectedTrip.duration_hours}h</div>
-                                </div>
-                            </div>
-                            <div className="metric-card">
-                                <div className="metric-icon">📍</div>
-                                <div>
-                                    <div className="metric-label">Paradas</div>
-                                    <div className="metric-value">{selectedTrip.stop_count}</div>
-                                </div>
-                            </div>
-                        </div>
+            {/* ─── ERROR TOAST ─── */}
+            {error && (
+                <div className="hx-toast-error">
+                    <AlertCircle size={16} />
+                    <span>{error}</span>
+                    <button onClick={() => setError('')}><X size={14} /></button>
+                </div>
+            )}
 
-                        <div className="hist-stops-list">
-                            <h3>Paradas ({tripDetails?.stops?.length || 0})</h3>
+            {/* ─── BOTTOM DRAWER ─── */}
+            <div className={`hx-drawer hx-drawer--${drawerState}`}>
+                {/* Handle */}
+                <button className="hx-drawer-handle" onClick={toggleDrawer}>
+                    <div className="hx-handle-pill" />
+                    {drawerState === 'collapsed' && (
+                        <span className="hx-handle-hint">
+                            <ChevronUp size={16} />
+                            {selectedTrip ? `${employeeName} — ${selectedTrip.trip_date}` : `${employeeName} — Historial de ruta`}
+                        </span>
+                    )}
+                </button>
+
+                {/* Drawer body */}
+                <div className="hx-drawer-body">
+                    {selectedTrip ? (
+                        /* ─── DETAIL VIEW ─── */
+                        <div className="hx-detail">
+                            <div className="hx-detail-head">
+                                <button className="hx-back-btn" onClick={handleBack}><ArrowLeft size={18} /></button>
+                                <div>
+                                    <h2 className="hx-detail-name">{employeeName}</h2>
+                                    <p className="hx-detail-sub">{selectedTrip.trip_date} · {selectedTrip.start_time_formatted} a {selectedTrip.end_time_formatted}</p>
+                                </div>
+                            </div>
+
+                            <div className="hx-detail-metrics">
+                                <div className="hx-metric-pill"><span className="hx-m-icon">📏</span><div><div className="hx-m-val">{selectedTrip.distance_km} km</div><div className="hx-m-lbl">Distancia</div></div></div>
+                                <div className="hx-metric-pill"><span className="hx-m-icon">⏱️</span><div><div className="hx-m-val">{selectedTrip.duration_hours}h</div><div className="hx-m-lbl">Duración</div></div></div>
+                                <div className="hx-metric-pill"><span className="hx-m-icon">📍</span><div><div className="hx-m-val">{selectedTrip.stop_count}</div><div className="hx-m-lbl">Paradas</div></div></div>
+                            </div>
+
+                            <h3 className="hx-section-title">Paradas ({tripDetails?.stops?.length || 0})</h3>
                             {tripDetails?.stops?.length > 0 ? (
-                                <div className="stops-container">
+                                <div className="hx-stops-detail-list">
                                     {tripDetails.stops.map((stop, idx) => (
-                                        <div key={idx} className="stop-item">
-                                            <div className="stop-number">{idx + 1}</div>
-                                            <div className="stop-details">
-                                                <div className="stop-times">
-                                                    {formatTime(stop.start_time)} → {formatTime(stop.end_time)}
-                                                </div>
-                                                <div className="stop-duration">{formatDuration(stop.duration_seconds)}</div>
-                                                <div className="stop-coords">
-                                                    {stop.lat?.toFixed(5)}, {stop.lng?.toFixed(5)}
-                                                </div>
+                                        <div key={idx} className="hx-stop-detail-item">
+                                            <div className="hx-stop-num">{idx + 1}</div>
+                                            <div className="hx-stop-info">
+                                                <div className="hx-stop-times">{formatTime(stop.start_time)} → {formatTime(stop.end_time)}</div>
+                                                <div className="hx-stop-dur-tag">{formatDuration(stop.duration_seconds)}</div>
+                                                <div className="hx-stop-coords">{stop.lat?.toFixed(5)}, {stop.lng?.toFixed(5)}</div>
                                             </div>
-                                            <a
-                                                href={`https://www.google.com/maps?q=${stop.lat},${stop.lng}`}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="stop-maps-btn"
-                                            >
-                                                🗺️
-                                            </a>
+                                            <a href={`https://www.google.com/maps?q=${stop.lat},${stop.lng}`} target="_blank" rel="noopener noreferrer" className="hx-maps-link" title="Abrir en Google Maps">🗺️</a>
                                         </div>
                                     ))}
                                 </div>
                             ) : (
-                                <div className="hist-empty">Sin paradas</div>
+                                <div className="hx-empty-msg">Sin paradas registradas</div>
                             )}
                         </div>
-                    </div>
-                ) : (
-                    // LIST VIEW
-                    <div className="hist-list-view">
-                        <div className="hist-list-tabs">
-                            <button
-                                className={`tab-btn ${activeTab === 'trips' ? 'active' : ''}`}
-                                onClick={() => setActiveTab('trips')}
-                            >
-                                <TrendingUp size={16} />
-                                Recorridos <span className="tab-count">{paginationInfo.trips.total}</span>
-                            </button>
-                            <button
-                                className={`tab-btn ${activeTab === 'stops' ? 'active' : ''}`}
-                                onClick={() => setActiveTab('stops')}
-                            >
-                                <MapPin size={16} />
-                                Paradas <span className="tab-count">{paginationInfo.stops.total}</span>
-                            </button>
-                            <button
-                                className={`tab-btn ${activeTab === 'events' ? 'active' : ''}`}
-                                onClick={() => setActiveTab('events')}
-                            >
-                                <AlertCircle size={16} />
-                                Eventos <span className="tab-count">{paginationInfo.events.total}</span>
-                            </button>
-                        </div>
+                    ) : (
+                        /* ─── LIST VIEW ─── */
+                        <>
+                            {/* Tabs */}
+                            <div className="hx-tabs">
+                                <button className={`hx-tab ${activeTab === 'trips' ? 'active' : ''}`} onClick={() => setActiveTab('trips')}>
+                                    <TrendingUp size={14} /> Recorridos <span className="hx-tab-count">{paginationInfo.trips.total}</span>
+                                </button>
+                                <button className={`hx-tab ${activeTab === 'stops' ? 'active' : ''}`} onClick={() => setActiveTab('stops')}>
+                                    <MapPin size={14} /> Paradas <span className="hx-tab-count">{paginationInfo.stops.total}</span>
+                                </button>
+                                <button className={`hx-tab ${activeTab === 'events' ? 'active' : ''}`} onClick={() => setActiveTab('events')}>
+                                    <AlertCircle size={14} /> Eventos <span className="hx-tab-count">{paginationInfo.events.total}</span>
+                                </button>
+                            </div>
 
-                        <div className="hist-list-content">
-                            {loading && (
-                                <div className="hist-loading-state">
-                                    <Loader size={32} className="spin" />
-                                    <p>Cargando...</p>
-                                </div>
-                            )}
+                            {/* Content */}
+                            <div className="hx-list-content">
+                                {loading && <div className="hx-loading"><Loader size={28} className="spin" /><span>Cargando…</span></div>}
 
-                            {!loading && activeTab === 'trips' && (
-                                <>
-                                    {trips.length === 0 ? (
-                                        <div className="hist-empty">📍 Sin recorridos</div>
-                                    ) : (
-                                        <div className="trips-list">
-                                            {trips.map(trip => (
-                                                <TripCard
-                                                    key={trip.id}
-                                                    trip={trip}
-                                                    onClick={() => handleTripClick(trip)}
-                                                    employee={employeeName}
-                                                />
-                                            ))}
-                                        </div>
-                                    )}
-                                    {paginationInfo.trips.hasMore && (
-                                        <button className="hist-btn-loadmore" onClick={loadMoreTrips}>
-                                            Cargar más ({trips.length}/{paginationInfo.trips.total})
-                                        </button>
-                                    )}
-                                </>
-                            )}
+                                {!loading && activeTab === 'trips' && (
+                                    <>
+                                        {trips.length === 0 ? <div className="hx-empty-msg">📍 Sin recorridos en este rango</div> : (
+                                            <div className="hx-trips-grid">
+                                                {trips.map(trip => <TripCard key={trip.id} trip={trip} onClick={() => handleTripClick(trip)} />)}
+                                            </div>
+                                        )}
+                                        {paginationInfo.trips.hasMore && <button className="hx-load-more" onClick={loadMoreTrips}>Cargar más ({trips.length}/{paginationInfo.trips.total})</button>}
+                                    </>
+                                )}
 
-                            {!loading && activeTab === 'stops' && (
-                                <>
-                                    {stops.length === 0 ? (
-                                        <div className="hist-empty">📍 Sin paradas</div>
-                                    ) : (
-                                        <div className="stops-list">
-                                            {stops.map((stop, idx) => (
-                                                <StopRow key={idx} stop={stop} />
-                                            ))}
-                                        </div>
-                                    )}
-                                    {paginationInfo.stops.hasMore && (
-                                        <button className="hist-btn-loadmore" onClick={loadMoreStops}>
-                                            Cargar más ({stops.length}/{paginationInfo.stops.total})
-                                        </button>
-                                    )}
-                                </>
-                            )}
+                                {!loading && activeTab === 'stops' && (
+                                    <>
+                                        {stops.length === 0 ? <div className="hx-empty-msg">📍 Sin paradas</div> : (
+                                            <div className="hx-stops-list">{stops.map((stop, idx) => <StopRow key={idx} stop={stop} />)}</div>
+                                        )}
+                                        {paginationInfo.stops.hasMore && <button className="hx-load-more" onClick={loadMoreStops}>Cargar más ({stops.length}/{paginationInfo.stops.total})</button>}
+                                    </>
+                                )}
 
-                            {!loading && activeTab === 'events' && (
-                                <>
-                                    {events.length === 0 ? (
-                                        <div className="hist-empty">✨ Sin eventos</div>
-                                    ) : (
-                                        <div className="events-list">
-                                            {events.map((event, idx) => (
-                                                <EventRow key={idx} event={event} />
-                                            ))}
-                                        </div>
-                                    )}
-                                    {paginationInfo.events.hasMore && (
-                                        <button className="hist-btn-loadmore" onClick={loadMoreEvents}>
-                                            Cargar más ({events.length}/{paginationInfo.events.total})
-                                        </button>
-                                    )}
-                                </>
-                            )}
-                        </div>
-                    </div>
-                )}
+                                {!loading && activeTab === 'events' && (
+                                    <>
+                                        {events.length === 0 ? <div className="hx-empty-msg">✨ Sin eventos</div> : (
+                                            <div className="hx-events-list">{events.map((event, idx) => <EventRow key={idx} event={event} />)}</div>
+                                        )}
+                                        {paginationInfo.events.hasMore && <button className="hx-load-more" onClick={loadMoreEvents}>Cargar más ({events.length}/{paginationInfo.events.total})</button>}
+                                    </>
+                                )}
+                            </div>
+                        </>
+                    )}
+                </div>
             </div>
 
+            {/* ═══════════════════════ STYLES ═══════════════════════ */}
             <style>{`
-                .hist-layout {
+                /* ─── ROOT ─── */
+                .hx-root {
                     position: relative;
                     width: 100%;
                     height: 100%;
                     overflow: hidden;
-                    font-family: 'Inter', system-ui, sans-serif;
+                    font-family: 'Inter', system-ui, -apple-system, sans-serif;
                     background: #0f172a;
                 }
 
-                /* Full-screen map */
-                .hist-map-full {
+                /* ─── MAP ─── */
+                .hx-map {
                     position: absolute;
                     inset: 0;
-                    width: 100%;
-                    height: 100%;
                     z-index: 0;
                 }
-
-                .hist-map-loading {
+                .hx-map-loader {
                     position: absolute;
                     inset: 0;
                     display: flex;
@@ -506,331 +444,382 @@ const History = ({ user }) => {
                     gap: 12px;
                     background: #0f172a;
                     color: #94a3b8;
-                    font-size: 14px;
                 }
 
-                /* ─── Filter Bar ─── */
-                .hist-filterbar {
+                /* ─── FLOATING SEARCH ─── */
+                .hx-search-wrap {
                     position: absolute;
-                    top: 20px;
-                    left: 50%;
-                    transform: translateX(-50%);
-                    z-index: 50;
-                    background: rgba(15, 23, 42, 0.7) !important;
-                    backdrop-filter: blur(16px) saturate(180%) !important;
-                    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
-                    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-                    border-radius: 20px;
-                    padding: 16px 24px;
-                    box-shadow: 0 20px 50px rgba(0,0,0,0.4);
-                    max-width: calc(100vw - 40px);
-                    min-width: min(800px, calc(100vw - 40px));
+                    top: 16px;
+                    left: 16px;
+                    z-index: 100;
+                    width: 320px;
+                    max-width: calc(100vw - 200px);
                 }
-
-                .hist-filter-row {
-                    display: flex;
-                    align-items: center;
-                    gap: 20px;
-                    flex-wrap: wrap;
-                }
-
-                .hist-filter-label {
-                    font-size: 16px;
-                    font-weight: 700;
-                    color: #fff;
-                    font-family: 'Outfit', sans-serif;
-                    letter-spacing: -0.02em;
-                }
-
-                .hist-filter-group {
+                .hx-search-bar {
                     display: flex;
                     align-items: center;
                     gap: 10px;
+                    padding: 10px 16px;
+                    background: rgba(15, 23, 42, 0.82);
+                    backdrop-filter: blur(24px) saturate(180%);
+                    -webkit-backdrop-filter: blur(24px) saturate(180%);
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 16px;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+                    transition: border-color 0.2s;
                 }
-
-                .hist-field-label {
-                    font-size: 11px;
-                    color: #94a3b8;
-                    font-weight: 600;
-                    text-transform: uppercase;
-                    letter-spacing: 0.05em;
-                }
-
-                .hist-select, .hist-input {
-                    padding: 10px 14px;
-                    background: rgba(255, 255, 255, 0.05);
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    border-radius: 12px;
-                    color: #fff;
-                    font-size: 13px;
-                    outline: none;
-                    transition: all 0.2s;
-                }
-                .hist-select:focus, .hist-input:focus {
-                    border-color: #3b82f6;
-                    background: rgba(255, 255, 255, 0.1);
-                }
-
-                .hist-refresh-btn {
-                    padding: 10px 20px;
-                    background: #2563eb;
+                .hx-search-bar:focus-within { border-color: #3b82f6; }
+                .hx-search-icon { color: #64748b; flex-shrink: 0; }
+                .hx-search-input {
+                    flex: 1;
+                    background: none;
                     border: none;
+                    outline: none;
+                    color: #f1f5f9;
+                    font-size: 14px;
+                    font-family: inherit;
+                }
+                .hx-search-input::placeholder { color: #475569; }
+
+                /* vendor chip */
+                .hx-vendor-chip {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 6px 12px;
+                    background: rgba(59,130,246,0.2);
+                    border: 1px solid rgba(59,130,246,0.35);
+                    border-radius: 999px;
+                    color: #93c5fd;
+                    font-size: 13px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    font-family: inherit;
+                    white-space: nowrap;
+                    transition: all 0.15s;
+                }
+                .hx-vendor-chip:hover { background: rgba(59,130,246,0.3); }
+                .hx-chip-x {
+                    opacity: 0.6;
+                    transition: opacity 0.15s;
+                }
+                .hx-chip-x:hover { opacity: 1; }
+
+                /* dropdown */
+                .hx-search-dropdown {
+                    margin-top: 6px;
+                    background: rgba(15, 23, 42, 0.92);
+                    backdrop-filter: blur(24px) saturate(180%);
+                    -webkit-backdrop-filter: blur(24px) saturate(180%);
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 16px;
+                    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+                    max-height: 280px;
+                    overflow-y: auto;
+                    padding: 6px;
+                    animation: hxFadeIn 0.15s ease;
+                }
+                .hx-search-empty {
+                    padding: 20px;
+                    text-align: center;
+                    color: #475569;
+                    font-size: 13px;
+                }
+                .hx-search-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    width: 100%;
+                    padding: 10px 14px;
+                    background: transparent;
+                    border: none;
+                    border-radius: 12px;
+                    color: #e2e8f0;
+                    font-size: 14px;
+                    cursor: pointer;
+                    font-family: inherit;
+                    text-align: left;
+                    transition: background 0.12s;
+                }
+                .hx-search-item:hover { background: rgba(255,255,255,0.06); }
+                .hx-search-item.active { background: rgba(59,130,246,0.15); color: #93c5fd; }
+                .hx-search-avatar {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 50%;
+                    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+                    color: white;
+                    font-size: 14px;
+                    font-weight: 700;
+                    flex-shrink: 0;
+                }
+
+                /* ─── FLOATING DATE ─── */
+                .hx-date-float {
+                    position: absolute;
+                    top: 16px;
+                    right: 16px;
+                    z-index: 100;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 8px 14px;
+                    background: rgba(15, 23, 42, 0.82);
+                    backdrop-filter: blur(24px) saturate(180%);
+                    -webkit-backdrop-filter: blur(24px) saturate(180%);
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 14px;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+                }
+                .hx-date-field {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    color: #94a3b8;
+                }
+                .hx-date-field input[type="date"] {
+                    background: rgba(255,255,255,0.05);
+                    border: 1px solid rgba(255,255,255,0.08);
+                    color: #e2e8f0;
+                    padding: 6px 10px;
+                    border-radius: 8px;
+                    font-size: 12px;
+                    font-family: inherit;
+                    outline: none;
+                    transition: border-color 0.2s;
+                }
+                .hx-date-field input[type="date"]:focus { border-color: #3b82f6; }
+                .hx-date-field input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+                .hx-date-sep { color: #475569; font-size: 14px; font-weight: 600; }
+
+                /* ─── ERROR TOAST ─── */
+                .hx-toast-error {
+                    position: absolute;
+                    top: 72px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    z-index: 200;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 10px 18px;
+                    background: rgba(220, 38, 38, 0.85);
+                    backdrop-filter: blur(12px);
                     border-radius: 12px;
                     color: white;
                     font-size: 13px;
-                    font-weight: 700;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+                    font-weight: 500;
+                    box-shadow: 0 8px 24px rgba(220,38,38,0.3);
+                    animation: hxSlideDown 0.25s ease;
                 }
-                .hist-refresh-btn:hover { background: #1d4ed8; transform: translateY(-1px); }
+                .hx-toast-error button {
+                    background: none;
+                    border: none;
+                    color: rgba(255,255,255,0.7);
+                    cursor: pointer;
+                    padding: 2px;
+                }
 
-                /* ─── Bottom Drawer ─── */
-                .hist-drawer {
+                /* ─── DRAWER ─── */
+                .hx-drawer {
                     position: absolute;
                     bottom: 0;
                     left: 0;
                     right: 0;
-                    z-index: 50;
-                    background: rgba(15, 23, 42, 0.8) !important;
-                    backdrop-filter: blur(20px) saturate(180%) !important;
-                    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
-                    border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
-                    border-radius: 30px 30px 0 0;
-                    box-shadow: 0 -20px 50px rgba(0,0,0,0.5);
+                    z-index: 80;
+                    background: rgba(15, 23, 42, 0.88);
+                    backdrop-filter: blur(28px) saturate(180%);
+                    -webkit-backdrop-filter: blur(28px) saturate(180%);
+                    border-top: 1px solid rgba(255,255,255,0.08);
+                    border-radius: 24px 24px 0 0;
+                    box-shadow: 0 -12px 48px rgba(0,0,0,0.45);
                     display: flex;
                     flex-direction: column;
-                    transition: height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+                    transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+                    will-change: height;
                 }
+                .hx-drawer--collapsed { height: 56px; }
+                .hx-drawer--half { height: 45%; }
+                .hx-drawer--full { height: 85%; }
 
-                .hist-drawer.open { height: 50%; }
-                .hist-drawer.collapsed { height: 60px; }
-
-                .hist-drawer-handle {
+                .hx-drawer-handle {
                     display: flex;
+                    flex-direction: column;
                     align-items: center;
                     justify-content: center;
-                    gap: 12px;
-                    padding: 15px 24px;
+                    gap: 6px;
+                    padding: 12px 24px;
                     background: transparent;
                     border: none;
                     color: #94a3b8;
                     cursor: pointer;
-                    min-height: 60px;
+                    min-height: 44px;
+                    width: 100%;
+                    font-family: inherit;
                 }
-
-                .hist-handle-bar {
-                    width: 40px;
+                .hx-handle-pill {
+                    width: 36px;
                     height: 4px;
-                    background: rgba(255, 255, 255, 0.2);
+                    background: rgba(255,255,255,0.2);
                     border-radius: 2px;
-                    position: absolute;
-                    top: 10px;
+                }
+                .hx-handle-hint {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #64748b;
                 }
 
-                .hist-drawer-body {
+                .hx-drawer-body {
                     flex: 1;
                     overflow-y: auto;
-                    padding: 20px 30px;
+                    padding: 0 24px 24px;
                 }
+                .hx-drawer--collapsed .hx-drawer-body { display: none; }
 
-                /* ─── Tabs ─── */
-                .hist-tabs {
+                /* scrollbar */
+                .hx-drawer-body::-webkit-scrollbar { width: 4px; }
+                .hx-drawer-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+
+                /* ─── TABS ─── */
+                .hx-tabs {
                     display: flex;
-                    gap: 6px;
-                    margin-bottom: 14px;
+                    gap: 4px;
                     padding: 4px;
                     background: rgba(255,255,255,0.04);
-                    border-radius: 10px;
+                    border-radius: 12px;
+                    margin-bottom: 16px;
                     width: fit-content;
                 }
-
-                .hist-tab {
+                .hx-tab {
                     display: flex;
                     align-items: center;
                     gap: 6px;
                     padding: 8px 16px;
                     background: transparent;
                     border: none;
-                    border-radius: 7px;
+                    border-radius: 9px;
                     color: #64748b;
                     cursor: pointer;
                     font-size: 13px;
                     font-weight: 600;
+                    font-family: inherit;
                     transition: all 0.15s;
+                    white-space: nowrap;
                 }
-                .hist-tab:hover { color: #e2e8f0; }
-                .hist-tab.active { background: #2563eb; color: white; }
-
-                .hist-tab-badge {
-                    background: rgba(255,255,255,0.15);
+                .hx-tab:hover { color: #e2e8f0; background: rgba(255,255,255,0.04); }
+                .hx-tab.active {
+                    background: linear-gradient(135deg, #2563eb, #3b82f6);
+                    color: white;
+                    box-shadow: 0 2px 8px rgba(37,99,235,0.35);
+                }
+                .hx-tab-count {
                     padding: 1px 7px;
+                    background: rgba(255,255,255,0.12);
                     border-radius: 999px;
                     font-size: 11px;
                 }
-                .hist-tab.active .hist-tab-badge { background: rgba(255,255,255,0.2); }
+                .hx-tab.active .hx-tab-count { background: rgba(255,255,255,0.2); }
 
-                /* ─── Loading / Empty ─── */
-                .hist-loading {
+                /* ─── LOADING / EMPTY ─── */
+                .hx-loading {
                     display: flex;
                     align-items: center;
-                    gap: 10px;
                     justify-content: center;
+                    gap: 12px;
                     padding: 40px;
                     color: #64748b;
                     font-size: 14px;
                 }
-
-                .hist-empty {
+                .hx-empty-msg {
                     text-align: center;
                     color: #475569;
                     font-size: 14px;
                     padding: 40px 16px;
                 }
 
-                /* ─── Trips grid ─── */
-                .hist-trips-grid {
+                /* ─── TRIPS GRID ─── */
+                .hx-trips-grid {
                     display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+                    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
                     gap: 10px;
                 }
-
-                .hist-trip-card {
+                .hx-trip-card {
                     background: rgba(255,255,255,0.04);
                     border: 1px solid rgba(255,255,255,0.07);
-                    border-radius: 12px;
-                    padding: 14px;
+                    border-radius: 14px;
+                    padding: 14px 16px;
                     cursor: pointer;
                     text-align: left;
                     font-family: inherit;
-                    transition: all 0.15s;
+                    transition: all 0.18s ease;
+                    width: 100%;
                 }
-                .hist-trip-card:hover {
-                    background: rgba(255,255,255,0.08);
-                    border-color: #3b82f6;
-                    transform: translateY(-1px);
-                    box-shadow: 0 4px 16px rgba(37,99,235,0.2);
+                .hx-trip-card:hover {
+                    background: rgba(59,130,246,0.08);
+                    border-color: rgba(59,130,246,0.3);
+                    transform: translateY(-2px);
+                    box-shadow: 0 6px 20px rgba(59,130,246,0.15);
                 }
-
-                .hist-trip-date-row {
+                .hx-trip-top {
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    margin-bottom: 10px;
-                    padding-bottom: 8px;
+                    margin-bottom: 12px;
+                    padding-bottom: 10px;
                     border-bottom: 1px solid rgba(255,255,255,0.06);
                 }
-
-                .hist-trip-date {
-                    font-size: 13px;
-                    font-weight: 700;
-                    color: #e2e8f0;
-                }
-
-                .hist-trip-time {
+                .hx-trip-date { font-size: 14px; font-weight: 700; color: #f1f5f9; }
+                .hx-trip-time {
+                    display: flex;
+                    align-items: center;
+                    gap: 5px;
                     font-size: 11px;
                     color: #64748b;
                 }
-
-                .hist-trip-stats {
+                .hx-trip-stats {
                     display: grid;
                     grid-template-columns: repeat(3, 1fr);
-                    gap: 6px;
-                    margin-bottom: 10px;
+                    gap: 8px;
+                    margin-bottom: 12px;
                 }
-
-                .hist-trip-stat {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 2px;
-                }
-
-                .tsl {
-                    font-size: 10px;
-                    color: #475569;
-                    font-weight: 600;
-                    text-transform: uppercase;
-                    letter-spacing: 0.05em;
-                }
-
-                .tsv {
-                    font-size: 13px;
-                    font-weight: 700;
-                    color: #e2e8f0;
-                }
-
-                .hist-trip-view {
+                .hx-stat { display: flex; flex-direction: column; gap: 2px; }
+                .hx-stat-val { font-size: 16px; font-weight: 800; color: #e2e8f0; }
+                .hx-stat-lbl { font-size: 10px; color: #475569; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+                .hx-trip-cta {
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     gap: 4px;
                     font-size: 12px;
                     color: #60a5fa;
-                    font-weight: 600;
-                    padding-top: 8px;
+                    font-weight: 700;
+                    padding-top: 10px;
                     border-top: 1px solid rgba(255,255,255,0.06);
                 }
 
-                /* ─── Table ─── */
-                .hist-table-wrap {
-                    overflow-x: auto;
-                    border-radius: 10px;
-                    border: 1px solid rgba(255,255,255,0.06);
-                }
-
-                .hist-table {
-                    width: 100%;
-                    border-collapse: collapse;
-                    font-size: 13px;
-                }
-
-                .hist-table th {
-                    background: rgba(255,255,255,0.04);
-                    padding: 12px 16px;
-                    text-align: left;
-                    font-size: 11px;
-                    font-weight: 700;
-                    color: #64748b;
-                    text-transform: uppercase;
-                    letter-spacing: 0.08em;
-                    white-space: nowrap;
-                    border-bottom: 1px solid rgba(255,255,255,0.08);
-                }
-
-                .hist-table td {
-                    padding: 14px 16px;
-                    border-top: 1px solid rgba(255,255,255,0.02);
-                    color: #e2e8f0;
-                    background: transparent;
-                    line-height: 1.5;
-                }
-
-                .hist-table td strong {
-                    color: #f1f5f9;
-                    font-weight: 600;
-                }
-
-                .hist-table tr:hover td { 
-                    background: rgba(255,255,255,0.04) !important;
-                    transition: background 0.1s ease;
-                }
-
-                .hist-stop-num {
-                    display: inline-flex;
+                /* ─── STOPS (list tab) ─── */
+                .hx-stops-list { display: flex; flex-direction: column; gap: 6px; }
+                .hx-stop-row {
+                    display: flex;
                     align-items: center;
-                    justify-content: center;
-                    width: 24px;
-                    height: 24px;
-                    background: rgba(37,99,235,0.25);
-                    color: #93c5fd;
-                    border-radius: 50%;
-                    font-size: 12px;
-                    font-weight: 700;
+                    gap: 14px;
+                    padding: 10px 14px;
+                    background: rgba(255,255,255,0.03);
+                    border-radius: 10px;
+                    transition: background 0.12s;
                 }
-
-                .hist-duration {
-                    display: inline-block;
-                    padding: 4px 10px;
+                .hx-stop-row:hover { background: rgba(255,255,255,0.06); }
+                .hx-stop-time-col { display: flex; flex-direction: column; gap: 2px; min-width: 80px; }
+                .hx-stop-date-tag { font-size: 11px; color: #64748b; font-weight: 600; }
+                .hx-stop-time-tag { font-size: 13px; color: #e2e8f0; font-weight: 700; }
+                .hx-stop-dur {
+                    padding: 3px 10px;
                     background: rgba(245,158,11,0.15);
                     color: #fcd34d;
                     border-radius: 6px;
@@ -838,69 +827,186 @@ const History = ({ user }) => {
                     font-weight: 600;
                     white-space: nowrap;
                 }
-
-                .hist-coord {
-                    display: inline-block;
-                    padding: 4px 10px;
-                    background: rgba(37,99,235,0.15);
-                    color: #93c5fd;
-                    border-radius: 6px;
+                .hx-stop-loc {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    color: #64748b;
                     font-size: 12px;
-                    font-family: 'Monaco', 'Courier New', monospace;
+                }
+                .hx-stop-loc code {
+                    background: rgba(59,130,246,0.12);
+                    color: #93c5fd;
+                    padding: 2px 8px;
+                    border-radius: 6px;
+                    font-size: 11px;
                 }
 
-                .hist-view-btn {
-                    padding: 6px 14px;
-                    background: #2563eb;
-                    color: white;
-                    border: none;
-                    border-radius: 7px;
-                    cursor: pointer;
-                    font-size: 12px;
-                    font-weight: 600;
-                    transition: all 0.15s ease;
+                /* ─── EVENTS ─── */
+                .hx-events-list { display: flex; flex-direction: column; gap: 6px; }
+                .hx-event-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 10px 14px;
+                    background: rgba(255,255,255,0.03);
+                    border-radius: 10px;
+                    font-size: 13px;
+                    transition: background 0.12s;
+                }
+                .hx-event-row:hover { background: rgba(255,255,255,0.06); }
+                .hx-ev-date { color: #94a3b8; font-weight: 600; min-width: 80px; font-size: 12px; }
+                .hx-ev-time { color: #e2e8f0; font-weight: 700; min-width: 55px; }
+                .hx-ev-badge {
+                    padding: 3px 10px;
+                    border-radius: 6px;
+                    font-size: 11px;
+                    font-weight: 700;
                     white-space: nowrap;
                 }
-                .hist-view-btn:hover { 
-                    background: #1d4ed8;
-                    transform: translateY(-1px);
-                }
+                .hx-ev-badge.off { background: rgba(239,68,68,0.15); color: #fca5a5; }
+                .hx-ev-badge.on { background: rgba(34,197,94,0.15); color: #86efac; }
+                .hx-ev-reason { color: #94a3b8; font-size: 12px; flex: 1; }
+                .hx-ev-dur { color: #fcd34d; font-size: 12px; font-weight: 600; }
 
-                .hist-load-more {
+                /* ─── LOAD MORE ─── */
+                .hx-load-more {
                     display: block;
-                    margin: 20px auto;
+                    margin: 16px auto 0;
                     padding: 10px 24px;
-                    background: rgba(37,99,235,0.2);
+                    background: rgba(59,130,246,0.15);
                     color: #60a5fa;
-                    border: 1px solid rgba(37,99,235,0.3);
-                    border-radius: 8px;
+                    border: 1px solid rgba(59,130,246,0.25);
+                    border-radius: 10px;
                     cursor: pointer;
                     font-size: 13px;
                     font-weight: 600;
-                    transition: all 0.15s ease;
+                    font-family: inherit;
+                    transition: all 0.15s;
                 }
-                .hist-load-more:hover {
-                    background: rgba(37,99,235,0.3);
-                    border-color: rgba(37,99,235,0.5);
-                    transform: translateY(-2px);
+                .hx-load-more:hover {
+                    background: rgba(59,130,246,0.25);
+                    border-color: rgba(59,130,246,0.45);
+                    transform: translateY(-1px);
                 }
 
-                /* ─── Stops detail in drawer ─── */
-                .hist-stops-detail { width: 100%; }
+                /* ─── DETAIL VIEW ─── */
+                .hx-detail-head {
+                    display: flex;
+                    align-items: center;
+                    gap: 14px;
+                    margin-bottom: 16px;
+                }
+                .hx-back-btn {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 38px;
+                    height: 38px;
+                    background: rgba(255,255,255,0.06);
+                    border: 1px solid rgba(255,255,255,0.08);
+                    border-radius: 12px;
+                    color: #e2e8f0;
+                    cursor: pointer;
+                    transition: all 0.15s;
+                    flex-shrink: 0;
+                }
+                .hx-back-btn:hover { background: rgba(255,255,255,0.1); border-color: #3b82f6; }
+                .hx-detail-name { font-size: 16px; font-weight: 700; color: #f1f5f9; margin: 0; }
+                .hx-detail-sub { font-size: 12px; color: #64748b; margin: 2px 0 0; }
 
-                /* ─── Spinner ─── */
+                .hx-detail-metrics {
+                    display: grid;
+                    grid-template-columns: repeat(3, 1fr);
+                    gap: 10px;
+                    margin-bottom: 20px;
+                }
+                .hx-metric-pill {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 12px 14px;
+                    background: rgba(255,255,255,0.04);
+                    border: 1px solid rgba(255,255,255,0.06);
+                    border-radius: 12px;
+                }
+                .hx-m-icon { font-size: 20px; }
+                .hx-m-val { font-size: 16px; font-weight: 800; color: #f1f5f9; }
+                .hx-m-lbl { font-size: 10px; color: #475569; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+
+                .hx-section-title {
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: #94a3b8;
+                    text-transform: uppercase;
+                    letter-spacing: 0.06em;
+                    margin-bottom: 12px;
+                }
+
+                .hx-stops-detail-list { display: flex; flex-direction: column; gap: 8px; }
+                .hx-stop-detail-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 10px 14px;
+                    background: rgba(255,255,255,0.03);
+                    border-radius: 10px;
+                    transition: background 0.12s;
+                }
+                .hx-stop-detail-item:hover { background: rgba(255,255,255,0.06); }
+                .hx-stop-num {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 28px;
+                    height: 28px;
+                    background: rgba(59,130,246,0.2);
+                    color: #93c5fd;
+                    border-radius: 50%;
+                    font-size: 12px;
+                    font-weight: 700;
+                    flex-shrink: 0;
+                }
+                .hx-stop-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+                .hx-stop-times { font-size: 13px; color: #e2e8f0; font-weight: 600; }
+                .hx-stop-dur-tag {
+                    font-size: 11px;
+                    color: #fcd34d;
+                    font-weight: 600;
+                }
+                .hx-stop-coords { font-size: 11px; color: #64748b; font-family: 'Monaco', 'Courier New', monospace; }
+                .hx-maps-link {
+                    font-size: 18px;
+                    text-decoration: none;
+                    opacity: 0.6;
+                    transition: opacity 0.15s;
+                    flex-shrink: 0;
+                }
+                .hx-maps-link:hover { opacity: 1; }
+
+                /* ─── ANIMATIONS ─── */
+                @keyframes hxFadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+                @keyframes hxSlideDown { from { opacity: 0; transform: translate(-50%, -8px); } to { opacity: 1; transform: translate(-50%, 0); } }
                 .spin { animation: spin 1s linear infinite; }
                 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-                /* ─── Mobile ─── */
+                /* ─── MOBILE ─── */
                 @media (max-width: 640px) {
-                    .hist-filterbar { padding: 10px 12px; border-radius: 12px; }
-                    .hist-filter-row { gap: 8px; }
-                    .hist-mini-stats { gap: 10px; }
-                    .hist-drawer.open { height: 55%; max-height: 60vh; }
-                    .hist-trips-grid { grid-template-columns: 1fr; }
-                    .hist-table th,
-                    .hist-table td { padding: 10px 12px; font-size: 12px; }
+                    .hx-search-wrap { width: calc(100vw - 32px); max-width: none; }
+                    .hx-date-float { 
+                        top: auto;
+                        bottom: calc(45% + 8px);
+                        right: 12px;
+                        padding: 6px 10px;
+                        flex-direction: column;
+                        gap: 4px;
+                    }
+                    .hx-date-sep { display: none; }
+                    .hx-drawer--half { height: 50%; }
+                    .hx-drawer--full { height: 90%; }
+                    .hx-trips-grid { grid-template-columns: 1fr; }
+                    .hx-detail-metrics { grid-template-columns: 1fr; }
+                    .hx-drawer-body { padding: 0 14px 14px; }
                 }
             `}</style>
         </div>

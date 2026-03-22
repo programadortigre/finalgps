@@ -278,12 +278,13 @@ const Dashboard = ({ user, onLogout }) => {
                     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30" onClick={() => setSidebarOpen(false)} />
                 )}
 
-                {/* Sidebar - List of Active Locations */}
+                {/* Sidebar - List of Active Locations (hidden in history view) */}
                 <aside className={`
                     ${isMobile ? 'fixed left-0 top-0 bottom-0 z-40' : 'relative'}
                     w-72 glass-dark border-r border-white/5
                     flex flex-col transition-all duration-300
                     ${isMobile && !sidebarOpen ? '-translate-x-full' : 'translate-x-0'}
+                    ${view === 'history' ? 'hidden' : ''}
                 `} style={{marginTop: isMobile ? '68px' : '0'}}>
                     
                     {/* Sidebar Header */}
