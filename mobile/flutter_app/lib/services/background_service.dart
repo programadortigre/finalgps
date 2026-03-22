@@ -1034,7 +1034,7 @@ class TrackingEngine {
       // ✅ Detección unificada de GAP (20 min)
       String pointType = 'normal';
       if (_lastValidPoint != null) {
-        final gap = _lastValidLocationTime.millisecondsSinceEpoch - _lastValidPoint!.timestamp;
+        final gap = now.millisecondsSinceEpoch - _lastValidPoint!.timestamp;
         if (gap > _gapThresholdMs) {
           pointType = 'recovery';
           _log('GAP', 'Gap detectado: ${gap~/60000} min. Marcando como RECOVERY.');
@@ -1051,7 +1051,7 @@ class TrackingEngine {
         speed: speedKmh,
         accuracy: pos.accuracy,
         state: _currentState.name,
-        timestamp: _lastValidLocationTime.millisecondsSinceEpoch,
+        timestamp: now.millisecondsSinceEpoch,
         employeeId: _cachedEmployeeId,
         source: source,
         batteryLevel: batteryLevel,
@@ -1099,6 +1099,9 @@ class TrackingEngine {
         'state': _currentState.name,
         'total_distance': _totalDistanceKm,
       });
+
+      // ✅ Actualizar el watchdog timer para evitar falsos positivos de NO_SIGNAL
+      _lastValidLocationTime = now;
 
       _updateNotification();
     } catch (e) {

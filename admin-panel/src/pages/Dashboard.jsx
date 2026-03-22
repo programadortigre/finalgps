@@ -388,9 +388,16 @@ const Dashboard = ({ user, onLogout }) => {
                                                     
                                                     {/* Locate Now Button */}
                                                     <button 
-                                                        onClick={(e) => requestLocate(e, vendor.id)}
-                                                        className="p-1.5 rounded-lg text-primary-400 hover:bg-primary-500/20 transition-all"
-                                                        title="Localizar ahora"
+                                                        onClick={(e) => {
+                                                            if (vendor.status === 'OFFLINE' || !vendor.isLive) {
+                                                                alert('El equipo está desconectado. El comando se enviará cuando recupere la conexión o abra la app.');
+                                                            }
+                                                            requestLocate(e, vendor.id);
+                                                        }}
+                                                        className={`p-1.5 rounded-lg transition-all ${
+                                                            vendor.isLive ? 'text-primary-400 hover:bg-primary-500/20' : 'text-slate-500 hover:bg-white/10 opacity-60'
+                                                        }`}
+                                                        title={vendor.isLive ? "Localizar ahora" : "Localizar al reconectar"}
                                                     >
                                                         <Radar size={14} />
                                                     </button>
@@ -426,6 +433,10 @@ const Dashboard = ({ user, onLogout }) => {
                                                                 const diffMs = vendor.lastUpdate ? (Date.now() - new Date(vendor.lastUpdate).getTime()) : Infinity;
                                                                 const diffMins = Math.floor(diffMs / 60000);
                                                                 const isStaleReal = diffMins > 20;
+                                                                
+                                                                let timeLabel = `${diffMins}m`;
+                                                                if (diffMins > 1440 && diffMins < 500000) timeLabel = '>24h';
+                                                                if (diffMins >= 500000) timeLabel = 'Sin datos';
 
                                                                 return (
                                                                     <div className="flex flex-wrap gap-1 mt-0.5">
@@ -438,7 +449,8 @@ const Dashboard = ({ user, onLogout }) => {
                                                                             'bg-red-500/10 text-red-400'
                                                                         }`}>
                                                                             {vendor.is_tracking_enabled === false ? '⏸️ Pausado' :
-                                                                             isStaleReal ? `🕳️ Sin señal (${diffMins}m)` : 
+                                                                             diffMins >= 500000 ? '🕳️ Sin datos' :
+                                                                             isStaleReal ? `🕳️ Sin señal (${timeLabel})` : 
                                                                              vendor.status === 'GPS_OFF' ? `⛔ Apagado` :
                                                                              vendor.point_type === 'recovery' ? '🔄 Recuperado' :
                                                                              (vendor.confidence || 1.0) >= 0.8 ? '🟢 Live' : '🔴 NO GPS'}
