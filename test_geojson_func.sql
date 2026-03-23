@@ -1,0 +1,2 @@
+-- Test ST_GeomFromGeoJSON con casting a geographic
+SELECT ST_GeomFromGeoJSON('{"type":"Polygon","coordinates":[[[-77.04,-12.04],[-77.03,-12.04],[-77.03,-12.05],[-77.04,-12.04]]]}')::geography as geog;

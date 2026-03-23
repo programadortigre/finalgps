@@ -4,6 +4,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import api from '../services/api';
 import Playback from './Playback';
+import LeafletDrawControl from './LeafletDrawControl';
 import dayjs from 'dayjs';
 
 // Fix default Leaflet icons
@@ -55,11 +56,18 @@ const MapEvents = ({ onMapClick, isDrawing, onDrawClick }) => {
     const map = useMap();
 
     useEffect(() => {
+        // ⚠️ IMPORTANTE: NO registrar listener cuando isDrawing=true
+        // Permitir que Leaflet.Draw tenga control TOTAL sobre los clicks
+        if (isDrawing) {
+            // En modo dibujo, Leaflet.Draw maneja TODO
+            console.log('[MapEvents] ⚠️ Modo dibujo activo - MapEvents DESHABILITADO');
+            return;
+        }
+
+        // Solo registrar click listener cuando NO estamos en modo dibujo
         const handleClick = (e) => {
-            console.log('[Map] Map Click at:', e.latlng, 'isDrawing:', isDrawing);
-            if (isDrawing) {
-                onDrawClick(e.latlng);
-            } else if (onMapClick) {
+            console.log('[Map] Map Click at:', e.latlng);
+            if (onMapClick) {
                 onMapClick(e.latlng);
             }
         };
@@ -68,9 +76,20 @@ const MapEvents = ({ onMapClick, isDrawing, onDrawClick }) => {
         return () => {
             map.off('click', handleClick);
         };
-    }, [map, isDrawing, onMapClick, onDrawClick]);
+    }, [map, isDrawing, onMapClick]);
 
     return null;
+};
+
+// Componente para integrar Leaflet.Draw en el mapa
+const DrawControlWrapper = ({ isDrawing, onPolygonComplete, onCancelDrawing }) => {
+    const map = useMap();
+    return <LeafletDrawControl 
+        map={map} 
+        isDrawingPerimeter={isDrawing} 
+        onPolygonComplete={onPolygonComplete} 
+        onCancelDrawing={onCancelDrawing} 
+    />;
 };
 
 const FitBounds = ({ positions }) => {
@@ -96,7 +115,7 @@ const FlyToEmployee = ({ lat, lng }) => {
             
             // Si está lejos (>200m) o es la primera vez, vuela (FlyTo)
             if (!lastPos.current || dist > 200) {
-                map.flyTo([lat, lng], 18, { animate: true, duration: 1.2 });
+                map.flyTo([lat, lng], 19, { animate: true, duration: 1.2 });
             } else if (dist > 5) {
                 // Si está cerca but moved, solo panea suavemente (para seguimiento en tiempo real)
                 map.panTo([lat, lng], { animate: true });
@@ -218,8 +237,6 @@ const MapView = ({
     onCustomerClick,
     clickCoords,
     isDrawingPerimeter,
-    drawMode,
-    setDrawMode,
     onPolygonComplete,
     onCancelDrawing
 }) => {
@@ -229,7 +246,6 @@ const MapView = ({
     const [date, setDate] = useState(selectedDate || dayjs().format('YYYY-MM-DD'));
     const [playbackMode, setPlayback] = useState(false);
     const [addresses, setAddresses] = useState({});
-    const [tempPolygon, setTempPolygon] = useState([]);
     const [mapStyle, setMapStyle] = useState('dark'); // 'roadmap', 'satellite', 'dark'
 
     // Cargar direcciones cuando se reciben tripDetails como prop
@@ -366,25 +382,8 @@ const MapView = ({
         ? (activeLocations[selectedEmployee.id])
         : null;
 
-    const handleDrawClick = (latlng) => {
-        setTempPolygon(prev => [...prev, [latlng.lat, latlng.lng]]);
-    };
-
-    const handleFinishDrawing = () => {
-        if (tempPolygon.length < 3) {
-            alert('El perímetro debe tener al menos 3 puntos.');
-            return;
-        }
-        // Cerrar el polígono repitiendo el primer punto para GeoJSON válido
-        const closedCoords = [...tempPolygon, tempPolygon[0]];
-        const geojson = {
-            type: 'Polygon',
-            coordinates: [closedCoords.map(p => [p[1], p[0]])] // [lng, lat]
-        };
-        console.log('[MapView] Finalizando dibujo:', geojson);
-        onPolygonComplete(geojson);
-        setTempPolygon([]);
-    };
+    // Nota: handleDrawClick y handleFinishDrawing fueron removidos
+    // Ahora Leaflet.Draw maneja todo el dibujo de polígonos automáticamente
 
     return (
         <div style={{ height: '100%', width: '100%', position: 'relative' }}>
@@ -412,23 +411,6 @@ const MapView = ({
                     </button>
                 </div>
 
-                {/* Drawing Mode Toggle */}
-                {view === 'live' && !isDrawingPerimeter && (
-                    <div className="flex bg-dark-900/80 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden p-1 shadow-2xl">
-                        <button 
-                            onClick={() => setDrawMode('point')}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${drawMode === 'point' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                        >
-                            <span className="text-[14px]">📍</span> Punto
-                        </button>
-                        <button 
-                            onClick={() => setDrawMode('area')}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${drawMode === 'area' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                        >
-                            <span className="text-[14px]">⬢</span> Área
-                        </button>
-                    </div>
-                )}
             </div>
 
             {/* ── DRAWING CONTROLS Overlay ── */}
@@ -437,28 +419,16 @@ const MapView = ({
                     <div className="bg-indigo-600 text-white px-6 py-3 rounded-2xl shadow-2xl border border-white/20 backdrop-blur-md animate-in slide-in-from-top-4 duration-300 pointer-events-auto">
                         <div className="text-sm font-bold flex items-center gap-3">
                             <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                            MODO DIBUJO: Haz clic en el mapa para marcar los vértices
+                            MODO DIBUJO ACTIVO
                         </div>
-                        <div className="text-[10px] opacity-70 mt-1 text-center">Debes marcar al menos 3 puntos para formar un área.</div>
+                        <div className="text-[10px] opacity-70 mt-1 text-center">Usa las herramientas de la izquierda (📍 o ⬢) para crear el cliente.</div>
                     </div>
-                    <div className="flex gap-2 pointer-events-auto">
+                    <div className="pointer-events-auto">
                         <button 
-                            onClick={() => { setTempPolygon([]); onCancelDrawing(); }}
+                            onClick={onCancelDrawing}
                             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold shadow-lg transition-all"
                         >
                             Cancelar
-                        </button>
-                        <button 
-                            onClick={() => setTempPolygon(prev => prev.slice(0, -1))}
-                            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold shadow-lg transition-all"
-                        >
-                            Deshacer punto
-                        </button>
-                        <button 
-                            onClick={handleFinishDrawing}
-                            className="px-6 py-2 bg-green-600 hover:bg-green-500 text-white rounded-xl text-sm font-bold shadow-lg transition-all flex items-center gap-2"
-                        >
-                            ✅ Finalizar Perímetro ({tempPolygon.length})
                         </button>
                     </div>
                 </div>
@@ -647,13 +617,14 @@ const MapView = ({
                 </div>
             )}
 
-            <MapContainer center={points[0] ? [points[0].lat, points[0].lng] : [-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={19} zoomControl={false} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
+            <MapContainer center={points[0] ? [points[0].lat, points[0].lng] : [-12.0464, -77.0428]} zoom={17} minZoom={10} maxZoom={20} zoomControl={false} style={{ height: '100%', width: '100%', backgroundColor: '#1A1A2E' }}>
                 {/* ── BASE LAYERS ── */}
                 {mapStyle === 'roadmap' && (
                     <TileLayer
                         url="https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
                         subdomains={['mt0', 'mt1', 'mt2', 'mt3']}
                         attribution="&copy; Google Maps"
+                        maxNativeZoom={20}
                         maxZoom={20}
                     />
                 )}
@@ -662,88 +633,90 @@ const MapView = ({
                         url="https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}"
                         subdomains={['mt0', 'mt1', 'mt2', 'mt3']}
                         attribution="&copy; Google Maps"
+                        maxNativeZoom={20}
                         maxZoom={20}
                     />
                 )}
                 {mapStyle === 'dark' && (
-                    <>
-                        <TileLayer
-                            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                            attribution="&copy; <a href='https://carto.com/'>carto.com</a>"
-                            subdomains={['a', 'b', 'c', 'd']}
-                            maxNativeZoom={18}
-                            maxZoom={19}
-                        />
-                        <TileLayer
-                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                            attribution="&copy; <a href='https://osm.org/'>OpenStreetMap</a>"
-                            minZoom={19}
-                            maxZoom={20}
-                        />
-                    </>
+                    <TileLayer
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        attribution="&copy; <a href='https://osm.org/'>OpenStreetMap</a>"
+                        maxNativeZoom={19}
+                        maxZoom={20}
+                    />
                 )}
 
-                {/* ── MAP EVENTS ── */}
+                {/* ── MAP EVENTS & DRAWING CONTROL ── */}
                 <MapEvents 
-                    key={isDrawingPerimeter ? 'drawing-mode' : 'view-mode'}
                     onMapClick={onMapClick} 
-                    isDrawing={isDrawingPerimeter} 
-                    onDrawClick={handleDrawClick} 
+                    isDrawing={isDrawingPerimeter}
+                    onDrawClick={null}
+                />
+                
+                {/* Leaflet.Draw Control para dibujar polígonos */}
+                <DrawControlWrapper 
+                    isDrawing={isDrawingPerimeter}
+                    onPolygonComplete={onPolygonComplete}
+                    onCancelDrawing={onCancelDrawing}
                 />
 
-                {/* ── DRAWING POLYGON PREVIEW ── */}
-                {isDrawingPerimeter && tempPolygon.length > 0 && (
-                    <>
-                        <Polyline positions={tempPolygon} color="#6366f1" weight={3} dashArray="5, 10" />
-                        {tempPolygon.map((p, i) => (
-                            <Marker 
-                                key={`temp-vertex-${i}`} 
-                                position={p} 
-                                interactive={false}
-                                icon={L.divIcon({
-                                    className: '',
-                                    html: `<div style="background:#6366f1;width:10px;height:10px;border-radius:50%;border:2px solid white;box-shadow:0 0 10px rgba(99,102,241,0.5)"></div>`,
-                                    iconSize: [10, 10],
-                                    iconAnchor: [5, 5]
-                                })}
-                            />
-                        ))}
-                        {tempPolygon.length >= 3 && (
-                            <Polygon positions={tempPolygon} color="#6366f1" fillOpacity={0.3} weight={0} />
-                        )}
-                    </>
-                )}
+                {/* Leaflet.Draw se encarga completamente del dibujo cuando isDrawingPerimeter es true */}
 
                 {/* ── EXISTING CUSTOMER GEOFENCES ── */}
                 {customers.map(cust => {
-                    if (!cust.geofence || !cust.geofence.coordinates || !cust.geofence.coordinates[0]) return null;
+                    // Validar que existe geocerca
+                    if (!cust.geofence?.coordinates?.[0]) return null;
                     
                     try {
-                        const positions = cust.geofence.coordinates[0].map(c => [c[1], c[0]]);
-                        let color = '#3b82f6';
-                        if (cust.visit_status === 'ongoing') color = '#f59e0b';
-                        if (cust.visit_status === 'completed') color = '#10b981';
+                        // Convertir de GeoJSON [lng, lat] a Leaflet [lat, lng]
+                        const geoJsonRing = cust.geofence.coordinates[0];
+                        
+                        // Verificar que sea un array válido
+                        if (!Array.isArray(geoJsonRing) || geoJsonRing.length < 3) {
+                            console.warn(`[MapView] Geocerca inválida para cliente ${cust.id}:`, geoJsonRing);
+                            return null;
+                        }
+                        
+                        // Convertir coordenadas: GeoJSON [lng, lat] → Leaflet [lat, lng]
+                        const positions = geoJsonRing.map(([lng, lat]) => [lat, lng]);
+                        
+                        // Determinar color según estado de visita
+                        let color = '#3b82f6';    // azul - default
+                        let fillColor = '#3b82f6';
+                        
+                        if (cust.visit_status === 'ongoing') {
+                            color = '#f59e0b';      // amber
+                            fillColor = '#f59e0b';
+                        } else if (cust.visit_status === 'completed') {
+                            color = '#10b981';      // emerald
+                            fillColor = '#10b981';
+                        }
 
                         return (
                             <Polygon 
                                 key={`geofence-${cust.id}`}
                                 positions={positions}
                                 pathOptions={{
-                                    color,
-                                    fillColor: color,
+                                    color: color,
+                                    fillColor: fillColor,
                                     fillOpacity: 0.15,
                                     weight: 2,
-                                    dashArray: '5, 5'
+                                    dashArray: '5, 5',
+                                    lineCap: 'round',
+                                    lineJoin: 'round'
                                 }}
                             >
                                 <Popup>
                                     <div className="text-xs font-bold">{cust.name}</div>
                                     <div className="text-[10px] text-slate-500">Perímetro de visita</div>
+                                    <div className="text-[10px] text-slate-600 mt-1">
+                                        Puntos: {positions.length}
+                                    </div>
                                 </Popup>
                             </Polygon>
                         );
                     } catch (e) {
-                        console.error('Error rendering geofence for customer', cust.id, e);
+                        console.error(`[MapView] Error renderizando geocerca para cliente ${cust.id}:`, e);
                         return null;
                     }
                 })}

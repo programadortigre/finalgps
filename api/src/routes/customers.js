@@ -46,7 +46,7 @@ router.post('/', authenticateToken, async (req, res) => {
         const result = await pool.query(`
             INSERT INTO customers (name, address, geom, phone, min_visit_minutes, geofence, metadata)
             VALUES ($1, $2, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $5, $6, 
-                    CASE WHEN $7::text IS NOT NULL THEN ST_GeogFromGeoJSON($7::text) ELSE NULL::geography END, 
+                    CASE WHEN $7::text IS NOT NULL THEN ST_GeomFromGeoJSON($7::text)::geography ELSE NULL::geography END, 
                     $8::jsonb)
             RETURNING id, name, address, phone, min_visit_minutes, ST_AsGeoJSON(geofence)::json as geofence, metadata, ST_Y(geom::geometry) as lat, ST_X(geom::geometry) as lng
         `, [name, address, lat, lng, phone, min_visit_minutes, geofence ? JSON.stringify(geofence) : null, JSON.stringify(metadata)]);
@@ -111,7 +111,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
         if (metadata) { updateQuery += `metadata = $${i++}::jsonb, `; params.push(JSON.stringify(metadata)); }
         
         if (geofence !== undefined) {
-             updateQuery += `geofence = CASE WHEN $${i}::text IS NOT NULL THEN ST_GeogFromGeoJSON($${i}::text) ELSE NULL::geography END, `;
+             updateQuery += `geofence = CASE WHEN $${i}::text IS NOT NULL THEN ST_GeomFromGeoJSON($${i}::text)::geography ELSE NULL::geography END, `;
              params.push(geofence ? JSON.stringify(geofence) : null);
              i++;
         }

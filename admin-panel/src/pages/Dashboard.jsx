@@ -40,7 +40,6 @@ const Dashboard = ({ user, onLogout }) => {
     const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [clickCoords, setClickCoords] = useState(null);
     const [isDrawingPerimeter, setIsDrawingPerimeter] = useState(false);
-    const [drawMode, setDrawMode] = useState('point'); // 'point' | 'area'
     const [pendingCustomerData, setPendingCustomerData] = useState(null);
 
     useEffect(() => {
@@ -160,15 +159,12 @@ const Dashboard = ({ user, onLogout }) => {
     const handleMapClick = (latlng) => {
         if (view !== 'live') return;
         
-        if (drawMode === 'area') {
-            setIsDrawingPerimeter(true);
-            setPendingCustomerData(null); // Direct new area
-            return;
+        // Simplemente cerramos modal previo si estaba abierto
+        // Y permitimos que el usuario use Leaflet.Draw libremente si está activo
+        if (!isDrawingPerimeter) {
+            setClickCoords(latlng);
+            // Si no está en modo dibujo, seleccionamos la ubicación como referencia
         }
-
-        setClickCoords(latlng);
-        setSelectedCustomer(null);
-        setShowCustModal(true);
     };
 
     const handleCustomerClick = (cust) => {
@@ -205,25 +201,42 @@ const Dashboard = ({ user, onLogout }) => {
         }
     };
 
-    const handlePolygonComplete = (polygon) => {
-        setIsDrawingPerimeter(false);
-        // If it was a direct draw, initialize basic data with the first point
-        const firstPoint = polygon.coordinates[0][0]; // [lng, lat]
-        const baseData = pendingCustomerData || {
-            lat: firstPoint[1],
-            lng: firstPoint[0],
-            name: '',
-            address: '',
-            min_visit_minutes: 5
-        };
+    const handlePolygonComplete = React.useCallback((polygon, coords) => {
+        console.log('[Dashboard] 🎯 handlePolygonComplete llamado', { hasPolygon: !!polygon, coords });
+        
+        try {
+            setIsDrawingPerimeter(false);
+            
+            // Si coords no viene, usar el primer punto del polígono
+            const finalCoords = coords || (polygon ? { lat: polygon.coordinates[0][0][1], lng: polygon.coordinates[0][0][0] } : clickCoords);
 
-        const updatedData = { ...baseData, geofence: polygon };
-        delete updatedData._action; // Security cleanup
-        setPendingCustomerData(updatedData);
-        setClickCoords({ lat: updatedData.lat, lng: updatedData.lng });
-        setShowCustModal(true);
-        setDrawMode('point'); // Reset to point mode after finishing an area
-    };
+            const baseData = pendingCustomerData || {
+                lat: finalCoords?.lat || 0,
+                lng: finalCoords?.lng || 0,
+                name: '',
+                address: '',
+                min_visit_minutes: 5
+            };
+
+            const updatedData = { ...baseData, geofence: polygon };
+            delete updatedData._action; // Limpieza
+            
+            console.log('[Dashboard] ✅ Preparando modal con data:', updatedData);
+            setPendingCustomerData(updatedData);
+            setClickCoords(finalCoords);
+            setSelectedCustomer(null);
+            setShowCustModal(true);
+        } catch (error) {
+            console.error('[Dashboard] ❌ Error en handlePolygonComplete:', error);
+            setIsDrawingPerimeter(false);
+        }
+    }, [pendingCustomerData, clickCoords]);
+
+    const handleCancelDrawing = React.useCallback(() => {
+        console.log('[Dashboard] 🛑 Cancelando modo dibujo');
+        setIsDrawingPerimeter(false);
+        setPendingCustomerData(null);
+    }, []);
 
     const handleDeleteCustomer = async (id) => {
         if (!window.confirm('¿Estás seguro de eliminar este cliente?')) return;
@@ -369,6 +382,24 @@ const Dashboard = ({ user, onLogout }) => {
 
                 {/* Right Actions */}
                 <div className="flex items-center gap-3">
+                    {/* Nuevo Cliente Button */}
+                    <button
+                        onClick={() => {
+                            setIsDrawingPerimeter(!isDrawingPerimeter);
+                            setShowCustModal(false);
+                            setPendingCustomerData(null);
+                        }}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all border text-sm ${
+                            isDrawingPerimeter 
+                                ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-500/30' 
+                                : 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
+                        }`}
+                        title="Agregar Nuevo Cliente"
+                    >
+                        {isDrawingPerimeter ? <X size={16} /> : <Plus size={16} />}
+                        <span>{isDrawingPerimeter ? 'Cancelar' : 'Nuevo Cliente'}</span>
+                    </button>
+
                     {/* Bulk Import Button */}
                     <button
                         onClick={() => setShowImportModal(true)}
@@ -667,14 +698,8 @@ const Dashboard = ({ user, onLogout }) => {
                             onCustomerClick={handleCustomerClick}
                             clickCoords={clickCoords}
                             isDrawingPerimeter={isDrawingPerimeter}
-                            drawMode={drawMode}
-                            setDrawMode={setDrawMode}
                             onPolygonComplete={handlePolygonComplete}
-                            onCancelDrawing={() => {
-                                setIsDrawingPerimeter(false);
-                                setDrawMode('point');
-                                setShowCustModal(true);
-                            }}
+                            onCancelDrawing={handleCancelDrawing}
                         />
                     )}
                 </main>
