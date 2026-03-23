@@ -47,9 +47,17 @@ const Dashboard = ({ user, onLogout }) => {
         const token = localStorage.getItem('token');
         connectSocket(token);
         
-        const adminId = user.user?.id || user.id;
-        const adminName = user.user?.name || user.name || 'Admin';
-        socket.emit('join_admins', { id: adminId, name: adminName });
+        // join_admins ya no es necesario — el servidor lo hace automáticamente
+        // via middleware JWT al conectar. Lo mantenemos como fallback por si
+        // el servidor es una versión anterior.
+        const onConnect = () => {
+            const adminId = user.user?.id || user.id;
+            const adminName = user.user?.name || user.name || 'Admin';
+            socket.emit('join_admins', { id: adminId, name: adminName });
+        };
+        socket.on('connect', onConnect);
+        // Si ya está conectado, emitir de inmediato
+        if (socket.connected) onConnect();
 
         // Socket solo para comandos de control (tracking toggle, etc.)
         // Las ubicaciones las maneja useSmartTracking con polling + interpolación
@@ -81,6 +89,7 @@ const Dashboard = ({ user, onLogout }) => {
         window.addEventListener('resize', handleResize);
 
         return () => {
+            socket.off('connect', onConnect);
             socket.off('tracking_status_changed');
             disconnectSocket();
             window.removeEventListener('resize', handleResize);
@@ -517,17 +526,14 @@ const Dashboard = ({ user, onLogout }) => {
                                                     {/* Locate Now Button */}
                                                     <button 
                                                         onClick={(e) => {
-                                                            if (vendor.status === 'OFFLINE' || !vendor.isLive) {
-                                                                alert('El equipo está desconectado. El comando se enviará cuando recupere la conexión o abra la app.');
-                                                            }
                                                             requestLocate(e, vendor.id);
                                                         }}
                                                         className={`p-1.5 rounded-lg transition-all ${
                                                             vendor.isLive ? 'text-primary-400 hover:bg-primary-500/20' : 'text-slate-500 hover:bg-white/10 opacity-60'
                                                         }`}
                                                         title={
-                                                            vendor.status === 'OFFLINE' || !vendor.isLive ? "Localizar al reconectar" :
-                                                            vendor.status === 'GPS_OFF' ? "Localizar por IP (GPS Apagado)" : "Localizar ahora"
+                                                            !vendor.isLive ? "Localizar al reconectar (guardado en servidor)" :
+                                                            vendor.status === 'GPS_OFF' ? "Localizar por red (GPS Apagado)" : "Localizar ahora"
                                                         }
                                                     >
                                                         <Radar size={14} className={vendor.status === 'GPS_OFF' ? 'text-amber-500' : ''} />

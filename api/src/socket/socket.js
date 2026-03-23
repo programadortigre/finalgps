@@ -13,9 +13,9 @@ const initSocket = (server) => {
         pingTimeout: 60000,
         pingInterval: 25000,
         cors: { 
-            origin: ['http://localhost:5173', 'http://admin-panel:80', 'http://admin-panel'],
+            origin: '*',
             methods: ["GET", "POST"],
-            credentials: true
+            credentials: false
         }
     });
 
@@ -44,8 +44,33 @@ const initSocket = (server) => {
         }
     });
 
+    // ── Middleware de autenticación ──────────────────────────────────────────
+    const jwt = require('jsonwebtoken');
+    io.use((socket, next) => {
+        try {
+            const token = socket.handshake.auth?.token
+                || socket.handshake.headers?.authorization?.replace('Bearer ', '');
+            if (!token) return next(new Error('No token'));
+            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+            socket.user = decoded; // { id, role, ... }
+            next();
+        } catch (e) {
+            next(new Error('Invalid token'));
+        }
+    });
+
     io.on('connection', (socket) => {
-        console.log(`[Socket] User connected: ${socket.id}`);
+        console.log(`[Socket] User connected: ${socket.id} role=${socket.user?.role}`);
+
+        // Auto-join según rol al conectar (no depende de que el cliente emita nada)
+        if (socket.user?.role === 'admin') {
+            socket.join('admins');
+            console.log(`[Socket] Admin ${socket.user.id} auto-joined 'admins' room`);
+        }
+        if (socket.user?.id) {
+            socket.join(`user:${socket.user.id}`);
+            console.log(`[Socket] User ${socket.user.id} auto-joined 'user:${socket.user.id}' room`);
+        }
 
         // ✅ Admin se suscribe a actualizaciones en tiempo real
         socket.on('join_admins', (admin) => {
