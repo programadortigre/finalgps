@@ -4,7 +4,7 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:battery_plus/battery_plus.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:permission_handler/permission_handler.dart' hide ServiceStatus;
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart' as ar;
 import 'api_service.dart';
 import 'local_storage.dart';
@@ -923,7 +923,7 @@ class TrackingEngine {
 
     // CRÍTICO 4: >3 resets en 5 min → entrar en degraded mode
     if (_recentResetCount >= 3) {
-      _log('RESET', '⚠️ Reset Storm detectado ($recentResetCount resets en 5min) → DEGRADED MODE por 5min');
+      _log('RESET', '⚠️ Reset Storm detectado ($_recentResetCount resets en 5min) → DEGRADED MODE por 5min');
       _isDegradedMode = true;
       _degradedModeTimer?.cancel();
       _degradedModeTimer = Timer(const Duration(minutes: 5), () {
@@ -1128,7 +1128,7 @@ class TrackingEngine {
     _log('GPS-OFF', 'Iniciando fallback por red (WiFi/torres)...');
 
     _networkLocationSub = Geolocator.getPositionStream(
-      locationSettings: const AndroidSettings(
+      locationSettings: AndroidSettings(
         accuracy: LocationAccuracy.low,   // Usa solo WiFi/torres, no GPS
         distanceFilter: 100,              // Solo si se mueve >100m (ahorra batería)
         intervalDuration: Duration(seconds: 60),
