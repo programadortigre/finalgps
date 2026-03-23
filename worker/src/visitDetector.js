@@ -9,12 +9,12 @@ class VisitDetector {
   constructor(pool, redis) {
     this.pool = pool;
     this.redis = redis;
-    this.STABILITY_THRESHOLD_MS = 2 * 60 * 1000;      // 2 min para entrar
-    this.EXIT_TIMEOUT_MS = 5 * 60 * 1000;             // 5 min para salir
-    this.ENTRY_RADIUS = 50;                           // Radio de entrada
-    this.EXIT_RADIUS = 70;                            // Radio de salida
-    this.AMBIGUITY_THRESHOLD_METERS = 10;             // Distancia entre tiendas para marcar ambigüedad
-    this.MAX_STATIONARY_DISPLACEMENT_METERS = 30;     // Desplazamiento máx durante los 2 min
+    this.DEFAULT_MIN_VISIT_MS = 5 * 60 * 1000;         // 5 min default if not specified
+    this.EXIT_TIMEOUT_MS = 3 * 60 * 1000;              // REDUCIDO: 3 min para salir (más ágil)
+    this.ENTRY_RADIUS = 50;                            // Radio para fallback (Punto)
+    this.EXIT_RADIUS = 70;                             // Radio para fallback (Punto)
+    this.AMBIGUITY_THRESHOLD_METERS = 10;              // Distancia entre tiendas para marcar ambigüedad
+    this.MIN_MOVEMENT_FOR_HIGH_SCORE = 20;             // 20m de movimiento interno = 100% score de movimiento
     this.MAX_SPEED_KMH = 120;
   }
 
@@ -29,16 +29,21 @@ class VisitDetector {
     try {
       // 1. BUSCAR TOP 2 CLIENTES CERCANOS (DETECCIÓN DE AMBIGÜEDAD)
       const nearbyResult = await this.pool.query(`
-        SELECT c.id, c.name, 
-               ST_Distance(c.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) as dist
+        SELECT c.id, c.name, c.min_visit_minutes,
+               ST_Distance(c.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) as dist_point,
+               CASE WHEN c.geofence IS NOT NULL THEN ST_Intersects(c.geofence, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) ELSE FALSE END as is_inside_geofence
         FROM customers c
         INNER JOIN route_customers rc ON c.id = rc.customer_id
         INNER JOIN route_assignments ra ON rc.route_id = ra.route_id
         WHERE ra.employee_id = $3 
           AND ra.date = CURRENT_DATE
           AND ra.status IN ('pending', 'active')
-          AND ST_DWithin(c.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $4)
-        ORDER BY dist ASC
+          AND (
+            (c.geofence IS NOT NULL AND ST_DWithin(c.geofence, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $4))
+            OR
+            (c.geofence IS NULL AND ST_DWithin(c.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $4))
+          )
+        ORDER BY dist_point ASC
         LIMIT 2
       `, [lng, lat, employeeId, this.EXIT_RADIUS]);
 
@@ -52,16 +57,17 @@ class VisitDetector {
 
       // 2. VERIFICACIÓN DE AMBIGÜEDAD (Centro Comercial / Tiendas pegadas)
       if (candidates.length > 1) {
-        const gap = candidates[1].dist - candidates[0].dist;
+        const gap = candidates[1].dist_point - candidates[0].dist_point;
         if (gap < this.AMBIGUITY_THRESHOLD_METERS) {
           logger.warn(`[#METRICS#] AMBIGUOUS_LOCATION: Emp ${employeeId} between ${candidates[0].name} and ${candidates[1].name}`);
-          return; // No iniciamos visita si hay duda (evita rebote entre tiendas)
+          return;
         }
       }
 
-      // 3. PROCESAR ENTRADA / ESTABILIDAD
-      if (closest.dist <= this.ENTRY_RADIUS) {
-        await this.handleCandidateEntry(employeeId, closest.id, point);
+      // 3. PROCESAR ENTRADA / ESTABILIDAD (Polígono o Radio)
+      const isInside = closest.is_inside_geofence || (closest.dist_point <= this.ENTRY_RADIUS);
+      if (isInside) {
+        await this.handleCandidateEntry(employeeId, closest, point);
       }
 
       // 4. PROCESAR SALIDAS EXISTENTES
@@ -76,38 +82,48 @@ class VisitDetector {
   /**
    * Maneja el ciclo de permanencia (2 min) + desplazamiento (<30m).
    */
-  async handleCandidateEntry(employeeId, customerId, point) {
+  async handleCandidateEntry(employeeId, customer, point) {
     const { lat, lng, timestamp } = point;
+    const customerId = customer.id;
     const activeKey = `visit:active:${employeeId}:${customerId}`;
+    
     if (await this.redis.exists(activeKey)) {
-        // Ya está activa, actualizamos lastSeen
         const data = JSON.parse(await this.redis.get(activeKey));
         data.lastSeen = timestamp;
+        
+        // Tracking de movimiento interno para score de visita activa
+        const lastLat = data.lastLat || data.firstLat;
+        const lastLng = data.lastLng || data.firstLng;
+        const dist = this.calculateDistance(lat, lng, lastLat, lastLng);
+        data.totalDistance = (data.totalDistance || 0) + dist;
+        data.lastLat = lat;
+        data.lastLng = lng;
+        
         await this.redis.set(activeKey, JSON.stringify(data), 'EX', 3600);
         return;
     }
 
     const candidateKey = `visit:candidate:${employeeId}:${customerId}`;
     const candDataJson = await this.redis.get(candidateKey);
+    const minVisitMs = (customer.min_visit_minutes || 5) * 60 * 1000;
 
     if (candDataJson) {
       const cand = JSON.parse(candDataJson);
       
-      // FILTRO: Estacionamiento real (Desplazamiento)
-      const displacement = this.calculateDistance(lat, lng, cand.firstLat, cand.firstLng);
-      if (displacement > this.MAX_STATIONARY_DISPLACEMENT_METERS) {
-        // Se movió demasiado, resetear candidato (no está parado visitando)
-        await this.redis.set(candidateKey, JSON.stringify({ firstSeen: timestamp, firstLat: lat, firstLng: lng }), 'EX', 600);
-        return;
-      }
+      // Tracking de movimiento durante fase de candidato
+      const dist = this.calculateDistance(lat, lng, cand.lastLat || cand.firstLat, cand.lastLng || cand.firstLng);
+      cand.totalDistance = (cand.totalDistance || 0) + dist;
+      cand.lastLat = lat;
+      cand.lastLng = lng;
 
-      if (timestamp - cand.firstSeen >= this.STABILITY_THRESHOLD_MS) {
-        await this.registerEntry(employeeId, customerId, cand.firstSeen, timestamp);
+      if (timestamp - cand.firstSeen >= minVisitMs) {
+        await this.registerEntry(employeeId, customerId, cand);
+      } else {
+        await this.redis.set(candidateKey, JSON.stringify(cand), 'EX', 600);
       }
     } else {
-      // Nuevo candidato
       await this.redis.set(candidateKey, JSON.stringify({ 
-        firstSeen: timestamp, firstLat: lat, firstLng: lng 
+        firstSeen: timestamp, firstLat: lat, firstLng: lng, lastLat: lat, lastLng: lng, totalDistance: 0 
       }), 'EX', 600);
     }
   }
@@ -123,14 +139,19 @@ class VisitDetector {
       const customerId = key.split(':').pop();
       const activeData = JSON.parse(await this.redis.get(key));
 
-      // Consultar distancia actual al cliente de la visita activa
-      const distRes = await this.pool.query(
-        `SELECT ST_Distance(geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) as dist FROM customers WHERE id = $3`,
+      // Consultar si sigue dentro del polígono o radio
+      const insideRes = await this.pool.query(`
+        SELECT c.id,
+               ST_Distance(c.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) as dist_point,
+               CASE WHEN c.geofence IS NOT NULL THEN ST_Intersects(c.geofence, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) ELSE FALSE END as is_inside_geofence
+        FROM customers c WHERE id = $3`, 
         [lng, lat, customerId]
       );
-      const dist = distRes.rows[0]?.dist || 999;
+      
+      const status = insideRes.rows[0];
+      const isInside = status?.is_inside_geofence || (status?.dist_point <= this.EXIT_RADIUS);
 
-      if (dist > this.EXIT_RADIUS) {
+      if (!isInside) {
         const exitKey = `visit:exit_candidate:${employeeId}:${customerId}`;
         const exitStart = await this.redis.get(exitKey);
 
@@ -148,22 +169,26 @@ class VisitDetector {
     }
   }
 
-  async registerEntry(employeeId, customerId, arrivedAt, lastSeen) {
+  async registerEntry(employeeId, customerId, cand) {
+    const { firstSeen, totalDistance } = cand;
     try {
       const res = await this.pool.query(`
-        INSERT INTO visits (employee_id, customer_id, arrived_at, status)
-        VALUES ($1, $2, to_timestamp($3/1000.0), 'ongoing')
+        INSERT INTO visits (employee_id, customer_id, arrived_at, status, visit_metadata)
+        VALUES ($1, $2, to_timestamp($3/1000.0), 'ongoing', $4)
         ON CONFLICT (employee_id, customer_id, (arrived_at::date)) DO NOTHING
         RETURNING id
-      `, [employeeId, customerId, arrivedAt]);
+      `, [employeeId, customerId, firstSeen, JSON.stringify({ 
+        initialDistance: totalDistance,
+        entry_timestamp: new Date().toISOString()
+      })]);
 
       if (res.rows.length > 0) {
         const visitId = res.rows[0].id;
         await this.redis.set(`visit:active:${employeeId}:${customerId}`, JSON.stringify({
-          visitId, arrivedAt, lastSeen
+          visitId, arrivedAt: firstSeen, totalDistance, firstLat: cand.firstLat, firstLng: cand.firstLng
         }), 'EX', 86400);
         await this.redis.incr('visit:metrics:detected');
-        logger.info(`[#METRICS#] VISIT_DETECTED: Emp ${employeeId} at ${customerId}`);
+        logger.info(`[VisitDetector] Entry: Emp ${employeeId} at ${customerId} (ID: ${visitId})`);
       }
       await this.redis.del(`visit:candidate:${employeeId}:${customerId}`);
     } catch (e) {
@@ -172,18 +197,42 @@ class VisitDetector {
   }
 
   async registerExit(employeeId, customerId, activeData, leftAt) {
-    const { visitId, arrivedAt } = activeData;
-    const duration = Math.floor((leftAt - arrivedAt) / 1000);
+    const { visitId, arrivedAt, totalDistance = 0 } = activeData;
+    const durationSec = Math.floor((leftAt - arrivedAt) / 1000);
 
     try {
+      // Fetch customer settings for scoring
+      const custRes = await this.pool.query('SELECT min_visit_minutes FROM customers WHERE id = $1', [customerId]);
+      const minVisitMin = custRes.rows[0]?.min_visit_minutes || 5;
+      const minVisitSec = minVisitMin * 60;
+
+      // SCORING LOGIC
+      // 1. Duration Score (0-50): 100% of 50 pts if they reach min_visit_minutes
+      const durationScore = Math.min(50, (durationSec / minVisitSec) * 50);
+      
+      // 2. Movement Score (0-50): 100% of 50 pts if they moved at least 20m while inside
+      const movementScore = Math.min(50, (totalDistance / this.MIN_MOVEMENT_FOR_HIGH_SCORE) * 50);
+      
+      const finalScore = Math.round(durationScore + movementScore);
+
       await this.pool.query(`
-        UPDATE visits SET left_at = to_timestamp($1/1000.0), duration_seconds = $2, status = 'completed'
-        WHERE id = $3
-      `, [leftAt, duration, visitId]);
+        UPDATE visits SET 
+          left_at = to_timestamp($1/1000.0), 
+          duration_seconds = $2, 
+          status = 'completed',
+          visit_score = $3,
+          visit_metadata = visit_metadata || $4::jsonb
+        WHERE id = $5
+      `, [leftAt, durationSec, finalScore, JSON.stringify({ 
+        totalDistance, 
+        durationScore, 
+        movementScore,
+        min_visit_minutes: minVisitMin
+      }), visitId]);
 
       await this.redis.del(`visit:active:${employeeId}:${customerId}`);
       await this.redis.incr('visit:metrics:closed');
-      logger.info(`[#METRICS#] VISIT_CLOSED: ID ${visitId} (${duration}s)`);
+      logger.info(`[VisitDetector] Exit: ID ${visitId} Score: ${finalScore} (D: ${durationSec}s, M: ${Math.round(totalDistance)}m)`);
     } catch (e) {
       logger.error(`[VisitDetector] Exit Error: ${e.message}`);
     }

@@ -37,11 +37,14 @@ async function syncSchema() {
                     phone TEXT,
                     metadata JSONB DEFAULT '{}',
                     geom GEOGRAPHY(Point, 4326) NOT NULL,
+                    geofence GEOGRAPHY(Polygon, 4326),
+                    min_visit_minutes INTEGER DEFAULT 5,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             `);
             await pool.query('CREATE INDEX IF NOT EXISTS idx_customers_geom ON customers USING GIST (geom);');
             await pool.query('CREATE INDEX IF NOT EXISTS idx_customers_metadata ON customers USING GIN (metadata);');
+            await pool.query('CREATE INDEX IF NOT EXISTS idx_customers_geofence ON customers USING GIST (geofence);');
 
             // 3. Create Visits Table (if missing)
             await pool.query(`
@@ -55,11 +58,14 @@ async function syncSchema() {
                     duration_seconds INTEGER,
                     status VARCHAR(20) DEFAULT 'ongoing' CHECK (status IN ('ongoing', 'completed', 'auto_closed')),
                     auto_detected BOOLEAN DEFAULT TRUE,
+                    visit_score INTEGER CHECK (visit_score >= 0 AND visit_score <= 100),
+                    visit_metadata JSONB DEFAULT '{}',
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     CONSTRAINT unique_visit_per_day UNIQUE(employee_id, customer_id, date)
                 );
             `);
             await pool.query('CREATE INDEX IF NOT EXISTS idx_visits_employee_date ON visits (employee_id, date);');
+            await pool.query('CREATE INDEX IF NOT EXISTS idx_visits_metadata ON visits USING GIN (visit_metadata);');
 
             // 4. Ensure existing tables have new columns (Migrations)
             
@@ -97,6 +103,42 @@ async function syncSchema() {
                 const existing = checkCustColumns.rows.map(r => r.column_name);
                 if (!existing.includes('phone')) await pool.query('ALTER TABLE customers ADD COLUMN phone TEXT;');
                 if (!existing.includes('metadata')) await pool.query('ALTER TABLE customers ADD COLUMN metadata JSONB DEFAULT \'{}\';');
+            }
+
+            // Customers: geofence and min_visit_minutes (v8 migration)
+            const checkGeofence = await pool.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='customers' AND column_name='geofence';
+            `);
+            if (checkGeofence.rowCount === 0) {
+                await pool.query('ALTER TABLE customers ADD COLUMN geofence GEOGRAPHY(Polygon, 4326);');
+                await pool.query('CREATE INDEX IF NOT EXISTS idx_customers_geofence ON customers USING GIST (geofence);');
+            }
+
+            const checkMinVisit = await pool.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='customers' AND column_name='min_visit_minutes';
+            `);
+            if (checkMinVisit.rowCount === 0) {
+                await pool.query('ALTER TABLE customers ADD COLUMN min_visit_minutes INTEGER DEFAULT 5;');
+            }
+
+            // Visits: visit_score and visit_metadata (v8 migration)
+            const checkVisitScore = await pool.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='visits' AND column_name='visit_score';
+            `);
+            if (checkVisitScore.rowCount === 0) {
+                await pool.query('ALTER TABLE visits ADD COLUMN visit_score INTEGER CHECK (visit_score >= 0 AND visit_score <= 100);');
+            }
+
+            const checkVisitMeta = await pool.query(`
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='visits' AND column_name='visit_metadata';
+            `);
+            if (checkVisitMeta.rowCount === 0) {
+                await pool.query('ALTER TABLE visits ADD COLUMN visit_metadata JSONB DEFAULT \'{}\';');
+                await pool.query('CREATE INDEX IF NOT EXISTS idx_visits_metadata ON visits USING GIN (visit_metadata);');
             }
 
             logger.info('✅ Database schema synchronized successfully.');

@@ -39,6 +39,9 @@ const Dashboard = ({ user, onLogout }) => {
     const [showImportModal, setShowImportModal] = useState(false);
     const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [clickCoords, setClickCoords] = useState(null);
+    const [isDrawingPerimeter, setIsDrawingPerimeter] = useState(false);
+    const [drawMode, setDrawMode] = useState('point'); // 'point' | 'area'
+    const [pendingCustomerData, setPendingCustomerData] = useState(null);
 
     useEffect(() => {
         const token = localStorage.getItem('token');
@@ -156,6 +159,13 @@ const Dashboard = ({ user, onLogout }) => {
     // Customer Handlers
     const handleMapClick = (latlng) => {
         if (view !== 'live') return;
+        
+        if (drawMode === 'area') {
+            setIsDrawingPerimeter(true);
+            setPendingCustomerData(null); // Direct new area
+            return;
+        }
+
         setClickCoords(latlng);
         setSelectedCustomer(null);
         setShowCustModal(true);
@@ -168,20 +178,51 @@ const Dashboard = ({ user, onLogout }) => {
     };
 
     const handleSaveCustomer = async (formData) => {
+        if (formData._action === 'start_drawing') {
+            setPendingCustomerData(formData);
+            setIsDrawingPerimeter(true);
+            setShowCustModal(false);
+            return;
+        }
+
         try {
+            const dataToSave = { ...formData };
+            delete dataToSave._action;
+
             if (selectedCustomer) {
-                await api.put(`/api/customers/${selectedCustomer.id}`, formData);
+                await api.put(`/api/customers/${selectedCustomer.id}`, dataToSave);
             } else {
-                await api.post('/api/customers', formData);
+                await api.post('/api/customers', dataToSave);
             }
             // Refresh
             const { data } = await api.get('/api/customers');
             setCustomers(data);
             setShowCustModal(false);
+            setPendingCustomerData(null);
         } catch (e) {
             console.error('Error saving customer', e);
             alert('Error al guardar cliente');
         }
+    };
+
+    const handlePolygonComplete = (polygon) => {
+        setIsDrawingPerimeter(false);
+        // If it was a direct draw, initialize basic data with the first point
+        const firstPoint = polygon.coordinates[0][0]; // [lng, lat]
+        const baseData = pendingCustomerData || {
+            lat: firstPoint[1],
+            lng: firstPoint[0],
+            name: '',
+            address: '',
+            min_visit_minutes: 5
+        };
+
+        const updatedData = { ...baseData, geofence: polygon };
+        delete updatedData._action; // Security cleanup
+        setPendingCustomerData(updatedData);
+        setClickCoords({ lat: updatedData.lat, lng: updatedData.lng });
+        setShowCustModal(true);
+        setDrawMode('point'); // Reset to point mode after finishing an area
     };
 
     const handleDeleteCustomer = async (id) => {
@@ -625,6 +666,15 @@ const Dashboard = ({ user, onLogout }) => {
                             onCustomerMove={handleCustomerMove}
                             onCustomerClick={handleCustomerClick}
                             clickCoords={clickCoords}
+                            isDrawingPerimeter={isDrawingPerimeter}
+                            drawMode={drawMode}
+                            setDrawMode={setDrawMode}
+                            onPolygonComplete={handlePolygonComplete}
+                            onCancelDrawing={() => {
+                                setIsDrawingPerimeter(false);
+                                setDrawMode('point');
+                                setShowCustModal(true);
+                            }}
                         />
                     )}
                 </main>
@@ -633,11 +683,15 @@ const Dashboard = ({ user, onLogout }) => {
             {/* Modals */}
             <CustomerModal
                 isOpen={showCustModal}
-                onClose={() => setShowCustModal(false)}
+                onClose={() => {
+                    setShowCustModal(false);
+                    setPendingCustomerData(null);
+                }}
                 onSave={handleSaveCustomer}
                 onDelete={handleDeleteCustomer}
                 customer={selectedCustomer}
                 initialCoords={clickCoords}
+                initialData={pendingCustomerData}
             />
 
             {showImportModal && (

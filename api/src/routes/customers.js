@@ -14,6 +14,8 @@ router.get('/', authenticateToken, async (req, res) => {
             SELECT c.id, c.name, c.address, c.phone, c.metadata,
                    ST_Y(c.geom::geometry) as lat, 
                    ST_X(c.geom::geometry) as lng,
+                   ST_AsGeoJSON(c.geofence)::json as geofence,
+                   c.min_visit_minutes,
                    c.created_at,
                    v.status as visit_status,
                    v.arrived_at,
@@ -33,21 +35,25 @@ router.get('/', authenticateToken, async (req, res) => {
  * Create a single customer
  */
 router.post('/', authenticateToken, async (req, res) => {
-    const { name, address, lat, lng, phone, metadata = {} } = req.body;
+    const { name, address, lat, lng, phone, min_visit_minutes = 5, geofence, metadata = {} } = req.body;
     
     if (!name || !lat || !lng) {
         return res.status(400).json({ error: 'Missing required fields: name, lat, lng' });
     }
 
     try {
+        console.log('[API] Creating customer:', { name, address, lat, lng, geofence: !!geofence });
         const result = await pool.query(`
-            INSERT INTO customers (name, address, geom, phone, metadata)
-            VALUES ($1, $2, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $5, $6)
-            RETURNING id, name, address, phone, metadata, ST_Y(geom::geometry) as lat, ST_X(geom::geometry) as lng
-        `, [name, address, lat, lng, phone, JSON.stringify(metadata)]);
+            INSERT INTO customers (name, address, geom, phone, min_visit_minutes, geofence, metadata)
+            VALUES ($1, $2, ST_SetSRID(ST_MakePoint($4, $3), 4326)::geography, $5, $6, 
+                    CASE WHEN $7::text IS NOT NULL THEN ST_GeogFromGeoJSON($7::text) ELSE NULL::geography END, 
+                    $8::jsonb)
+            RETURNING id, name, address, phone, min_visit_minutes, ST_AsGeoJSON(geofence)::json as geofence, metadata, ST_Y(geom::geometry) as lat, ST_X(geom::geometry) as lng
+        `, [name, address, lat, lng, phone, min_visit_minutes, geofence ? JSON.stringify(geofence) : null, JSON.stringify(metadata)]);
         
         res.status(201).json(result.rows[0]);
     } catch (err) {
+        console.error('[API] Error creating customer:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -91,7 +97,7 @@ router.post('/bulk', authenticateToken, async (req, res) => {
  */
 router.put('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
-    const { name, address, lat, lng, phone, metadata } = req.body;
+    const { name, address, lat, lng, phone, min_visit_minutes, geofence, metadata } = req.body;
 
     try {
         let updateQuery = 'UPDATE customers SET ';
@@ -101,8 +107,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
         if (name) { updateQuery += `name = $${i++}, `; params.push(name); }
         if (address) { updateQuery += `address = $${i++}, `; params.push(address); }
         if (phone) { updateQuery += `phone = $${i++}, `; params.push(phone); }
-        if (metadata) { updateQuery += `metadata = $${i++}, `; params.push(JSON.stringify(metadata)); }
+        if (min_visit_minutes !== undefined) { updateQuery += `min_visit_minutes = $${i++}, `; params.push(min_visit_minutes); }
+        if (metadata) { updateQuery += `metadata = $${i++}::jsonb, `; params.push(JSON.stringify(metadata)); }
         
+        if (geofence !== undefined) {
+             updateQuery += `geofence = CASE WHEN $${i}::text IS NOT NULL THEN ST_GeogFromGeoJSON($${i}::text) ELSE NULL::geography END, `;
+             params.push(geofence ? JSON.stringify(geofence) : null);
+             i++;
+        }
+
         if (lat !== undefined && lng !== undefined) {
              updateQuery += `geom = ST_SetSRID(ST_MakePoint($${i+1}, $${i}), 4326)::geography, `;
              params.push(lat);
@@ -112,7 +125,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
         // Remove last comma and space
         updateQuery = updateQuery.trim().replace(/,$/, '');
-        updateQuery += ` WHERE id = $${i} RETURNING id, name, address, phone, metadata, ST_Y(geom::geometry) as lat, ST_X(geom::geometry) as lng`;
+        updateQuery += ` WHERE id = $${i} RETURNING id, name, address, phone, min_visit_minutes, ST_AsGeoJSON(geofence)::json as geofence, metadata, ST_Y(geom::geometry) as lat, ST_X(geom::geometry) as lng`;
         params.push(id);
 
         const result = await pool.query(updateQuery, params);
@@ -120,6 +133,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
         
         res.json(result.rows[0]);
     } catch (err) {
+        console.error('[API] Error updating customer:', err);
         res.status(500).json({ error: err.message });
     }
 });

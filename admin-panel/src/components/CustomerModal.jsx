@@ -1,37 +1,48 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, MapPin, Phone, Info, Trash2 } from 'lucide-react';
 
-const CustomerModal = ({ isOpen, onClose, onSave, onDelete, customer, initialCoords }) => {
+const CustomerModal = ({ isOpen, onClose, onSave, onDelete, customer, initialCoords, initialData }) => {
     const [formData, setFormData] = useState({
         name: '',
         address: '',
         phone: '',
         lat: '',
         lng: '',
+        min_visit_minutes: 5,
+        geofence: null,
         metadata: {}
     });
 
     useEffect(() => {
-        if (customer) {
+        if (initialData) {
+            setFormData(prev => ({
+                ...prev,
+                ...initialData
+            }));
+        } else if (customer) {
             setFormData({
                 name: customer.name || '',
                 address: customer.address || '',
                 phone: customer.phone || '',
                 lat: customer.lat || '',
                 lng: customer.lng || '',
+                min_visit_minutes: customer.min_visit_minutes || 5,
+                geofence: customer.geofence || null,
                 metadata: customer.metadata || {}
             });
         } else if (initialCoords) {
-            setFormData(prev => ({
-                ...prev,
-                lat: initialCoords.lat,
-                lng: initialCoords.lng,
+            setFormData({
                 name: '',
                 address: '',
-                phone: ''
-            }));
+                phone: '',
+                lat: initialCoords.lat,
+                lng: initialCoords.lng,
+                min_visit_minutes: 5,
+                geofence: null,
+                metadata: {}
+            });
         }
-    }, [customer, initialCoords]);
+    }, [customer, initialCoords, initialData, isOpen]);
 
     if (!isOpen) return null;
 
@@ -98,11 +109,32 @@ const CustomerModal = ({ isOpen, onClose, onSave, onDelete, customer, initialCoo
                         </div>
                         <div className="space-y-1">
                             <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
-                                Coordenadas
+                                Tiempo Mínimo (min)
                             </label>
-                            <div className="text-[10px] text-slate-400 bg-white/5 p-2 rounded-lg border border-white/5">
-                                {Number(formData.lat).toFixed(6)}, {Number(formData.lng).toFixed(6)}
+                            <input
+                                type="number"
+                                value={formData.min_visit_minutes}
+                                onChange={(e) => setFormData({ ...formData, min_visit_minutes: parseInt(e.target.value) })}
+                                className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg text-white outline-none focus:ring-2 focus:ring-primary-500"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
+                            Perímetro (Geocerca)
+                        </label>
+                        <div className="flex items-center gap-2">
+                            <div className={`flex-1 p-2 rounded-lg border text-[10px] ${formData.geofence ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-white/5 border-white/10 text-slate-500'}`}>
+                                {formData.geofence ? `✅ Polígono con ${formData.geofence.coordinates[0].length} puntos` : '❌ Sin perímetro definido'}
                             </div>
+                            <button
+                                type="button"
+                                onClick={() => onSave({ ...formData, _action: 'start_drawing' })}
+                                className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all whitespace-nowrap"
+                            >
+                                {formData.geofence ? 'Redibujar' : 'Dibujar'}
+                            </button>
                         </div>
                     </div>
 
