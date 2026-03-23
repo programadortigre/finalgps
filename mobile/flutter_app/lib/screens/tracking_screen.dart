@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../services/api_service.dart';
 import 'auth_wrapper.dart';
 import 'admin_monitoring_screen.dart';
+import 'route_screen.dart';
 
 class TrackingScreen extends StatefulWidget {
   const TrackingScreen({super.key});
@@ -600,6 +601,10 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                     _mapCtrl.move(_position!, 17);
                   }
                 }),
+                const SizedBox(width: 8),
+                _glassBtn(Icons.route_outlined, () {
+                   Navigator.push(context, MaterialPageRoute(builder: (_) => const RouteScreen()));
+                }, color: const Color(0xFF22C55E)),
                 if (_isAdmin) ...[
                   const SizedBox(width: 8),
                   _glassBtn(Icons.dashboard_customize_rounded, () {

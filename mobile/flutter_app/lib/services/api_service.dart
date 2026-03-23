@@ -367,6 +367,44 @@ class ApiService {
     return null;
   }
 
+  /// 📍 Obtener ruta asignada para hoy
+  Future<Map<String, dynamic>?> fetchMyRoute() async {
+    final token = await getToken();
+    if (token == null) return null;
+    try {
+      final dio = await getDio();
+      final res = await dio.get(
+        '/api/routes/me/route',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return res.data;
+      }
+    } catch (e) {
+      print('[ApiService] Error fetching route: $e');
+    }
+    return null;
+  }
+
+  /// 📍 Obtener visita activa
+  Future<Map<String, dynamic>?> fetchActiveVisit() async {
+    final token = await getToken();
+    if (token == null) return null;
+    try {
+      final dio = await getDio();
+      final res = await dio.get(
+        '/api/routes/me/active-visit',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return res.data;
+      }
+    } catch (e) {
+      print('[ApiService] Error fetching active visit: $e');
+    }
+    return null;
+  }
+
   /// 📍 Actualizar estado de rastreo (Sincronización con Admin Panel)
   Future<bool> updateTrackingStatus(bool enabled) async {
     final token = await getToken();

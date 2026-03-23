@@ -80,6 +80,7 @@ class TrackingEngine {
   // FIX C5: guardamos la referencia al ServiceInstance para siempre estar disponible
   ServiceInstance? _serviceInstance;
   io.Socket? _socket;
+  bool _isManualSocketJoinPending = false; // ✅ Track manually if join is needed
 
   // ── Subscripciones ─────────────────────────────────────────────────────────
   StreamSubscription<Position>? _positionStreamSub;
@@ -111,6 +112,7 @@ class TrackingEngine {
   // NUEVO: Blindaje Anti-Caos (Reset Storm & Backoff)
   DateTime? _lastResetTime;
   int _resetCount = 0;
+  DateTime _nextSyncAttempt = DateTime.now(); // ✅ Time-based backoff instead of ticks
   LocalPoint? _lastProcessedPos; // Para Freeze Detection
   DateTime? _lastStaticTime;     // Para Freeze Detection
   bool _isInRecoveryBoost = false;
@@ -283,8 +285,14 @@ class TrackingEngine {
       _log('RADAR', 'GPS OFF detectado. Forzando GeoIP...');
       await _sendNoFixHeartbeat(reason: 'Manual Location Request', isManual: true);
     } else if (_lastValidPoint != null) {
-      _log('RADAR', 'Enviando última ubicación conocida de memoria');
-      _emitToSocket(_lastValidPoint!, manual: true);
+      // ✅ FIX: Solo enviar si el punto es "fresco" (< 2 min)
+      final ageSec = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(_lastValidPoint!.timestamp)).inSeconds;
+      if (ageSec < 120) {
+        _log('RADAR', 'Enviando última ubicación fresca (${ageSec}s) interna');
+        _emitToSocket(_lastValidPoint!, manual: true);
+      } else {
+        _log('RADAR', 'Última ubicación obsoleta (${ageSec}s). Esperando nuevo fix...');
+      }
     } else {
       // ⚠️ CASO GPS OFF o Sin Datos: forzar heartbeat con GeoIP manual
       await _sendNoFixHeartbeat(reason: 'Manual Location Request', isManual: true);
@@ -355,7 +363,7 @@ class TrackingEngine {
         speed: pos.speed * 3.6,
         accuracy: pos.accuracy,
         state: _currentState.name,
-        timestamp: DateTime.now().millisecondsSinceEpoch,
+        timestamp: pos.timestamp.millisecondsSinceEpoch, // ✅ FIX: Usar tiempo del sensor
         employeeId: _cachedEmployeeId,
         source: source,
     );
@@ -367,7 +375,7 @@ class TrackingEngine {
     _updateNotification();
     
     // ✅ TRIGGER PRO: Resetear backoff y forzar sync al reconectar socket
-    _retryBackoffSeconds = 0;
+    _nextSyncAttempt = DateTime.now();
     _syncLoop(reason: 'Socket Reconnected');
 
     if (_pendingLocationRequest && _lastValidPoint != null) {
@@ -561,10 +569,13 @@ class TrackingEngine {
     if (_socket != null && !_socket!.connected) {
       _log('SOCKET', 'Watchdog: Socket detectado offline, intentando reconexión forzada...');
       _socket!.connect();
-      // ✅ Re-emitir join por seguridad
-      if (_cachedEmployeeId != null) {
-        _socket!.emit('join_employee', _cachedEmployeeId);
-      }
+    } else if (_socket != null && _socket!.connected && _isManualSocketJoinPending) {
+       // Si está conectado pero falló el join inicial o se reinició el isolate
+       if (_cachedEmployeeId != null) {
+          _socket!.emit('join_employee', _cachedEmployeeId);
+          _isManualSocketJoinPending = false;
+          onSocketReconnected();
+       }
     }
 
     try {
@@ -728,8 +739,8 @@ class TrackingEngine {
       final isGpsEnabled = await Geolocator.isLocationServiceEnabled();
       final currentState = isGpsEnabled ? 'NO_FIX' : 'GPS_OFF';
       
-      // ✅ FILTRO DE BATERÍA: Si el estado no ha cambiado y NO es manual, enmudecer.
-      if (!isManual && _lastSentGpsState == currentState) {
+      // ✅ FILTRO DE BATERÍA & ANTI-SPAM: Si el estado no ha cambiado y NO es manual, enmudecer.
+      if (!isManual && (_lastSentGpsState == currentState || (_lastSentGpsState == 'PAUSED' && currentState == 'GPS_OFF'))) {
         return; 
       }
 
@@ -914,6 +925,7 @@ class TrackingEngine {
     try {
       final double speed = pos.speed; // m/s
       final double speedKmh = speed * 3.6;
+      final pointTime = pos.timestamp; // ✅ FIX: Usar tiempo real del sensor
       final now = DateTime.now();
 
       // ✅ NIVELES DE CONFIANZA PRO: Capturar Source
@@ -990,7 +1002,7 @@ class TrackingEngine {
           _lastValidPoint!.lat, _lastValidPoint!.lng,
           pos.latitude, pos.longitude,
         );
-        final seconds = now.difference(DateTime.fromMillisecondsSinceEpoch(_lastValidPoint!.timestamp)).inSeconds;
+        final seconds = pointTime.difference(DateTime.fromMillisecondsSinceEpoch(_lastValidPoint!.timestamp)).inSeconds;
         
         if (seconds > 0) {
           final transitSpeedKmh = (dist / seconds) * 3.6;
@@ -1069,7 +1081,7 @@ class TrackingEngine {
       // ✅ Detección unificada de GAP (20 min)
       String pointType = 'normal';
       if (_lastValidPoint != null) {
-        final gap = now.millisecondsSinceEpoch - _lastValidPoint!.timestamp;
+        final gap = pointTime.millisecondsSinceEpoch - _lastValidPoint!.timestamp;
         if (gap > _gapThresholdMs) {
           pointType = 'recovery';
           _log('GAP', 'Gap detectado: ${gap~/60000} min. Marcando como RECOVERY.');
@@ -1086,7 +1098,7 @@ class TrackingEngine {
         speed: speedKmh,
         accuracy: pos.accuracy,
         state: _currentState.name,
-        timestamp: now.millisecondsSinceEpoch,
+        timestamp: pointTime.millisecondsSinceEpoch, // ✅ FIX: Tiempo del sensor, no de la CPU
         employeeId: _cachedEmployeeId,
         source: source,
         batteryLevel: batteryLevel,
@@ -1136,7 +1148,7 @@ class TrackingEngine {
       });
 
       // ✅ Actualizar el watchdog timer para evitar falsos positivos de NO_SIGNAL
-      _lastValidLocationTime = now;
+      _lastValidLocationTime = pointTime;
 
       _updateNotification();
     } catch (e) {
@@ -1175,11 +1187,9 @@ class TrackingEngine {
     try {
       _log('SYNC', 'Iniciando Sync Loop ($reason)...');
       
-      // Aplicar backoff si hubo errores previos
-      if (_retryBackoffSeconds > 0) {
-        _log('SYNC', 'Postergando sync por backoff: ${_retryBackoffSeconds}s restantes');
-        _retryBackoffSeconds -= 60; // Descontar 1 ciclo de mantenimiento (60s)
-        if (_retryBackoffSeconds < 0) _retryBackoffSeconds = 0;
+      // ✅ FIX: Time-based backoff robusto
+      if (DateTime.now().isBefore(_nextSyncAttempt)) {
+        _log('SYNC', 'Postergando sync por backoff hasta ${_nextSyncAttempt.toIso8601String()}');
         return;
       }
 
@@ -1209,7 +1219,7 @@ class TrackingEngine {
           // 4. Éxito: Marcar como sincronizados y continuar bucle
           final ids = unsynced.map((p) => p.id!).toList();
           await _storage.markPointsAsSynced(ids);
-          _retryBackoffSeconds = 0; // Reset backoff en éxito
+          _nextSyncAttempt = DateTime.now(); // Reset backoff en éxito
           batchesProcessed++;
           _log('SYNC', 'Batch exitoso. Restantes en DB: pendiente...');
           
@@ -1220,15 +1230,16 @@ class TrackingEngine {
           }
         } else {
           // 5. Fallo: Aplicar backoff inteligente y salir del bucle
-          _retryBackoffSeconds = (_retryBackoffSeconds == 0) ? 30 : (_retryBackoffSeconds * 2);
-          if (_retryBackoffSeconds > 300) _retryBackoffSeconds = 300; // Máximo 5 min
-          _log('SYNC', 'Fallo en envío de batch. Reintento en $_retryBackoffSeconds s');
+          final currentBackoff = _nextSyncAttempt.difference(DateTime.now()).inSeconds.abs();
+          final newBackoff = (currentBackoff == 0) ? 30 : (currentBackoff * 2).clamp(30, 300);
+          _nextSyncAttempt = DateTime.now().add(Duration(seconds: newBackoff));
+          _log('SYNC', 'Fallo en envío de batch. Reintento programado en $newBackoff s');
           break;
         }
       }
     } catch (e) {
       _log('SYNC', 'Error crítico en Sync Loop: $e');
-      _retryBackoffSeconds = 60;
+      _nextSyncAttempt = DateTime.now().add(const Duration(seconds: 60));
     } finally {
       _isSyncing = false;
     }
@@ -1346,7 +1357,11 @@ void onStart(ServiceInstance service) async {
           _log('SOCKET', 'Socket conectado en segundo plano (Isolate)');
           _engine?.setSocket(socket); // Pasar socket al motor
           _engine?.updateSocketStatus(true);
-          if (userId != null) socket.emit('join_employee', userId);
+          if (userId != null) {
+            socket.emit('join_employee', userId);
+          } else {
+            _engine?._isManualSocketJoinPending = true; // Intentar después cuando tengamos ID
+          }
           // FIX LIVE: Si había una petición de ubicación pendiente mientras
           // el teléfono estaba sin datos, la enviamos ahora al reconectar.
           _engine?.onSocketReconnected();

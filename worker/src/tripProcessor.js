@@ -121,7 +121,7 @@ async function updateTripRoute(client, tripId) {
 /// ============================================================================
 /// FUNCIÓN: Procesar lote de puntos GPS
 /// ============================================================================
-async function processBatch(employeeId, points) {
+async function processBatch(employeeId, points, visitDetector) {
     if (!points || points.length === 0) return;
 
     const client = await pool.connect();
@@ -390,6 +390,23 @@ async function processBatch(employeeId, points) {
              AND EXTRACT(EPOCH FROM (NOW() - COALESCE(end_time, start_time))) > 7200`,
             [employeeId]
         );
+
+        // --- INTEGRACIÓN MODULAR FAIL-SAFE (V6) ---
+        if (visitDetector && points && points.length > 0) {
+            try {
+                // Filtrar por accuracy y obtener el último punto válido (Filtro HARDENED)
+                const lastValidPoint = points
+                    .filter(p => p.accuracy <= 50 && p.lat !== 0 && p.lng !== 0)
+                    .pop();
+                
+                if (lastValidPoint) {
+                    await visitDetector.processPoint(employeeId, lastValidPoint);
+                }
+            } catch (vErr) {
+                // Fallback: Si el detector falla, no interrumpimos el tracking
+                console.error(`[VisitDetector] Fail-safe active: ${vErr.message}`);
+            }
+        }
 
         await client.query('COMMIT');
     } catch (err) {

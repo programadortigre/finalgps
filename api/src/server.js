@@ -20,6 +20,8 @@ const locationRoutes = require('./routes/locations');
 const tripRoutes = require('./routes/trips');
 const employeeRoutes = require('./routes/employees');
 const geocodingRoutes = require('./routes/geocoding');
+const routeAssignmentRoutes = require('./routes/routes');
+const customerRoutes = require('./routes/customers');
 const { initSocket } = require('./socket/socket');
 
 const app = express();
@@ -73,6 +75,8 @@ app.use('/api/locations', locationRoutes);
 app.use('/api/trips', tripRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/geocoding', geocodingRoutes);
+app.use('/api/routes', routeAssignmentRoutes);
+app.use('/api/customers', customerRoutes);
 
 // Basic health check
 app.get('/health', (req, res) => res.json({ status: 'OK', timestamp: new Date() }));

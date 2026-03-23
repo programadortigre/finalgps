@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import api from '../services/api';
@@ -37,13 +37,28 @@ const getActiveIcon = (state) => {
     });
 };
 
-// Stop icon
-const stopIcon = L.divIcon({
-    className: '',
-    html: `<div style="background:#f59e0b;border:2px solid white;border-radius:50%;width:14px;height:14px;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>`,
-    iconSize: [14, 14],
-    iconAnchor: [7, 7],
-});
+// Customer icon based on visit status
+const getCustomerIcon = (status) => {
+    let color = '#3b82f6'; // Pending (Blue)
+    if (status === 'ongoing') color = '#f59e0b'; // In Progress (Amber)
+    if (status === 'completed') color = '#10b981'; // Visited (Green)
+
+    return L.divIcon({
+        className: 'customer-marker',
+        html: `<div style="background:${color};border:2px solid white;border-radius:6px;width:12px;height:12px;box-shadow:0 1px 4px rgba(0,0,0,.4);transform:rotate(45deg)"></div>`,
+        iconSize: [12, 12],
+        iconAnchor: [6, 6],
+    });
+};
+
+const MapEvents = ({ onMapClick }) => {
+    useMapEvents({
+        click: (e) => {
+            onMapClick(e.latlng);
+        },
+    });
+    return null;
+};
 
 const FitBounds = ({ positions }) => {
     const map = useMap();
@@ -175,7 +190,21 @@ const getSegments = (points) => {
     return segments;
 };
 
-const MapView = ({ view = 'live', initialEmployeeId = null, selectedDate = null, selectedEmployee, activeLocations, allLocations, selectedTrip: propSelectedTrip, tripDetails: propTripDetails }) => {
+const MapView = ({ 
+    view = 'live', 
+    initialEmployeeId = null, 
+    selectedDate = null, 
+    selectedEmployee, 
+    activeLocations, 
+    allLocations, 
+    selectedTrip: propSelectedTrip, 
+    tripDetails: propTripDetails,
+    customers = [],
+    onMapClick,
+    onCustomerMove,
+    onCustomerClick,
+    clickCoords // New prop for temporary creation marker
+}) => {
     const [trips, setTrips] = useState([]);
     const [selectedTrip, setTrip] = useState(propSelectedTrip || null);
     const [routeData, setRouteData] = useState(propTripDetails ? { isMulti: false, ...propTripDetails } : null);
@@ -520,6 +549,56 @@ const MapView = ({ view = 'live', initialEmployeeId = null, selectedDate = null,
                     minZoom={19}
                     maxZoom={19}
                 />
+
+                {/* ── MAP EVENTS ── */}
+                {view === 'live' && onMapClick && <MapEvents onMapClick={onMapClick} />}
+
+                {/* ── TEMPORARY CREATION MARKER (Dropping Pin) ── */}
+                {view === 'live' && clickCoords && !selectedEmployee && (
+                    <Marker 
+                        position={[clickCoords.lat, clickCoords.lng]} 
+                        icon={L.divIcon({
+                            className: 'drop-pin-marker',
+                            html: '<div class="pin"></div><div class="pulse"></div>',
+                            iconSize: [30, 30],
+                            iconAnchor: [15, 30]
+                        })}
+                    />
+                )}
+
+                {/* ── CUSTOMER MARKERS ── */}
+                {view === 'live' && customers.map(cust => (
+                    <Marker
+                        key={cust.id}
+                        position={[cust.lat, cust.lng]}
+                        icon={getCustomerIcon(cust.visit_status)}
+                        draggable={true}
+                        eventHandlers={{
+                            click: () => onCustomerClick && onCustomerClick(cust),
+                            dragend: (e) => {
+                                const newPos = e.target.getLatLng();
+                                onCustomerMove && onCustomerMove(cust.id, newPos.lat, newPos.lng);
+                            }
+                        }}
+                    >
+                        <Popup>
+                            <div className="customer-popup">
+                                <h4 style={{ margin: '0 0 5px 0', borderBottom: '1px solid #eee', paddingBottom: '3px' }}>{cust.name}</h4>
+                                <div style={{ fontSize: '11px', color: '#666' }}>
+                                    <p style={{ margin: '2px 0' }}>📍 {cust.address}</p>
+                                    {cust.phone && <p style={{ margin: '2px 0' }}>📞 {cust.phone}</p>}
+                                    <p style={{ 
+                                        margin: '5px 0 0 0', 
+                                        fontWeight: 'bold', 
+                                        color: cust.visit_status === 'completed' ? '#10b981' : cust.visit_status === 'ongoing' ? '#f59e0b' : '#3b82f6' 
+                                    }}>
+                                        Status: {cust.visit_status ? (cust.visit_status === 'completed' ? 'Visitado' : 'En proceso') : 'Pendiente'}
+                                    </p>
+                                </div>
+                            </div>
+                        </Popup>
+                    </Marker>
+                ))}
 
                 {/* ── FLY TO SELECTED EMPLOYEE ── */}
                 {view === 'live' && flyTarget?.lat && (
@@ -1028,6 +1107,72 @@ tory-sidepanel { width: calc(100vw - 32px); max-width: 340px; left: 16px; top: 1
           .tl-content span { font-size: 10px; }
           .timeline-title { font-size: 11px; margin-bottom: 10px; }
           .map-legend { top: 60px; right: 8px; padding: 6px 10px; font-size: 12px; }
+        }
+
+        /* Drop Pin Animation */
+        .drop-pin-marker {
+            pointer-events: none;
+        }
+        .pin {
+            width: 30px;
+            height: 30px;
+            border-radius: 50% 50% 50% 0;
+            background: #3b82f6;
+            position: absolute;
+            transform: rotate(-45deg);
+            left: 50%;
+            top: 50%;
+            margin: -30px 0 0 -15px;
+            animation-name: bounce;
+            animation-fill-mode: both;
+            animation-duration: 0.5s;
+            border: 2px solid white;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+        .pin::after {
+            content: '';
+            width: 12px;
+            height: 12px;
+            margin: 8px 0 0 7px;
+            background: white;
+            position: absolute;
+            border-radius: 50%;
+        }
+        .pulse {
+            background: rgba(0,0,0,0.2);
+            border-radius: 50%;
+            height: 10px;
+            width: 20px;
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            margin: 5px 0 0 -10px;
+            transform: rotateX(55deg);
+            z-index: -2;
+        }
+        .pulse::after {
+            content: "";
+            border-radius: 50%;
+            height: 40px;
+            width: 40px;
+            position: absolute;
+            margin: -15px 0 0 -10px;
+            animation: pulsate 1s ease-out;
+            animation-iteration-count: infinite;
+            opacity: 0;
+            box-shadow: 0 0 1px 2px #3b82f6;
+            animation-delay: 1.1s;
+        }
+        @keyframes bounce {
+            0% { opacity: 0; transform: translateY(-1000px) rotate(-45deg); }
+            60% { opacity: 1; transform: translateY(30px) rotate(-45deg); }
+            80% { transform: translateY(-10px) rotate(-45deg); }
+            100% { transform: translateY(0) rotate(-45deg); }
+        }
+        @keyframes pulsate {
+            0% { transform: scale(0.1, 0.1); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: scale(1.2, 1.2); opacity: 0; }
         }
       `}</style>
         </div>

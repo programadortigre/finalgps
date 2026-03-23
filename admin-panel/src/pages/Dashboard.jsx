@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Menu, X, Activity, History, Users, Search, ChevronDown, Power, PowerOff, Radar, RefreshCw, Battery, Zap } from 'lucide-react';
+import { LogOut, Menu, X, Activity, History, Users, Map as MapIcon, Search, ChevronDown, Power, PowerOff, Radar, RefreshCw, Battery, Zap } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
 import HistoryView from './History';
+import RoutesView from './RoutesView';
+import CustomerModal from '../components/CustomerModal';
+import ImportJSON from '../components/ImportJSON';
 import api from '../services/api';
 import { socket, connectSocket, disconnectSocket } from '../services/socket';
+import { FileJson, Plus } from 'lucide-react';
 
 const formatTimeAgo = (dateStr) => {
     if (!dateStr) return '';
@@ -28,6 +32,13 @@ const Dashboard = ({ user, onLogout }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedStatus, setSelectedStatus] = useState('all');
     const [isConnected, setIsConnected] = useState(true);
+
+    // Customer Management State
+    const [customers, setCustomers] = useState([]);
+    const [showCustModal, setShowCustModal] = useState(false);
+    const [showImportModal, setShowImportModal] = useState(false);
+    const [selectedCustomer, setSelectedCustomer] = useState(null);
+    const [clickCoords, setClickCoords] = useState(null);
 
     useEffect(() => {
         const token = localStorage.getItem('token');
@@ -90,9 +101,17 @@ const Dashboard = ({ user, onLogout }) => {
             } catch (e) { console.error('Error fetching live active locations', e); }
         };
 
+        const fetchCustomers = async () => {
+            try {
+                const { data } = await api.get('/api/customers');
+                setCustomers(data);
+            } catch (e) { console.error('Error fetching customers', e); }
+        };
+
         fetchEmployees();
         fetchLatestLocations();
         fetchLiveActive(); // Initial live status
+        fetchCustomers();
 
         // Refresh live status every 30 seconds
         const liveInterval = setInterval(fetchLiveActive, 30000);
@@ -132,7 +151,72 @@ const Dashboard = ({ user, onLogout }) => {
             console.error('Error toggling tracking', e);
             alert('Error al cambiar estado de rastreo');
         }
-    };    const activeCount = liveActiveIds.size; // COUNT ONLY LIVE ACTIVE users (last 5 min)
+    };
+
+    // Customer Handlers
+    const handleMapClick = (latlng) => {
+        if (view !== 'live') return;
+        setClickCoords(latlng);
+        setSelectedCustomer(null);
+        setShowCustModal(true);
+    };
+
+    const handleCustomerClick = (cust) => {
+        setSelectedCustomer(cust);
+        setClickCoords({ lat: cust.lat, lng: cust.lng });
+        setShowCustModal(true);
+    };
+
+    const handleSaveCustomer = async (formData) => {
+        try {
+            if (selectedCustomer) {
+                await api.put(`/api/customers/${selectedCustomer.id}`, formData);
+            } else {
+                await api.post('/api/customers', formData);
+            }
+            // Refresh
+            const { data } = await api.get('/api/customers');
+            setCustomers(data);
+            setShowCustModal(false);
+        } catch (e) {
+            console.error('Error saving customer', e);
+            alert('Error al guardar cliente');
+        }
+    };
+
+    const handleDeleteCustomer = async (id) => {
+        if (!window.confirm('¿Estás seguro de eliminar este cliente?')) return;
+        try {
+            await api.delete(`/api/customers/${id}`);
+            setCustomers(prev => prev.filter(c => c.id !== id));
+            setShowCustModal(false);
+        } catch (e) {
+            console.error('Error deleting customer', e);
+        }
+    };
+
+    const handleCustomerMove = async (id, lat, lng) => {
+        try {
+            await api.put(`/api/customers/${id}`, { lat, lng });
+            setCustomers(prev => prev.map(c => c.id === id ? { ...c, lat, lng } : c));
+        } catch (e) {
+            console.error('Error moving customer', e);
+        }
+    };
+
+    const handleImportCustomers = async (json) => {
+        try {
+            await api.post('/api/customers/bulk', json);
+            const { data } = await api.get('/api/customers');
+            setCustomers(data);
+            setShowImportModal(false);
+            alert('Importación completada con éxito');
+        } catch (e) {
+            console.error('Error importing customers', e);
+            alert('Error en la importación');
+        }
+    };
+    const activeCount = liveActiveIds.size; // COUNT ONLY LIVE ACTIVE users (last 5 min)
 
     const requestLocate = (e, employeeId) => {
         e.stopPropagation();
@@ -233,40 +317,26 @@ const Dashboard = ({ user, onLogout }) => {
                             isActive={view === 'vendors'}
                             onClick={() => setView('vendors')}
                         />
+                        <NavLink
+                            icon={MapIcon}
+                            label="Rutas"
+                            isActive={view === 'routes'}
+                            onClick={() => setView('routes')}
+                        />
                     </nav>
                 </div>
 
                 {/* Right Actions */}
                 <div className="flex items-center gap-3">
-                    {/* Mobile Menu Button */}
-                    {isMobile && (
-                        <button
-                            onClick={() => setSidebarOpen(!sidebarOpen)}
-                            className="p-2 rounded-lg hover:bg-white/10 transition-colors text-slate-400 hover:text-white"
-                        >
-                            {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
-                        </button>
-                    )}
-
-                    {/* Mobile Nav Dropdown */}
-                    {isMobile && (
-                        <div className="relative group">
-                            <button className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/10 transition-colors text-slate-400 hover:text-white">
-                                <ChevronDown size={18} />
-                            </button>
-                            <div className="absolute right-0 top-full mt-1 bg-dark-900 border border-white/10 rounded-lg shadow-xl space-y-1 p-2 min-w-[180px] z-50 hidden group-hover:block">
-                                <button onClick={() => { setView('live'); setSidebarOpen(true); }} className="w-full text-left px-3 py-2 rounded hover:bg-white/10 transition-colors flex items-center gap-2">
-                                    <Activity size={16} /> En Vivo
-                                </button>
-                                <button onClick={() => { setView('history'); setSidebarOpen(true); }} className="w-full text-left px-3 py-2 rounded hover:bg-white/10 transition-colors flex items-center gap-2">
-                                    <History size={16} /> Historial
-                                </button>
-                                <button onClick={() => { setView('vendors'); setSidebarOpen(true); }} className="w-full text-left px-3 py-2 rounded hover:bg-white/10 transition-colors flex items-center gap-2">
-                                    <Users size={16} /> Vendedores
-                                </button>
-                            </div>
-                        </div>
-                    )}
+                    {/* Bulk Import Button */}
+                    <button
+                        onClick={() => setShowImportModal(true)}
+                        className="hidden md:flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 font-medium transition-all border border-primary-500/20 text-sm"
+                        title="Importar Clientes desde JSON"
+                    >
+                        <FileJson size={16} />
+                        <span>Importar</span>
+                    </button>
 
                     {/* Logout Button */}
                     <button
@@ -543,15 +613,39 @@ const Dashboard = ({ user, onLogout }) => {
                         <Vendors />
                     ) : view === 'history' ? (
                         <HistoryView user={user} />
+                    ) : view === 'routes' ? (
+                        <RoutesView />
                     ) : (
                         <MapView
                             view={view}
                             selectedEmployee={selectedEmployee}
                             activeLocations={activeLocations}
+                            customers={customers}
+                            onMapClick={handleMapClick}
+                            onCustomerMove={handleCustomerMove}
+                            onCustomerClick={handleCustomerClick}
+                            clickCoords={clickCoords}
                         />
                     )}
                 </main>
             </div>
+
+            {/* Modals */}
+            <CustomerModal
+                isOpen={showCustModal}
+                onClose={() => setShowCustModal(false)}
+                onSave={handleSaveCustomer}
+                onDelete={handleDeleteCustomer}
+                customer={selectedCustomer}
+                initialCoords={clickCoords}
+            />
+
+            {showImportModal && (
+                <ImportJSON
+                    onImport={handleImportCustomers}
+                    onClose={() => setShowImportModal(false)}
+                />
+            )}
         </div>
     );
 };
