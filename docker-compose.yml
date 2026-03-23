@@ -16,6 +16,7 @@ services:
       - ./database/migration_v6.sql:/docker-entrypoint-initdb.d/03-migration_v6.sql
       - ./database/migration_v7.sql:/docker-entrypoint-initdb.d/04-migration_v7.sql
       - ./database/migration_v8_geofencing.sql:/docker-entrypoint-initdb.d/05-migration_v8_geofencing.sql
+      - ./database/migration_v9_client_id.sql:/docker-entrypoint-initdb.d/06-migration_v9_client_id.sql
       - postgres_data:/var/lib/postgresql/data
     networks: [ tracking-net ]
     healthcheck:

@@ -20,6 +20,7 @@ const POLL_MS            = 5000;   // Polling HTTP cada 5s
 const INTERP_MS          = 250;    // Tick de animación (4 fps)
 const MAX_INTERP_MS      = 15000;  // Dejar de interpolar si el punto tiene >15s de antigüedad
 const HEARTBEAT_POLL_MS  = 30000;  // Consultar heartbeat-status cada 30s
+// Queue stats: adaptativo — 10s si hay jobs pendientes, 45s si cola vacía
 
 // Estados que implican movimiento real
 const MOVING_STATES = new Set([
@@ -48,6 +49,8 @@ export function useSmartTracking() {
   const [isConnected, setIsConnected]     = useState(true);
   // heartbeatStatus: { [employeeId]: 'alive' | 'stale' | 'offline' | 'dead' | 'unknown' }
   const [heartbeatStatus, setHeartbeatStatus] = useState({});
+  // queueStats: { waiting, active, failed, completed, ageSeconds, workerStatus, jobsPerSec }
+  const [queueStats, setQueueStats] = useState(null);
 
   const mounted = useRef(true);
 
@@ -81,8 +84,7 @@ export function useSmartTracking() {
     }
   }, []);
 
-  // ── 1b. Heartbeat status polling (cada 30s) ──────────────────────────────────
-  // Detecta empleados silenciosos: alive / stale / offline / dead
+  // ── 1b. Heartbeat status polling (cada 30s) ──────────────────────────────────  // Detecta empleados silenciosos: alive / stale / offline / dead
   // 🟡 3: Emite alertas de browser cuando un empleado cambia a offline/dead
   const prevHbRef = useRef({});
   const pollHeartbeat = useCallback(async () => {
@@ -117,6 +119,114 @@ export function useSmartTracking() {
       // silencioso — no crítico
     }
   }, []);
+
+  // ── 1c. Queue stats polling (adaptativo) ────────────────────────────────────
+  // - Si hay jobs pendientes: poll cada 10s (backpressure activo)
+  // - Si cola vacía: poll cada 45s (ahorra requests)
+  // 🔴 2: Reset detection — si completed baja, el worker se reinició
+  // 🔴 5: Alertas automáticas: worker muerto >1min, failed creciente, waiting creciente
+  const prevCompletedRef  = useRef(null);
+  const prevQueueTsRef    = useRef(null);
+  const prevWaitingRef    = useRef(null);
+  const workerStaleRef    = useRef(null);   // timestamp cuando se detectó stale
+  const prevFailedRef     = useRef(null);
+  const queueTimerRef     = useRef(null);
+
+  const scheduleNextQueuePoll = useCallback((waiting) => {
+    if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
+    // 🔴 3: Intervalo adaptativo según carga
+    const nextMs = (waiting > 0) ? 10000 : 45000;
+    queueTimerRef.current = setTimeout(pollQueueStatsRef.current, nextMs);
+  }, []);
+
+  // Usamos ref para que scheduleNextQueuePoll pueda llamar a pollQueueStats
+  // sin crear dependencia circular en useCallback
+  const pollQueueStatsRef = useRef(null);
+  const pollQueueStats = useCallback(async () => {
+    try {
+      const { data } = await api.get('/api/locations/queue-stats');
+      if (!mounted.current) return;
+
+      // 🔴 2: Reset detection
+      let jobsPerSec = null;
+      const nowTs = Date.now();
+      if (prevCompletedRef.current !== null && prevQueueTsRef.current !== null) {
+        const deltaJobs = (data.completed || 0) - prevCompletedRef.current;
+        const deltaSec  = (nowTs - prevQueueTsRef.current) / 1000;
+        if (deltaJobs < 0) {
+          // Worker se reinició — resetear cálculo, no publicar rate incorrecto
+          prevCompletedRef.current = data.completed || 0;
+          prevQueueTsRef.current   = nowTs;
+        } else if (deltaSec > 0) {
+          jobsPerSec = (deltaJobs / deltaSec).toFixed(2);
+          prevCompletedRef.current = data.completed || 0;
+          prevQueueTsRef.current   = nowTs;
+        }
+      } else {
+        prevCompletedRef.current = data.completed || 0;
+        prevQueueTsRef.current   = nowTs;
+      }
+
+      // 🔴 4: Backpressure threshold RELATIVO
+      const rate = parseFloat(jobsPerSec) || 0;
+      const backpressureThreshold = rate > 0 ? Math.ceil(rate * 10) : 100;
+      const isBackpressure = (data.waiting || 0) > backpressureThreshold;
+
+      // 🔴 5a: Alerta si worker muerto >1min
+      if (data.workerStatus === 'stale' || data.workerStatus === 'no_stats') {
+        if (!workerStaleRef.current) {
+          workerStaleRef.current = nowTs;
+        } else if (nowTs - workerStaleRef.current > 60000) {
+          // >1 min muerto — notificar una sola vez por episodio
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('🔴 Worker GPS caído', {
+              body: `Sin procesar datos por más de 1 minuto. Revisar servidor.`,
+              icon: '/favicon.png',
+              tag: 'worker-dead',
+            });
+          }
+          workerStaleRef.current = nowTs; // reset para no spamear
+        }
+      } else {
+        workerStaleRef.current = null; // worker vivo — resetear
+      }
+
+      // 🔴 5b: Alerta si failed crece
+      const currentFailed = data.failed || 0;
+      if (prevFailedRef.current !== null && currentFailed > prevFailedRef.current + 5) {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('⚠️ Jobs fallidos en cola', {
+            body: `${currentFailed} jobs fallidos. Revisar DLQ.`,
+            icon: '/favicon.png',
+            tag: 'queue-failed',
+          });
+        }
+      }
+      prevFailedRef.current = currentFailed;
+
+      // 🔴 5c: Alerta si waiting crece continuamente (3 polls seguidos)
+      const currentWaiting = data.waiting || 0;
+      if (prevWaitingRef.current !== null && currentWaiting > prevWaitingRef.current && isBackpressure) {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('⚠️ Backpressure en cola GPS', {
+            body: `${currentWaiting} jobs pendientes (umbral: ${backpressureThreshold}). Worker lento.`,
+            icon: '/favicon.png',
+            tag: 'queue-backpressure',
+          });
+        }
+      }
+      prevWaitingRef.current = currentWaiting;
+
+      setQueueStats({ ...data, jobsPerSec, backpressureThreshold, isBackpressure });
+    } catch {
+      // silencioso — no crítico
+    } finally {
+      if (mounted.current) scheduleNextQueuePoll(queueStats?.waiting || 0);
+    }
+  }, [scheduleNextQueuePoll, queueStats?.waiting]);
+
+  // Sincronizar ref con la función actual (evita stale closure en setTimeout)
+  pollQueueStatsRef.current = pollQueueStats;
 
   // ── 2. Socket fast-path ──────────────────────────────────────────────────────
   const onSocketUpdate = useCallback((data) => {
@@ -188,6 +298,7 @@ export function useSmartTracking() {
 
     poll();          // Primer fetch inmediato
     pollHeartbeat(); // Primer heartbeat check inmediato
+    pollQueueStats(); // Primer queue-stats — programa el siguiente adaptativo internamente
     const pollTimer      = setInterval(poll, POLL_MS);
     const interpTimer    = setInterval(tick, INTERP_MS);
     const heartbeatTimer = setInterval(pollHeartbeat, HEARTBEAT_POLL_MS);
@@ -199,9 +310,10 @@ export function useSmartTracking() {
       clearInterval(pollTimer);
       clearInterval(interpTimer);
       clearInterval(heartbeatTimer);
+      if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
       socket.off('location_update', onSocketUpdate);
     };
-  }, [poll, tick, onSocketUpdate, pollHeartbeat]);
+  }, [poll, tick, onSocketUpdate, pollHeartbeat, pollQueueStats]);
 
-  return { locations, liveActiveIds, isConnected, heartbeatStatus };
+  return { locations, liveActiveIds, isConnected, heartbeatStatus, queueStats };
 }

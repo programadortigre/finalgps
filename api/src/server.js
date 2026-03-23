@@ -24,6 +24,7 @@ const geocodingRoutes = require('./routes/geocoding');
 const routeAssignmentRoutes = require('./routes/routes');
 const customerRoutes = require('./routes/customers');
 const { initSocket } = require('./socket/socket');
+const db = require('./db/postgres');
 
 const app = express();
 const server = http.createServer(app);
@@ -80,8 +81,61 @@ app.use('/api/geocoding', geocodingRoutes);
 app.use('/api/routes', routeAssignmentRoutes);
 app.use('/api/customers', customerRoutes);
 
-// Basic health check
-app.get('/health', (req, res) => res.json({ status: 'OK', timestamp: new Date() }));
+// Health check completo — cada servicio falla de forma independiente
+// 🔴 1: Redis caído NO arrastra a DB ni a API — status granular por servicio
+app.get('/health', async (req, res) => {
+  const services = { api: 'ok', db: 'unknown', redis: 'unknown', worker: 'unknown' };
+
+  // DB — independiente de Redis
+  try {
+    await db.query('SELECT 1');
+    services.db = 'ok';
+  } catch {
+    services.db = 'error';
+  }
+
+  // Redis — independiente de DB
+  let redisClient = null;
+  try {
+    const { redis } = require('./services/queue');
+    redisClient = redis;
+    await redis.ping();
+    services.redis = 'ok';
+  } catch {
+    services.redis = 'error';
+  }
+
+  // Worker — solo si Redis está up (necesita leer queue:stats)
+  if (redisClient && services.redis === 'ok') {
+    try {
+      const raw = await redisClient.get('queue:stats');
+      if (!raw) {
+        services.worker = 'no_stats';
+      } else {
+        const stats = JSON.parse(raw);
+        const ageSeconds = Math.round((Date.now() - (stats.ts || 0)) / 1000);
+        services.worker        = ageSeconds > 30 ? 'stale' : 'ok';
+        services.workerAgeSec  = ageSeconds;
+        services.queueWaiting  = stats.waiting;
+        services.queueFailed   = stats.failed;
+      }
+    } catch {
+      services.worker = 'error';
+    }
+  } else {
+    services.worker = 'redis_down'; // no podemos saber — Redis caído
+  }
+
+  // Status global: DEGRADED si cualquier servicio crítico falla
+  // Worker 'stale' o 'no_stats' es DEGRADED pero no ERROR
+  const critical = [services.db, services.redis];
+  const hasError = critical.some(s => s === 'error');
+  const hasDegraded = services.worker === 'stale' || services.worker === 'no_stats' || services.worker === 'redis_down';
+
+  const status = hasError ? 'ERROR' : hasDegraded ? 'DEGRADED' : 'OK';
+
+  res.status(hasError ? 503 : 200).json({ status, services, timestamp: new Date() });
+});
 
 const { syncSchema } = require('./db/postgres');
 

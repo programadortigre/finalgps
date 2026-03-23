@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
-const { locationQueue, redis } = require('../services/queue');
+const { locationQueue, redis, defaultJobOptions } = require('../services/queue');
 const { getIO } = require('../socket/socket');
 const db = require('../db/postgres');
 const { GPSKalmanEKF } = require('../utils/ekf');
@@ -176,6 +176,12 @@ router.post('/batch', auth, async (req, res) => {
     
     if (!Array.isArray(points) || points.length === 0) {
         return res.status(400).json({ error: 'Valid points array required' });
+    }
+
+    // 🔴 1: Log de puntos sin client_id — detecta APK vieja o bug en el cliente
+    const missingClientId = points.filter(p => !p.client_id).length;
+    if (missingClientId > 0) {
+        console.warn(`[DEDUP] ⚠️ emp ${employeeId}: ${missingClientId}/${points.length} points missing client_id — falling back to timestamp dedup`);
     }
 
     // ── CRÍTICO 2: Ordenar por timestamp antes de cualquier procesamiento ──────
@@ -543,6 +549,11 @@ router.post('/batch', auth, async (req, res) => {
         const pointsForHistory = filteredPoints; 
 
         if (pointsForHistory.length > 0) {
+            // 🟢 3: Prioridad por tipo — recovery/manual > normal
+            // BullMQ: prioridad 1 = más alta, mayor número = más baja
+            const hasRecovery = pointsForHistory.some(p => p.point_type === 'recovery' || p.point_type === 'manual');
+            const jobPriority = hasRecovery ? 1 : 10;
+
             await locationQueue.add('process-batch', {
                 employeeId,
                 points: pointsForHistory.map(p => ({
@@ -553,9 +564,14 @@ router.post('/batch', auth, async (req, res) => {
                     timestamp: p.timestamp,
                     state: p.state || 'STOPPED',
                     quality: p.quality || 'high',
-                    point_type: p.point_type || 'normal'
+                    confidence: p.confidence || 1.0,
+                    point_type: p.point_type || 'normal',
+                    source: p.source || 'gps',
+                    battery: p.battery || null,
+                    is_charging: p.is_charging || false,
+                    client_id: p.client_id || null,
                 }))
-            });
+            }, { ...defaultJobOptions, priority: jobPriority });
         }
 
         // Real-time update for admins (solo último punto válido)
@@ -693,6 +709,26 @@ router.get('/metrics/:employeeId', auth, async (req, res) => {
         res.json({ employeeId, ...JSON.parse(raw) });
     } catch (e) {
         res.status(500).json({ error: 'Failed to fetch metrics' });
+    }
+});
+
+/// ============================================================================
+/// ENDPOINT: GET /queue-stats - Métricas de la cola BullMQ (desde Redis)
+/// ============================================================================
+router.get('/queue-stats', auth, async (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    try {
+        const raw = await redis.get('queue:stats');
+        if (!raw) return res.json({ message: 'No stats yet — worker may not be running', waiting: 0, active: 0, failed: 0, completed: 0, workerStatus: 'no_stats' });
+        const stats = JSON.parse(raw);
+        const ageSeconds = Math.round((Date.now() - (stats.ts || 0)) / 1000);
+        // 🔴 3: Si las métricas tienen >30s de antigüedad, el worker puede estar muerto
+        const workerStatus = ageSeconds > 30 ? 'stale' : 'ok';
+        res.json({ ...stats, ageSeconds, workerStatus });
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to fetch queue stats' });
     }
 });
 

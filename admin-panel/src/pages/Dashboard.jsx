@@ -32,7 +32,7 @@ const Dashboard = ({ user, onLogout }) => {
     const [selectedStatus, setSelectedStatus] = useState('all');
 
     // Smart tracking: polling + interpolación + socket fast-path + heartbeat
-    const { locations: activeLocations, liveActiveIds, isConnected, heartbeatStatus } = useSmartTracking();
+    const { locations: activeLocations, liveActiveIds, isConnected, heartbeatStatus, queueStats } = useSmartTracking();
 
     // Customer Management State
     const [customers, setCustomers] = useState([]);
@@ -417,6 +417,7 @@ const Dashboard = ({ user, onLogout }) => {
 
                         {/* Status Indicator */}
                         {view === 'live' && (
+                            <>
                             <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ${
                                 isConnected 
                                     ? 'bg-green-500/10 border border-green-500/20 text-green-300'
@@ -425,6 +426,49 @@ const Dashboard = ({ user, onLogout }) => {
                                 <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
                                 {isConnected ? 'Sistema en línea' : 'Sin conexión'}
                             </div>
+
+                            {/* 🟢 3: Dashboard de cola BullMQ */}
+                            {queueStats && (
+                                <div className={`mt-2 px-3 py-2 rounded-lg text-xs border ${
+                                    queueStats.workerStatus === 'stale' || queueStats.workerStatus === 'no_stats'
+                                        ? 'bg-red-500/10 border-red-500/20 text-red-300'
+                                        : queueStats.isBackpressure
+                                            ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-300'
+                                            : 'bg-white/5 border-white/5 text-slate-400'
+                                }`}>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <span className="font-medium text-slate-300">Cola BullMQ</span>
+                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                            queueStats.workerStatus === 'stale' ? 'bg-red-500/20 text-red-400 animate-pulse' :
+                                            queueStats.workerStatus === 'no_stats' ? 'bg-slate-500/20 text-slate-400' :
+                                            'bg-green-500/20 text-green-400'
+                                        }`}>
+                                            {queueStats.workerStatus === 'stale' ? '⚠️ WORKER MUERTO' :
+                                             queueStats.workerStatus === 'no_stats' ? '? SIN DATOS' : '✓ OK'}
+                                        </span>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono">
+                                        <span>⏳ Pendientes: <b className={queueStats.isBackpressure ? 'text-yellow-400' : 'text-white'}>{queueStats.waiting ?? '—'}</b></span>
+                                        <span>⚡ Activos: <b className="text-white">{queueStats.active ?? '—'}</b></span>
+                                        <span>✅ Completados: <b className="text-white">{queueStats.completed ?? '—'}</b></span>
+                                        <span>❌ Fallidos: <b className={queueStats.failed > 0 ? 'text-red-400' : 'text-white'}>{queueStats.failed ?? '—'}</b></span>
+                                        {queueStats.jobsPerSec !== null && (
+                                            <span className="col-span-2">🚀 Rate: <b className="text-primary-400">{queueStats.jobsPerSec} jobs/s</b></span>
+                                        )}
+                                        {queueStats.lagMs !== null && queueStats.lagMs !== undefined && (
+                                            <span className={`col-span-2 ${queueStats.lagMs > 60000 ? 'text-yellow-400' : ''}`}>
+                                                🕐 Lag: <b>{queueStats.lagMs > 60000 ? `${Math.round(queueStats.lagMs/1000)}s ⚠️` : `${Math.round(queueStats.lagMs/1000)}s`}</b>
+                                            </span>
+                                        )}
+                                    </div>
+                                    {queueStats.ageSeconds !== undefined && (
+                                        <div className="mt-1 text-[10px] text-slate-500">
+                                            Actualizado hace {queueStats.ageSeconds}s
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            </>
                         )}
                     </div>
 
