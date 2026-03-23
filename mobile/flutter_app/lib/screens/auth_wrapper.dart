@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import 'tracking_screen.dart';
@@ -21,9 +22,18 @@ class _AuthWrapperState extends State<AuthWrapper> {
   void initState() {
     super.initState();
     _requestBatteryOptimizerExemption();
-    _api.getToken().then((t) {
-      if (t != null) SocketService.init(t);
-      setState(() { _token = t; _checking = false; });
+    _api.getToken().then((t) async {
+      if (t != null) {
+        // Token existe → vendedor ya hizo login antes
+        // Arrancar servicio automáticamente (puede que el OS lo haya matado)
+        final service = FlutterBackgroundService();
+        final isRunning = await service.isRunning();
+        if (!isRunning) {
+          await service.startService();
+        }
+        SocketService.init(t);
+      }
+      if (mounted) setState(() { _token = t; _checking = false; });
     });
   }
 

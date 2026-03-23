@@ -31,8 +31,8 @@ const Dashboard = ({ user, onLogout }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedStatus, setSelectedStatus] = useState('all');
 
-    // Smart tracking: polling + interpolación + socket fast-path
-    const { locations: activeLocations, liveActiveIds, isConnected } = useSmartTracking();
+    // Smart tracking: polling + interpolación + socket fast-path + heartbeat
+    const { locations: activeLocations, liveActiveIds, isConnected, heartbeatStatus } = useSmartTracking();
 
     // Customer Management State
     const [customers, setCustomers] = useState([]);
@@ -228,6 +228,10 @@ const Dashboard = ({ user, onLogout }) => {
     const vendorsWithStatus = employees.map(emp => {
         const loc = activeLocations[emp.id];
         const isLive = liveActiveIds.has(emp.id);
+        const hbStatus = heartbeatStatus[emp.id]?.liveStatus || (isLive ? 'alive' : 'unknown');
+        const hbReason = heartbeatStatus[emp.id]?.reasonLabel || null;
+        const trackingScore = heartbeatStatus[emp.id]?.trackingScore ?? null;
+        const disconnectionRisk = heartbeatStatus[emp.id]?.disconnectionRisk || 'low';
         const matchesSearch = emp.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
                              `Vendedor ${emp.id}`.toLowerCase().includes(searchQuery.toLowerCase());
         const matchesStatus = selectedStatus === 'all' || (loc && loc.state === selectedStatus);
@@ -242,6 +246,10 @@ const Dashboard = ({ user, onLogout }) => {
             confidence: loc?.confidence || 1.0,
             source: loc?.source || 'unknown',
             isLive,
+            hbStatus,       // 'alive' | 'stale' | 'offline' | 'dead' | 'unknown'
+            hbReason,       // 'Sin GPS' | 'Sin red' | 'App cerrada' | ...
+            trackingScore,  // 0–100
+            disconnectionRisk, // 'low' | 'medium' | 'high'
             isVisible: matchesSearch && matchesStatus
         };
     });
@@ -461,22 +469,47 @@ const Dashboard = ({ user, onLogout }) => {
                                                 }`}
                                             >
                                                 <div className="flex items-center gap-2 mb-2">
-                                                    <span className={`w-2.5 h-2.5 rounded-full ${
-                                                        vendor.isLive ? 'bg-green-400 shadow-lg shadow-green-400/50 animate-pulse' :
-                                                        (vendor.status === 'OFFLINE' ? 'bg-slate-700' : 'bg-slate-500')
-                                                     }`} />
-                                                    <span className="font-medium text-sm flex-1 group-hover:text-primary-300 flex items-center gap-2">
-                                                        {vendor.name}
-                                                        {vendor.status !== 'OFFLINE' && (
-                                                            <span 
-                                                                className={`text-[9px] font-bold px-1 py-0.5 rounded ${
-                                                                    (vendor.reliability_score || 0) >= 0.9 ? 'bg-green-500/20 text-green-400' :
-                                                                    (vendor.reliability_score || 0) >= 0.6 ? 'bg-yellow-500/20 text-yellow-400' :
-                                                                    'bg-red-500/20 text-red-500'
+                                                    {/* Dot de estado — color según heartbeat */}
+                                                    <span
+                                                        title={{
+                                                            alive:      'Activo — heartbeat reciente',
+                                                            stale:      'Sin datos 2-10 min',
+                                                            offline:    'Offline >10 min',
+                                                            dead:       'Sin señal >1h',
+                                                            unknown:    'Estado desconocido',
+                                                        }[vendor.hbStatus] || ''}
+                                                        className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                                                            vendor.hbStatus === 'alive'   ? 'bg-green-400 shadow-lg shadow-green-400/50 animate-pulse' :
+                                                            vendor.hbStatus === 'stale'   ? 'bg-yellow-400' :
+                                                            vendor.hbStatus === 'offline' ? 'bg-red-500' :
+                                                            vendor.hbStatus === 'dead'    ? 'bg-slate-600' :
+                                                            'bg-slate-700'
+                                                        }`}
+                                                    />
+                                                    <span className="font-medium text-sm flex-1 group-hover:text-primary-300 flex items-center gap-2 min-w-0">
+                                                        <span className="truncate">{vendor.name}</span>
+                                                        {/* 🔥 1: Tracking score */}
+                                                        {vendor.trackingScore !== null && (
+                                                            <span
+                                                                className={`text-[9px] font-bold px-1 py-0.5 rounded flex-shrink-0 ${
+                                                                    vendor.trackingScore >= 70 ? 'bg-green-500/20 text-green-400' :
+                                                                    vendor.trackingScore >= 40 ? 'bg-yellow-500/20 text-yellow-400' :
+                                                                    'bg-red-500/20 text-red-400'
                                                                 }`}
-                                                                title="Confiabilidad GPS (24h)"
+                                                                title={`Score de calidad: ${vendor.trackingScore}/100`}
                                                             >
-                                                                🛡️ {Math.round((vendor.reliability_score || 1) * 100)}%
+                                                                ⚡{vendor.trackingScore}
+                                                            </span>
+                                                        )}
+                                                        {/* 🔥 3: Predicción de desconexión */}
+                                                        {vendor.disconnectionRisk === 'high' && (
+                                                            <span className="text-[9px] font-bold px-1 py-0.5 rounded flex-shrink-0 bg-red-500/20 text-red-400 animate-pulse" title="Riesgo alto de desconexión (batería baja / señal mala)">
+                                                                ⚠️
+                                                            </span>
+                                                        )}
+                                                        {vendor.disconnectionRisk === 'medium' && (
+                                                            <span className="text-[9px] font-bold px-1 py-0.5 rounded flex-shrink-0 bg-yellow-500/20 text-yellow-400" title="Riesgo medio de desconexión">
+                                                                ⚡
                                                             </span>
                                                         )}
                                                     </span>
@@ -576,10 +609,33 @@ const Dashboard = ({ user, onLogout }) => {
                                                             })()}
                                                         </div>
                                                         <div className="text-slate-500 flex items-center gap-2">
-                                                            <span>{vendor.lastUpdate ? new Date(vendor.lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Offline'}</span>
+                                                            {/* 🟡 5: Latencia visible en segundos */}
+                                                            {vendor.lastUpdate ? (() => {
+                                                                const diffMs = Date.now() - new Date(vendor.lastUpdate).getTime();
+                                                                const diffSec = Math.floor(diffMs / 1000);
+                                                                const label = diffSec < 60
+                                                                    ? `${diffSec}s`
+                                                                    : diffSec < 3600
+                                                                        ? `${Math.floor(diffSec / 60)}m`
+                                                                        : `${Math.floor(diffSec / 3600)}h`;
+                                                                const color = diffSec < 15 ? 'text-green-400' : diffSec < 120 ? 'text-yellow-400' : 'text-slate-500';
+                                                                return <span className={`text-[10px] font-mono ${color}`} title="Hace cuánto llegó el último dato">⏱ {label}</span>;
+                                                            })() : <span className="text-[10px]">Offline</span>}
                                                         </div>
                                                     </div>
-                                                    {vendor.isLive && <span className="text-[9px] text-green-500 font-bold uppercase tracking-wider">Live</span>}
+                                                    <div className="flex items-center gap-1">
+                                                        {/* 🟡 1: Razón del estado */}
+                                                        {vendor.hbReason && vendor.hbStatus !== 'alive' && (
+                                                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                                                                vendor.hbStatus === 'dead'    ? 'bg-slate-700 text-slate-400' :
+                                                                vendor.hbStatus === 'offline' ? 'bg-red-500/15 text-red-400' :
+                                                                'bg-yellow-500/15 text-yellow-400'
+                                                            }`} title="Razón del estado">
+                                                                {vendor.hbReason}
+                                                            </span>
+                                                        )}
+                                                        {vendor.isLive && <span className="text-[9px] text-green-500 font-bold uppercase tracking-wider">Live</span>}
+                                                    </div>
                                                 </div>
                                             </div>
                                         ))
@@ -637,6 +693,7 @@ const Dashboard = ({ user, onLogout }) => {
                             view={view}
                             selectedEmployee={selectedEmployee}
                             activeLocations={activeLocations}
+                            heartbeatStatus={heartbeatStatus}
                             customers={customers}
                             onMapClick={handleMapClick}
                             onCustomerMove={handleCustomerMove}

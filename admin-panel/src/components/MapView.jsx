@@ -17,12 +17,24 @@ L.Icon.Default.mergeOptions({
 
 // ── Cache de iconos por estado — evita recrear L.divIcon en cada render ───────
 const iconCache = {};
-function getLiveIcon(state, isStale, isGpsOff) {
-    const key = `${state}-${isStale}-${isGpsOff}`;
+function getLiveIcon(state, isStale, isGpsOff, hbStatus) {
+    const key = `${state}-${isStale}-${isGpsOff}-${hbStatus}`;
     if (iconCache[key]) return iconCache[key];
-    const opacity = (isGpsOff || isStale) ? 0.6 : 1;
-    const pulseClass = isGpsOff ? 'pulse-off' : isStale ? 'pulse-stale' : 'pulse-active';
-    const coreClass  = isGpsOff ? 'core-off'  : isStale ? 'core-stale'  : 'core-active';
+
+    // Prioridad visual: dead > offline > gpsOff > stale > normal
+    const isDead    = hbStatus === 'dead';
+    const isOffline = hbStatus === 'offline';
+    const opacity   = (isDead || isGpsOff) ? 0.4 : (isOffline || isStale) ? 0.65 : 1;
+
+    const pulseClass = isDead    ? 'pulse-off'   :
+                       isGpsOff  ? 'pulse-off'   :
+                       isOffline ? 'pulse-stale' :
+                       isStale   ? 'pulse-stale' : 'pulse-active';
+    const coreClass  = isDead    ? 'core-off'    :
+                       isGpsOff  ? 'core-off'    :
+                       isOffline ? 'core-stale'  :
+                       isStale   ? 'core-stale'  : 'core-active';
+
     iconCache[key] = L.divIcon({
         className: 'custom-div-icon',
         html: `<div class="marker-container" style="opacity:${opacity}">
@@ -39,7 +51,7 @@ function getLiveIcon(state, isStale, isGpsOff) {
 }
 
 // ── Marcador memoizado — solo se re-renderiza si cambia posición o estado ─────
-const LiveMarker = memo(({ loc, addr }) => {
+const LiveMarker = memo(({ loc, addr, hbStatus = 'unknown', hbReason = null }) => {
     const markerRef = useRef(null);
     const isStale  = dayjs().diff(dayjs(loc.lastUpdate), 'minute') > 20;
     const isGpsOff = loc.state === 'GPS_OFF' || loc.state === 'NO_FIX';
@@ -51,7 +63,7 @@ const LiveMarker = memo(({ loc, addr }) => {
         }
     }, [loc.lat, loc.lng]);
 
-    const icon = getLiveIcon(loc.state, isStale, isGpsOff);
+    const icon = getLiveIcon(loc.state, isStale, isGpsOff, hbStatus);
 
     // Actualizar la inicial del nombre en el DOM directamente
     useEffect(() => {
@@ -103,6 +115,22 @@ const LiveMarker = memo(({ loc, addr }) => {
                                         GPS OFF ⚠️
                                     </span>
                                 )}
+                                {(hbStatus === 'offline' || hbStatus === 'dead') && !isGpsOff && (
+                                    <span style={{ background: hbStatus === 'dead' ? '#64748b' : '#f97316', color: 'white', padding: '1px 5px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold' }}>
+                                        {hbStatus === 'dead' ? 'SIN SEÑAL' : 'OFFLINE'}
+                                    </span>
+                                )}
+                                {hbStatus === 'stale' && !isGpsOff && (
+                                    <span style={{ background: '#eab308', color: 'white', padding: '1px 5px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold' }}>
+                                        LENTO
+                                    </span>
+                                )}
+                                {/* 🟡 1: Razón del estado en popup */}
+                                {hbReason && hbStatus !== 'alive' && (
+                                    <span style={{ background: '#1e293b', color: '#94a3b8', padding: '1px 5px', borderRadius: '4px', fontSize: '9px', border: '1px solid #334155' }}>
+                                        {hbReason}
+                                    </span>
+                                )}
                             </div>
                         </div>
                         <span style={{ background: stateColor.bg, color: stateColor.color, padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
@@ -133,13 +161,14 @@ const LiveMarker = memo(({ loc, addr }) => {
         </Marker>
     );
 }, (prev, next) => {
-    // Solo re-renderizar si cambia posición (con tolerancia de 0.00001°≈1m), estado o nombre
     return (
         Math.abs(prev.loc.lat - next.loc.lat) < 0.00001 &&
         Math.abs(prev.loc.lng - next.loc.lng) < 0.00001 &&
         prev.loc.state === next.loc.state &&
         prev.loc.name  === next.loc.name  &&
-        prev.addr      === next.addr
+        prev.addr      === next.addr      &&
+        prev.hbStatus  === next.hbStatus  &&
+        prev.hbReason  === next.hbReason
     );
 });
 LiveMarker.displayName = 'LiveMarker';
@@ -364,7 +393,8 @@ const MapView = ({
     clickCoords,
     isDrawingPerimeter,
     onPolygonComplete,
-    onCancelDrawing
+    onCancelDrawing,
+    heartbeatStatus = {},   // { [employeeId]: 'alive'|'stale'|'offline'|'dead'|'unknown' }
 }) => {
     const [trips, setTrips] = useState([]);
     const [selectedTrip, setTrip] = useState(propSelectedTrip || null);
@@ -906,11 +936,14 @@ const MapView = ({
                 {/* ── LIVE MODE ── */}
                 {view === 'live' && livePositions.map(loc => {
                     if (!loc.lat || !loc.lng || loc.lat === 0 || loc.lng === 0) return null;
+                    const hbEntry = heartbeatStatus?.[loc.employeeId];
                     return (
                         <LiveMarker
                             key={loc.employeeId}
                             loc={loc}
                             addr={addresses[`live-${loc.employeeId}`]}
+                            hbStatus={hbEntry?.liveStatus || 'unknown'}
+                            hbReason={hbEntry?.reasonLabel || null}
                         />
                     );
                 })}

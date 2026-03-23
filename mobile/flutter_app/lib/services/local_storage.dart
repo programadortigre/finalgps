@@ -22,12 +22,10 @@ class LocalStorage {
     final path = join(dbPath, _dbName);
     return openDatabase(
       path,
-      version: 6, // BUG #10 FIX: bump version para migrar columnas faltantes
+      version: 7, // v7: client_id UUID para deduplicación en backend
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onOpen: (db) async {
-        // BUG #2 FIX: WAL mode — permite lecturas concurrentes sin database lock
-        // Crítico cuando background isolate y main isolate acceden a la misma DB
         await db.execute('PRAGMA journal_mode=WAL');
         await db.execute('PRAGMA synchronous=NORMAL');
       },
@@ -38,6 +36,7 @@ class LocalStorage {
     await db.execute('''
       CREATE TABLE $_tableName (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id     TEXT    UNIQUE,
         lat           REAL    NOT NULL,
         lng           REAL    NOT NULL,
         speed         REAL    NOT NULL,
@@ -56,6 +55,7 @@ class LocalStorage {
     await db.execute('CREATE INDEX idx_timestamp   ON $_tableName(timestamp)');
     await db.execute('CREATE INDEX idx_synced      ON $_tableName(synced)');
     await db.execute('CREATE INDEX idx_employee_id ON $_tableName(employee_id)');
+    await db.execute('CREATE UNIQUE INDEX idx_client_id ON $_tableName(client_id)');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -84,12 +84,15 @@ class LocalStorage {
       }
     }
     if (oldVersion < 6) {
-      // BUG #10 FIX: columnas faltantes — point_type/battery_level/is_charging
-      // se guardaban en LocalPoint pero se perdían silenciosamente en SQLite
       print('[STORAGE] Migración v6: Agregando columnas point_type, battery_level, is_charging');
       try { await db.execute('ALTER TABLE $_tableName ADD COLUMN point_type TEXT DEFAULT "normal"'); } catch (_) {}
       try { await db.execute('ALTER TABLE $_tableName ADD COLUMN battery_level INTEGER'); } catch (_) {}
       try { await db.execute('ALTER TABLE $_tableName ADD COLUMN is_charging INTEGER'); } catch (_) {}
+    }
+    if (oldVersion < 7) {
+      print('[STORAGE] Migración v7: Agregando client_id UUID para deduplicación');
+      try { await db.execute('ALTER TABLE $_tableName ADD COLUMN client_id TEXT'); } catch (_) {}
+      try { await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_client_id ON $_tableName(client_id)'); } catch (_) {}
     }
   }
 
@@ -115,6 +118,7 @@ class LocalStorage {
         await txn.insert(
           _tableName,
           {
+            'client_id': point.clientId,
             'lat': point.lat,
             'lng': point.lng,
             'speed': point.speed,
@@ -129,7 +133,7 @@ class LocalStorage {
             'battery_level': point.batteryLevel,
             'is_charging': point.isCharging != null ? (point.isCharging! ? 1 : 0) : null,
           },
-          conflictAlgorithm: ConflictAlgorithm.replace,
+          conflictAlgorithm: ConflictAlgorithm.ignore, // ignore = no sobreescribir si client_id ya existe
         );
       }
     });
@@ -142,6 +146,7 @@ class LocalStorage {
     return database.insert(
       _tableName,
       {
+        'client_id': point.clientId,
         'lat': point.lat,
         'lng': point.lng,
         'speed': point.speed,
@@ -156,7 +161,7 @@ class LocalStorage {
         'battery_level': point.batteryLevel,
         'is_charging': point.isCharging != null ? (point.isCharging! ? 1 : 0) : null,
       },
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      conflictAlgorithm: ConflictAlgorithm.ignore,
     );
   }
 

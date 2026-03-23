@@ -15,6 +15,8 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'socket_service.dart';
 import 'package:dio/dio.dart'; // ✅ FIX: Added for Options class
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -132,12 +134,27 @@ class TrackingEngine {
   // BUG #7 FIX: guard atómico para hard reset
   bool _isResetting = false;
 
+  // CRÍTICO 4: Protección contra reset loop — degraded mode
+  int _recentResetCount = 0;
+  DateTime _resetWindowStart = DateTime.now();
+  bool _isDegradedMode = false;
+  Timer? _degradedModeTimer;
+
+  // CRÍTICO 3: Heartbeat independiente del GPS (cada 60s)
+  Timer? _heartbeatTimer;
+
   // BUG #13 FIX: contador propio del sync timer (independiente de _maintenanceTicks)
   int _syncTicks = 0;
 
   // BUG #6 FIX: cache del estado de notificación para evitar IPC en cada punto GPS
   TrackingState? _lastNotificationState;
   bool _isForegroundCached = true;
+
+  // GPS-OFF: detección y fallback por red + listener event-driven
+  bool _gpsWasOff = false;
+  StreamSubscription<ServiceStatus>? _gpsStatusSub; // Event-driven, cero polling
+  StreamSubscription<Position>? _networkLocationSub; // Fallback por WiFi/torres
+  static final _localNotif = FlutterLocalNotificationsPlugin();
 
   // FIX V3: Timestamp del último punto RAW de GPS para el Watchdog
   DateTime _lastRawTime = DateTime.now();
@@ -175,6 +192,18 @@ class TrackingEngine {
       // ZUPT: iniciar detector de quietud por acelerómetro
       _motionDetector.start();
 
+      // Notificaciones locales para alerta de GPS apagado
+      await _localNotif.initialize(
+        const InitializationSettings(
+          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        ),
+        onDidReceiveNotificationResponse: (details) async {
+          // Tap en notificación → abrir configuración de ubicación del sistema
+          final uri = Uri.parse('android.settings.LOCATION_SOURCE_SETTINGS');
+          if (await canLaunchUrl(uri)) launchUrl(uri);
+        },
+      );
+
       // PRO: Unified Maintenance Loop (60s)
       _mainMaintenanceTimer = Timer.periodic(const Duration(seconds: 60), (_) {
         try {
@@ -208,6 +237,16 @@ class TrackingEngine {
         _syncLoop(reason: 'Timer [${_currentState.name}] ($pending pts)');
       });
 
+      // CRÍTICO 3: Heartbeat independiente del GPS — prueba que el servicio está vivo
+      // Se envía incluso en DEEP_SLEEP, incluso sin movimiento
+      _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) async {
+        try {
+          await _sendServiceHeartbeat();
+        } catch (e) {
+          _log('HEARTBEAT', 'Error: $e');
+        }
+      });
+
       // FIX 1: Reinicio limpio de distancia al iniciar
       _totalDistanceKm = 0;
       _lastValidPoint = null;
@@ -226,22 +265,29 @@ class TrackingEngine {
   Future<void> _deferredInitialization() async {
     _log('INIT', '>>> _deferredInitialization() [ENTER]');
     try {
-      // PRO: Cachear token y employeeId de inmediato
+      // Guard de autoStart: si no hay token (vendedor nunca hizo login), detener el servicio
       _cachedToken = await _api.getToken();
+      if (_cachedToken == null) {
+        _log('INIT', 'Sin token — servicio iniciado por autoStart sin login previo. Deteniendo.');
+        _serviceInstance?.stopSelf();
+        return;
+      }
+
       await _loadCachedEmployeeId();
       await _restoreStateFromStorage();
 
-      // ✅ NUEVO: Verificar estado de rastreo en el servidor
+      // Verificar estado de rastreo en el servidor
+      // Si el admin lo desactivó mientras el teléfono estaba apagado, respetarlo
       final profile = await _api.fetchMyProfile();
       if (profile != null) {
         final bool isTrackingEnabled = profile['is_tracking_enabled'] ?? true;
         _log('FLOW-DIAG', 'Profile check: is_tracking_enabled=$isTrackingEnabled');
         if (!isTrackingEnabled) {
-          _log('FLOW-DIAG', 'ENTER PAUSE: is_tracking_enabled is FALSE');
+          _log('FLOW-DIAG', 'ENTER PAUSE: admin desactivó el rastreo');
           pause();
         }
       } else {
-        _log('FLOW-DIAG', 'Profile check FAILED (null response)');
+        _log('FLOW-DIAG', 'Profile check FAILED (null response) — continuando con estado anterior');
       }
 
       _log('INIT', '<<< _deferredInitialization() [DONE]');
@@ -258,9 +304,13 @@ class TrackingEngine {
 
     _mainMaintenanceTimer?.cancel();
     _syncTimer?.cancel();
+    _heartbeatTimer?.cancel();
     _positionStreamSub?.cancel();
     _activityStreamSub?.cancel();
     _connectivitySub?.cancel();
+    _gpsStatusSub?.cancel();
+    _networkLocationSub?.cancel();
+    _localNotif.cancel(9001);
     _motionDetector.stop();
 
     // PRO: Guardar puntos pendientes antes de morir
@@ -319,6 +369,10 @@ class TrackingEngine {
         final pending = await _storage.getUnsyncedCount();
         if (pending > 0) _syncLoop(reason: 'Timer (resumed)');
       }
+    });
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) async {
+      try { await _sendServiceHeartbeat(); } catch (e) { _log('HEARTBEAT', 'Error: $e'); }
     });
   }
 
@@ -748,7 +802,15 @@ class TrackingEngine {
       _log('ANTI-FRAUDE', '⚠️ GPS APAGADO POR EL USUARIO');
       _sendNoFixHeartbeat(reason: 'gps_disabled_by_user');
       _setState(TrackingState.NO_SIGNAL, reason: 'GPS Disabled');
+      if (!_gpsWasOff) {
+        _gpsWasOff = true;
+        _onGpsDisabled();
+      }
       return;
+    } else if (_gpsWasOff) {
+      // GPS volvió a encenderse
+      _gpsWasOff = false;
+      _onGpsRestored();
     }
 
     // GPS Watchdog: si estamos en movimiento pero no recibimos nada
@@ -776,11 +838,108 @@ class TrackingEngine {
     }
   }
 
+  // CRÍTICO 3: Heartbeat independiente del GPS
+  // Envía estado del servicio cada 60s — prueba que el proceso está vivo aunque no haya GPS
+  Future<void> _sendServiceHeartbeat() async {
+    if (!_isOnline || _cachedToken == null) return;
+    try {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final lastGpsAge = now - (_lastValidPoint?.timestamp ?? 0);
+
+      // Solo enviar si el GPS lleva >90s sin datos (evita spam cuando todo funciona bien)
+      if (lastGpsAge < 90000 && _currentState != TrackingState.DEEP_SLEEP) return;
+
+      _log('HEARTBEAT', 'Enviando heartbeat de servicio (GPS age: ${lastGpsAge ~/ 1000}s, state: ${_currentState.name})');
+
+      final batteryLevel = await _battery.batteryLevel;
+      final batteryState = await _battery.batteryState;
+      final isCharging = batteryState == BatteryState.charging || batteryState == BatteryState.full;
+      final isGpsEnabled = await Geolocator.isLocationServiceEnabled();
+
+      // 🟡 2: Razón del estado + último evento significativo
+      String heartbeatReason;
+      if (!isGpsEnabled) {
+        heartbeatReason = 'no_gps';
+      } else if (!_isOnline) {
+        heartbeatReason = 'no_network';
+      } else if (_isDegradedMode) {
+        heartbeatReason = 'degraded_mode';
+      } else if (_currentState == TrackingState.DEEP_SLEEP) {
+        heartbeatReason = 'deep_sleep';
+      } else if (_currentState == TrackingState.BATT_SAVER) {
+        heartbeatReason = 'battery_saver';
+      } else {
+        heartbeatReason = 'gps_timeout';
+      }
+
+      final point = {
+        'lat': _lastValidPoint?.lat ?? _lastRawLat,
+        'lng': _lastValidPoint?.lng ?? _lastRawLng,
+        'speed': 0,
+        'accuracy': 9999,
+        'state': _currentState.name,
+        'timestamp': now,
+        'point_type': 'heartbeat',
+        'source': 'heartbeat',
+        'battery': batteryLevel,
+        'is_charging': isCharging,
+        'heartbeat_meta': {
+          // 🟡 2: Último evento significativo — permite detectar "vivo pero congelado"
+          'last_gps_ts':       _lastValidPoint?.timestamp ?? 0,
+          'last_gps_age_s':    lastGpsAge ~/ 1000,
+          'last_sync_ts':      _nextSyncAttempt.millisecondsSinceEpoch,
+          'socket_connected':  _socket?.connected ?? false,
+          // 🟡 1: Razón del estado para debug humano
+          'reason':            heartbeatReason,
+          'is_gps_enabled':    isGpsEnabled,
+          'is_degraded':       _isDegradedMode,
+          'reset_count':       _resetCount,
+          'battery_level':     batteryLevel,
+          'tracking_state':    _currentState.name,
+        },
+      };
+
+      await _addToBufferAndFlush(point);
+      _syncLoop(reason: 'Heartbeat');
+    } catch (e) {
+      _log('HEARTBEAT', 'Error enviando heartbeat: $e');
+    }
+  }
+
   // ✅ NUEVO: HARD RESET CON BACKOFF (Blindaje Anti-Caos)
   bool _canPerformReset() {
+    // CRÍTICO 4: Si estamos en modo degradado, bloquear resets por completo
+    if (_isDegradedMode) {
+      _log('RESET', 'Degraded Mode activo — reset bloqueado hasta que expire el timer.');
+      return false;
+    }
+
+    // Ventana deslizante de 5 minutos para contar resets
+    final now = DateTime.now();
+    if (now.difference(_resetWindowStart).inMinutes >= 5) {
+      _recentResetCount = 0;
+      _resetWindowStart = now;
+    }
+
+    // CRÍTICO 4: >3 resets en 5 min → entrar en degraded mode
+    if (_recentResetCount >= 3) {
+      _log('RESET', '⚠️ Reset Storm detectado ($recentResetCount resets en 5min) → DEGRADED MODE por 5min');
+      _isDegradedMode = true;
+      _degradedModeTimer?.cancel();
+      _degradedModeTimer = Timer(const Duration(minutes: 5), () {
+        _isDegradedMode = false;
+        _recentResetCount = 0;
+        _log('RESET', 'Degraded Mode expirado — volviendo a operación normal');
+        _restartLocationStream(reason: 'Degraded Mode Expired');
+      });
+      // En degraded mode: bajar precisión y aumentar intervalo
+      _restartLocationStream(reason: 'Enter Degraded Mode');
+      return false;
+    }
+
     if (_lastResetTime == null) return true;
     
-    final diff = DateTime.now().difference(_lastResetTime!).inSeconds;
+    final diff = now.difference(_lastResetTime!).inSeconds;
     // Backoff exponencial: 60, 120, 240, 480...
     final backoffSeconds = 60 * (1 << (_resetCount % 5));
     
@@ -796,7 +955,8 @@ class TrackingEngine {
     if (!_canPerformReset()) return;
     _isResetting = true;
 
-    _log('RESET', '🔥 HARD RESET GPS iniciado. Razón: $reason. Intento #${_resetCount + 1}');
+    _recentResetCount++; // CRÍTICO 4: contar para detectar reset storm
+    _log('RESET', '🔥 HARD RESET GPS iniciado. Razón: $reason. Intento #${_resetCount + 1} (recientes: $_recentResetCount/3)');
     _lastResetTime = DateTime.now();
     _resetCount++;
 
@@ -872,8 +1032,129 @@ class TrackingEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Gestión de Estado y Stream GPS
+  // GPS OFF: Notificación persistente + fallback por red + polling de recuperación
   // ---------------------------------------------------------------------------
+
+  /// Llamado UNA VEZ cuando el GPS pasa de ON → OFF
+  void _onGpsDisabled() {
+    _log('GPS-OFF', '🔴 GPS desactivado por el usuario — activando contramedidas');
+
+    // 1. Notificación persistente que no se puede descartar, con tap → GPS settings
+    _showGpsOffNotification();
+
+    // 2. Fallback: ubicación por WiFi/torres celulares (sin GPS)
+    _startNetworkLocationFallback();
+
+    // 3. Event-driven: escuchar cuando el OS activa el GPS (cero polling, cero batería)
+    _gpsStatusSub?.cancel();
+    _gpsStatusSub = Geolocator.getServiceStatusStream().listen((ServiceStatus status) {
+      if (status == ServiceStatus.enabled) {
+        _log('GPS-OFF', '✅ GPS restaurado (evento del sistema)');
+        _gpsStatusSub?.cancel();
+        _gpsStatusSub = null;
+        _onGpsRestored();
+      }
+    });
+
+    // 4. Actualizar notificación del foreground service
+    if (_serviceInstance is AndroidServiceInstance) {
+      (_serviceInstance as AndroidServiceInstance).setForegroundNotificationInfo(
+        title: '⚠️ GPS DESACTIVADO',
+        content: 'Toca para reactivar el GPS y continuar el rastreo.',
+      );
+    }
+  }
+
+  /// Llamado cuando el GPS vuelve a encenderse
+  void _onGpsRestored() {
+    _log('GPS-OFF', '✅ GPS restaurado — cancelando fallback y listener');
+
+    // Cancelar fallback de red
+    _networkLocationSub?.cancel();
+    _networkLocationSub = null;
+
+    // Cancelar listener de estado (ya no necesario)
+    _gpsStatusSub?.cancel();
+    _gpsStatusSub = null;
+
+    // Cancelar notificación de GPS off
+    _localNotif.cancel(9001);
+
+    // Restaurar notificación normal del foreground
+    _lastNotificationState = null; // Forzar refresh
+    _updateNotification();
+
+    // Reiniciar stream GPS normal
+    _setState(TrackingState.STOPPED, reason: 'GPS Restored');
+
+    // Notificar al backend que el GPS volvió
+    _sendNoFixHeartbeat(reason: 'gps_restored');
+  }
+
+  /// Notificación local persistente con acción directa a configuración de GPS
+  Future<void> _showGpsOffNotification() async {
+    const androidDetails = AndroidNotificationDetails(
+      'gps_off_channel',
+      'GPS Desactivado',
+      channelDescription: 'Alerta cuando el GPS está apagado',
+      importance: Importance.max,
+      priority: Priority.high,
+      ongoing: true,           // No se puede descartar con swipe
+      autoCancel: false,
+      icon: '@mipmap/ic_launcher',
+      color: Color(0xFFEF4444),
+      actions: [
+        AndroidNotificationAction(
+          'open_gps',
+          'ACTIVAR GPS',
+          showsUserInterface: true,
+          cancelNotification: false,
+        ),
+      ],
+    );
+
+    await _localNotif.show(
+      9001,
+      '⚠️ GPS Desactivado',
+      'El rastreo está interrumpido. Toca para reactivar el GPS.',
+      const NotificationDetails(android: androidDetails),
+    );
+  }
+
+  /// Fallback: usar WiFi/torres celulares cuando GPS está off
+  /// Precisión ~50-200m pero mejor que nada
+  void _startNetworkLocationFallback() {
+    _networkLocationSub?.cancel();
+    _log('GPS-OFF', 'Iniciando fallback por red (WiFi/torres)...');
+
+    _networkLocationSub = Geolocator.getPositionStream(
+      locationSettings: const AndroidSettings(
+        accuracy: LocationAccuracy.low,   // Usa solo WiFi/torres, no GPS
+        distanceFilter: 100,              // Solo si se mueve >100m (ahorra batería)
+        intervalDuration: Duration(seconds: 60),
+        forceLocationManager: true,       // Fuerza LocationManager (no FusedProvider) para evitar GPS
+      ),
+    ).listen(
+      (Position pos) {
+        if (pos.accuracy > 500) return; // Descartar si la precisión es muy mala
+        _log('GPS-OFF', 'Posición por red: ${pos.latitude},${pos.longitude} acc=${pos.accuracy}m');
+
+        final point = LocalPoint(
+          lat: pos.latitude,
+          lng: pos.longitude,
+          speed: 0,
+          accuracy: pos.accuracy,
+          state: 'NO_SIGNAL',
+          timestamp: pos.timestamp.millisecondsSinceEpoch,
+          employeeId: _cachedEmployeeId,
+          source: 'network_fallback',
+        );
+        _addToBufferAndFlush(point.toJson()).then((_) =>
+          _syncLoop(reason: 'Network Fallback Position'));
+      },
+      onError: (e) => _log('GPS-OFF', 'Error en fallback de red: $e'),
+    );
+  }
   void _setState(TrackingState newState, {String? reason}) {
     if (newState == _currentState) return;
     _log('STATE', '${_currentState.name} → ${newState.name} ${reason != null ? "($reason)" : ""}');
@@ -903,6 +1184,12 @@ class TrackingEngine {
         distanceFilter = 0; // Sin filtro
         accuracy = LocationAccuracy.best;
         _log('GPS', 'PRIORITY SCAN ACTIVE: Settings set to MAX');
+      } else if (_isDegradedMode) {
+        // CRÍTICO 4: Degraded mode — precisión baja, intervalo largo, sin resets
+        intervalSec = 60;
+        distanceFilter = 30;
+        accuracy = LocationAccuracy.low;
+        _log('GPS', 'DEGRADED MODE: Reduced accuracy to protect battery (reset storm)');
       } else {
         // 1. Valores por defecto según estado
         switch (_currentState) {
@@ -1191,10 +1478,26 @@ class TrackingEngine {
 
       // --- Gestión de Buffer Offline ---
       // ZUPT: si el acelerómetro confirma quietud y la velocidad GPS es ruido, descartar
+      // MEDIO 1 FIX: No descartar si hay desplazamiento acumulado real (tráfico lento, bici)
       if (_motionDetector.isStationary && speed < 0.5) {
-        _log('ZUPT', 'Punto descartado: acelerómetro confirma quietud (drift GPS)');
-        _isProcessingPosition = false;
-        return;
+        // Calcular distancia acumulada de los últimos puntos del buffer
+        double accumulatedDist = 0.0;
+        if (_pointBuffer.length >= 2) {
+          for (int i = 1; i < _pointBuffer.length && i <= 10; i++) {
+            accumulatedDist += Geolocator.distanceBetween(
+              _pointBuffer[i - 1].lat, _pointBuffer[i - 1].lng,
+              _pointBuffer[i].lat, _pointBuffer[i].lng,
+            );
+          }
+        }
+        // Si en los últimos puntos se movió >15m, el ZUPT es un falso positivo
+        if (accumulatedDist > 15.0) {
+          _log('ZUPT', 'ZUPT ignorado: movimiento acumulado real ${accumulatedDist.toStringAsFixed(1)}m (tráfico lento / bici)');
+        } else {
+          _log('ZUPT', 'Punto descartado: acelerómetro confirma quietud (drift GPS)');
+          _isProcessingPosition = false;
+          return;
+        }
       }
       await _addToBufferAndFlush(point.toJson());
 
@@ -1318,6 +1621,7 @@ class TrackingEngine {
         }
 
         final data = unsynced.map((p) => {
+          'client_id': p.clientId,
           'lat': p.lat, 'lng': p.lng,
           'speed': p.speed, 'accuracy': p.accuracy,
           'state': p.state, 'timestamp': p.timestamp,
@@ -1403,7 +1707,7 @@ Future<void> initializeService() async {
   await service.configure(
     androidConfiguration: AndroidConfiguration(
       onStart: onStart,
-      autoStart: false,  // Iniciar manualmente desde la pantalla de tracking
+      autoStart: true,  // Reinicia automáticamente si el OS mata el proceso o el teléfono se reinicia
       isForegroundMode: true,
       notificationChannelId: 'gps_tracking_channel',
       initialNotificationTitle: 'GPS Tracker Pro',

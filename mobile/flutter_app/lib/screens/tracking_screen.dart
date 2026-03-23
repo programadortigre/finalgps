@@ -688,56 +688,91 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
 
                 SizedBox(height: _isOnline ? 16 : 0),
 
-                // ── Toggle Tracking Button ──
-                GestureDetector(
-                  onTap: _toggleOnline,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 400),
-                    curve: Curves.easeInOut,
-                    width: double.infinity,
-                    height: 62,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: _isOnline
-                          ? [const Color(0xFFEF4444), const Color(0xFFDC2626)]
-                          : [const Color(0xFF6C63FF), const Color(0xFF3F8CFF)],
-                      ),
-                      borderRadius: BorderRadius.circular(18),
-                      boxShadow: [
-                        BoxShadow(
-                          color: (_isOnline ? const Color(0xFFEF4444) : const Color(0xFF6C63FF)).withOpacity(.4),
-                          blurRadius: 20, offset: const Offset(0, 8),
+                // ── Toggle Tracking Button (admin only) / Status pill (employee) ──
+                if (_isAdmin)
+                  GestureDetector(
+                    onTap: _toggleOnline,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 400),
+                      curve: Curves.easeInOut,
+                      width: double.infinity,
+                      height: 62,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: _isOnline
+                            ? [const Color(0xFFEF4444), const Color(0xFFDC2626)]
+                            : [const Color(0xFF6C63FF), const Color(0xFF3F8CFF)],
                         ),
-                      ],
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: (_isOnline ? const Color(0xFFEF4444) : const Color(0xFF6C63FF)).withOpacity(.4),
+                            blurRadius: 20, offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          child: Icon(
+                            _isOnline ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                            key: ValueKey(_isOnline),
+                            color: Colors.white, size: 30,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          child: Text(
+                            _isOnline ? 'DETENER RASTREO' : 'INICIAR RASTREO',
+                            key: ValueKey(_isOnline),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
+                              letterSpacing: .8,
+                            ),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  )
+                else
+                  // Indicador de solo lectura para vendedores — el admin controla el rastreo remotamente
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 400),
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    decoration: BoxDecoration(
+                      color: _isOnline
+                        ? const Color(0xFF22C55E).withOpacity(.1)
+                        : const Color(0xFF64748B).withOpacity(.1),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: _isOnline
+                          ? const Color(0xFF22C55E).withOpacity(.3)
+                          : const Color(0xFF64748B).withOpacity(.3),
+                      ),
                     ),
                     child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 300),
-                        child: Icon(
-                          _isOnline ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                          key: ValueKey(_isOnline),
-                          color: Colors.white, size: 30,
-                        ),
+                      Icon(
+                        _isOnline ? Icons.gps_fixed : Icons.gps_off,
+                        color: _isOnline ? const Color(0xFF22C55E) : const Color(0xFF64748B),
+                        size: 22,
                       ),
                       const SizedBox(width: 10),
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 300),
-                        child: Text(
-                          _isOnline ? 'DETENER RASTREO' : 'INICIAR RASTREO',
-                          key: ValueKey(_isOnline),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 16,
-                            letterSpacing: .8,
-                          ),
+                      Text(
+                        _isOnline ? 'Rastreo activo' : 'Rastreo pausado por administrador',
+                        style: TextStyle(
+                          color: _isOnline ? const Color(0xFF22C55E) : const Color(0xFF64748B),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
                         ),
                       ),
                     ]),
                   ),
-                ),
               ]),
             ),
           ),

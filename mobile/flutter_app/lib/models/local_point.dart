@@ -1,6 +1,11 @@
+import 'package:uuid/uuid.dart';
+
+const _uuid = Uuid();
+
 /// Modelo que representa un punto GPS capturado localmente
 class LocalPoint {
   final int? id;
+  final String clientId; // UUID único por punto — previene duplicados en backend
   final double lat;
   final double lng;
   final double speed;
@@ -9,13 +14,14 @@ class LocalPoint {
   final String state;
   final bool synced;
   final int? employeeId;
-  final String? source; // ✅ gps, network, fused, heartbeat
-  final String? pointType; // ✅ normal, recovery, manual, gps_off
-  final int? batteryLevel; // ✅ 0-100
-  final bool? isCharging; // ✅ true/false
+  final String? source;
+  final String? pointType;
+  final int? batteryLevel;
+  final bool? isCharging;
 
   LocalPoint({
     this.id,
+    String? clientId,
     required this.lat,
     required this.lng,
     required this.speed,
@@ -28,12 +34,12 @@ class LocalPoint {
     this.pointType = 'normal',
     this.batteryLevel,
     this.isCharging,
-  });
+  }) : clientId = clientId ?? _uuid.v4();
 
-  /// Convertir a Map para guardar en SQLite
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'client_id': clientId,
       'lat': lat,
       'lng': lng,
       'speed': speed,
@@ -49,10 +55,10 @@ class LocalPoint {
     };
   }
 
-  /// Crear desde Map (lectura de SQLite).
   factory LocalPoint.fromMap(Map<String, dynamic> map) {
     return LocalPoint(
       id: map['id'] as int?,
+      clientId: map['client_id'] as String?,
       lat: (map['lat'] as num).toDouble(),
       lng: (map['lng'] as num).toDouble(),
       speed: (map['speed'] as num).toDouble(),
@@ -68,9 +74,9 @@ class LocalPoint {
     );
   }
 
-  /// Convertir a JSON para enviar al servidor
   Map<String, dynamic> toJson() {
     return {
+      'client_id': clientId,
       'lat': lat,
       'lng': lng,
       'speed': speed,
@@ -86,6 +92,6 @@ class LocalPoint {
   }
 
   @override
-  String toString() => 'LocalPoint(id: $id, lat: $lat, lng: $lng, source: $source, '
-      'speed: $speed, accuracy: $accuracy, timestamp: $timestamp, battery: $batteryLevel, charging: $isCharging)';
+  String toString() => 'LocalPoint(clientId: $clientId, lat: $lat, lng: $lng, '
+      'speed: $speed, accuracy: $accuracy, timestamp: $timestamp)';
 }

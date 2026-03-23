@@ -75,8 +75,12 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       if (await Permission.ignoreBatteryOptimizations.isDenied) {
         await Permission.ignoreBatteryOptimizations.request();
       }
+      // Pedir permiso de actividad para mejor detección de movimiento
+      await Permission.activityRecognition.request();
+
       await SocketService.init(token);
       await FlutterBackgroundService().startService();
+      // El servicio ya corre — el vendedor no necesita hacer nada más
       if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const TrackingScreen()));
     } else {
       _snack('Credenciales incorrectas');

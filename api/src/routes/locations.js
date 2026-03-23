@@ -178,10 +178,46 @@ router.post('/batch', auth, async (req, res) => {
         return res.status(400).json({ error: 'Valid points array required' });
     }
 
+    // ── CRÍTICO 2: Ordenar por timestamp antes de cualquier procesamiento ──────
+    points.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+    // ── CRÍTICO 1: Deduplicación por client_id via Redis SET (TTL 24h) ────────
+    const seenKey = `seen_points:employee:${employeeId}`;
+    const incomingClientIds = points
+        .map(p => p.client_id)
+        .filter(id => typeof id === 'string' && id.length > 0);
+
+    let duplicateClientIds = new Set();
+    if (incomingClientIds.length > 0) {
+        try {
+            // Pipeline: un solo round-trip para verificar todos los IDs
+            const pipeline = redis.pipeline();
+            for (const cid of incomingClientIds) {
+                pipeline.sismember(seenKey, cid);
+            }
+            const results = await pipeline.exec();
+            results.forEach(([err, isMember], idx) => {
+                if (!err && isMember === 1) duplicateClientIds.add(incomingClientIds[idx]);
+            });
+        } catch (e) {
+            console.error('[Redis] Error checking client_ids:', e);
+            // Si Redis falla, continuamos sin dedup (mejor que perder datos)
+        }
+    }
+
     let inserted = 0;
     let filtered = 0;
+    let deduped = 0;
     const filteredPoints = [];
     let lastValidPoint = null;
+
+    // ── CRÍTICO 2: Tracking del último timestamp procesado para detectar out-of-order ──
+    const lastTsKey = `last_ts:employee:${employeeId}`;
+    let lastProcessedTs = 0;
+    try {
+        const savedTs = await redis.get(lastTsKey);
+        if (savedTs) lastProcessedTs = parseInt(savedTs, 10);
+    } catch (e) { /* continuar sin validación de orden */ }
 
     // 🧠 EKF — Extended Kalman Filter (persistente por empleado en Redis)
     const filterKey   = `ekf:employee:${employeeId}`;
@@ -222,6 +258,34 @@ router.post('/batch', auth, async (req, res) => {
     /// FILTRADO Y SUAVIZADO DE PUNTOS
     /// ========================================================================
     for (const point of points) {
+        // ── CRÍTICO 1: Rechazar duplicados por client_id ──────────────────────
+        if (point.client_id && duplicateClientIds.has(point.client_id)) {
+            deduped++;
+            continue;
+        }
+
+        // ── CRÍTICO 2: Rechazar puntos fuera de orden (>5s antes del último procesado) ──
+        if (lastProcessedTs > 0 && point.timestamp < lastProcessedTs - 5000) {
+            console.log(`[ORDER] Point discarded: ts=${point.timestamp} < lastTs=${lastProcessedTs} (out-of-order)`);
+            filtered++;
+            continue;
+        }
+
+        // ── CLOCK SKEW: Rechazar puntos con timestamp muy desviado del servidor ──
+        // Tolerancia: 5 min hacia el pasado (batches offline legítimos) o 1 min al futuro
+        const now = Date.now();
+        if (point.timestamp > now + 60000) {
+            console.log(`[CLOCK-SKEW] Point from future: ts=${point.timestamp}, now=${now}. Discarding.`);
+            filtered++;
+            continue;
+        }
+        // Puntos con >6h de antigüedad son sospechosos (reloj del cliente mal configurado)
+        // Los dejamos pasar pero los marcamos como low quality
+        if (point.timestamp < now - 6 * 3600 * 1000) {
+            console.log(`[CLOCK-SKEW] Very old point: ${Math.round((now - point.timestamp) / 3600000)}h ago. Marking low quality.`);
+            point.quality = 'low';
+        }
+
         const accuracy = point.accuracy || 999;
         const state = point.state || 'UNKNOWN';
         const eventType = point.event_type || (state === 'NO_FIX' ? 'NO_FIX' : 'LOCATION');
@@ -281,12 +345,7 @@ router.post('/batch', auth, async (req, res) => {
             continue;
         }
 
-        // 🔴 VALIDACIÓN 3: Timestamp no puede ser futuro
-        const now = Date.now();
-        if (point.timestamp > now + 60000) {
-            filtered++;
-            continue;
-        }
+        // 🔴 VALIDACIÓN 3: Timestamp — ya validado arriba (clock skew check)
 
         // 🔴 VALIDACIÓN 4: Saltos de Velocidad (Transit Speed)
         const comparisonPoint = lastValidPoint || lastKnownGlobal;
@@ -326,6 +385,24 @@ router.post('/batch', auth, async (req, res) => {
                 // Si es normal, descartamos si es > SPEED_DESK_LIMIT (200 km/h).
                 if (pointType === 'normal' && transitSpeedKmh > SPEED_DESK_LIMIT) {
                     console.log(`[JUMP-DETECT] 🚀 Velocity Spike! ${transitSpeedKmh.toFixed(1)} km/h. Discarding.`);
+                    filtered++;
+                    continue;
+                }
+
+                // 🔥 2: Detección de anomalías — teletransportación y GPS falso
+                // Teletransportación: salto >50km en <5min (imposible en ciudad)
+                if (pointType === 'normal' && distance > 50000) {
+                    const timeDiffMin = timeDiffSec / 60;
+                    console.warn(`[ANOMALY] 🚨 Teleport detected for emp ${employeeId}: ${(distance/1000).toFixed(1)}km in ${timeDiffMin.toFixed(1)}min`);
+                    // Guardar anomalía en Redis para análisis
+                    redis.lpush(`anomalies:employee:${employeeId}`, JSON.stringify({
+                        type: 'teleport',
+                        distance_km: (distance / 1000).toFixed(2),
+                        speed_kmh: transitSpeedKmh.toFixed(1),
+                        ts: point.timestamp,
+                    })).then(() => redis.ltrim(`anomalies:employee:${employeeId}`, 0, 49))
+                       .then(() => redis.expire(`anomalies:employee:${employeeId}`, 86400 * 7))
+                       .catch(() => {});
                     filtered++;
                     continue;
                 }
@@ -381,7 +458,7 @@ router.post('/batch', auth, async (req, res) => {
     }
 
     console.log(
-        `[FLOW-DIAG] Batch processing finished for emp ${employeeId}: Total:${points.length}, OK:${inserted}, Filtered:${filtered}`
+        `[FLOW-DIAG] Batch processing finished for emp ${employeeId}: Total:${points.length}, OK:${inserted}, Filtered:${filtered}, Deduped:${deduped}`
     );
 
     // 🛑 DETECCIÓN DE PARADA EN CURSO (tiempo real)
@@ -408,17 +485,42 @@ router.post('/batch', auth, async (req, res) => {
     try {
         if (filteredPoints.length > 0) {
             const last = filteredPoints[filteredPoints.length - 1];
-            await Promise.all([
-                redis.set(filterKey, JSON.stringify(locationFilter.serialize()), 'EX', 86400),
-                redis.set(lastPointKey, JSON.stringify({
-                    lat: last.lat,
-                    lng: last.lng,
-                    timestamp: last.timestamp,
-                    speed: last.speed,
-                    state: last.state // ✅ Cachear estado
-                }), 'EX', 86400),
-                redis.set(lastStateKey, last.state || 'WALKING', 'EX', 86400) // Guardar solo el estado
-            ]);
+
+            // ── CRÍTICO 1: Registrar client_ids procesados para deduplicación futura ──
+            const processedClientIds = filteredPoints
+                .map(p => p.client_id)
+                .filter(id => typeof id === 'string' && id.length > 0);
+
+            // ── CRÍTICO 2: Actualizar último timestamp procesado ──────────────────
+            const maxTs = filteredPoints.reduce((max, p) => Math.max(max, p.timestamp || 0), 0);
+
+            const pipeline = redis.pipeline();
+            pipeline.set(filterKey, JSON.stringify(locationFilter.serialize()), 'EX', 86400);
+            pipeline.set(lastPointKey, JSON.stringify({
+                lat: last.lat,
+                lng: last.lng,
+                timestamp: last.timestamp,
+                speed: last.speed,
+                state: last.state
+            }), 'EX', 86400);
+            pipeline.set(lastStateKey, last.state || 'WALKING', 'EX', 86400);
+            if (maxTs > 0) pipeline.set(lastTsKey, maxTs.toString(), 'EX', 86400);
+            if (processedClientIds.length > 0) {
+                pipeline.sadd(seenKey, ...processedClientIds);
+                pipeline.expire(seenKey, 86400); // TTL 24h
+            }
+
+            // Guardar heartbeat_meta si el último punto es un heartbeat
+            const lastFiltered = filteredPoints[filteredPoints.length - 1];
+            if (lastFiltered?.point_type === 'heartbeat' && lastFiltered?.heartbeat_meta) {
+                pipeline.set(
+                    `heartbeat_meta:employee:${employeeId}`,
+                    JSON.stringify(lastFiltered.heartbeat_meta),
+                    'EX', 300 // TTL 5min — si no llega otro heartbeat en 5min, se considera stale
+                );
+            }
+
+            await pipeline.exec();
         }
     } catch (e) {
         console.error('[Redis] Error saving state:', e);
@@ -493,8 +595,24 @@ router.post('/batch', auth, async (req, res) => {
             status: 'queued',
             inserted: inserted,
             filtered: filtered,
+            deduped: deduped,
             message: `${inserted} valid points queued for processing`
         });
+
+        // MEDIO 3: Guardar métricas por empleado en Redis (TTL 24h)
+        try {
+            const metricsKey = `metrics:employee:${employeeId}`;
+            const existing = await redis.get(metricsKey);
+            const prev = existing ? JSON.parse(existing) : { total_received: 0, total_inserted: 0, total_filtered: 0, total_deduped: 0, batches: 0 };
+            await redis.set(metricsKey, JSON.stringify({
+                total_received:  prev.total_received  + points.length,
+                total_inserted:  prev.total_inserted  + inserted,
+                total_filtered:  prev.total_filtered  + filtered,
+                total_deduped:   prev.total_deduped   + deduped,
+                batches:         prev.batches         + 1,
+                last_batch_ts:   Date.now(),
+            }), 'EX', 86400);
+        } catch (_) { /* métricas no críticas */ }
     } catch (err) {
         console.error('[ERROR] Failed to queue locations:', err);
         res.status(500).json({ error: 'Failed to queue locations' });
@@ -559,4 +677,173 @@ router.post('/status', auth, async (req, res) => {
     }
 });
 
+/// ============================================================================
+/// ENDPOINT: GET /metrics - Métricas de procesamiento GPS por empleado
+/// ============================================================================
+router.get('/metrics/:employeeId', auth, async (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const { employeeId } = req.params;
+    try {
+        const metricsKey = `metrics:employee:${employeeId}`;
+        const raw = await redis.get(metricsKey);
+        if (!raw) return res.json({ employeeId, message: 'No metrics yet' });
+        res.json({ employeeId, ...JSON.parse(raw) });
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to fetch metrics' });
+    }
+});
+
 module.exports = router;
+
+/// ============================================================================
+/// ENDPOINT: GET /heartbeat-status - Estado de vida de todos los empleados
+/// Incluye: razón del estado, último evento significativo, score de calidad
+/// ============================================================================
+router.get('/heartbeat-status', auth, async (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    try {
+        const employees = await db.query(`SELECT id, name FROM employees WHERE role = 'employee'`);
+        const now = Date.now();
+        const statuses = [];
+
+        for (const emp of employees.rows) {
+            const [lastPointJson, lastStateJson, metricsJson, heartbeatMetaJson, statusHistoryJson] = await Promise.all([
+                redis.get(`last_location:employee:${emp.id}`),
+                redis.get(`last_state:employee:${emp.id}`),
+                redis.get(`metrics:employee:${emp.id}`),
+                redis.get(`heartbeat_meta:employee:${emp.id}`),
+                redis.get(`status_history:employee:${emp.id}`),
+            ]);
+
+            const lastPoint      = lastPointJson      ? JSON.parse(lastPointJson)      : null;
+            const lastState      = lastStateJson      || 'UNKNOWN';
+            const metrics        = metricsJson        ? JSON.parse(metricsJson)        : null;
+            const heartbeatMeta  = heartbeatMetaJson  ? JSON.parse(heartbeatMetaJson)  : null;
+            const statusHistory  = statusHistoryJson  ? JSON.parse(statusHistoryJson)  : [];
+
+            const lastSeenMs  = lastPoint?.timestamp || 0;
+            const ageSeconds  = lastSeenMs ? Math.round((now - lastSeenMs) / 1000) : null;
+
+            // ── Clasificación de estado de vida ──────────────────────────────
+            let liveStatus = 'unknown';
+            if (!lastSeenMs)            liveStatus = 'never_seen';
+            else if (ageSeconds < 120)  liveStatus = 'alive';
+            else if (ageSeconds < 600)  liveStatus = 'stale';
+            else if (ageSeconds < 3600) liveStatus = 'offline';
+            else                        liveStatus = 'dead';
+
+            // ── 🟡 1: Razón del estado (debug humano) ────────────────────────
+            let reason = heartbeatMeta?.reason || null;
+            if (!reason) {
+                // Inferir razón si no hay heartbeat_meta
+                if (liveStatus === 'never_seen') reason = 'never_connected';
+                else if (liveStatus === 'dead')  reason = 'app_closed';
+                else if (liveStatus === 'offline' || liveStatus === 'stale') reason = 'no_heartbeat';
+            }
+
+            // Etiqueta legible para el admin
+            const reasonLabel = {
+                no_gps:          'Sin GPS',
+                no_network:      'Sin red',
+                degraded_mode:   'Modo degradado',
+                deep_sleep:      'Modo ahorro',
+                battery_saver:   'Batería baja',
+                gps_timeout:     'GPS sin señal',
+                app_closed:      'App cerrada',
+                no_heartbeat:    'Sin heartbeat',
+                never_connected: 'Nunca conectado',
+            }[reason] || reason || 'Desconocido';
+
+            // ── 🟡 4: Historial de estado (últimas 10 transiciones) ──────────
+            // Actualizar historial si el estado cambió
+            const lastHistoryEntry = statusHistory[statusHistory.length - 1];
+            if (!lastHistoryEntry || lastHistoryEntry.status !== liveStatus) {
+                if (lastHistoryEntry) lastHistoryEntry.to = now;
+                statusHistory.push({ status: liveStatus, from: now, to: null });
+                // Mantener solo las últimas 20 entradas
+                if (statusHistory.length > 20) statusHistory.shift();
+                redis.set(`status_history:employee:${emp.id}`, JSON.stringify(statusHistory), 'EX', 86400 * 7).catch(() => {});
+            }
+
+            // ── 🔥 1: Tracking score (0–100) ────────────────────────────────
+            // Basado en: uptime (40%), precisión GPS (30%), frecuencia de sync (30%)
+            let trackingScore = 0;
+            if (metrics && metrics.batches > 0) {
+                // Uptime: qué tan seguido está alive vs total tiempo
+                const uptimeFactor = liveStatus === 'alive' ? 1.0 :
+                                     liveStatus === 'stale' ? 0.6 :
+                                     liveStatus === 'offline' ? 0.2 : 0.0;
+
+                // Precisión: ratio de puntos insertados vs recibidos
+                const precisionFactor = metrics.total_received > 0
+                    ? Math.min(1, metrics.total_inserted / metrics.total_received)
+                    : 0;
+
+                // Frecuencia: batches en las últimas 24h (esperamos ~144 batches/día a 1 cada 10min)
+                const expectedBatches = 144;
+                const freqFactor = Math.min(1, metrics.batches / expectedBatches);
+
+                trackingScore = Math.round((uptimeFactor * 40) + (precisionFactor * 30) + (freqFactor * 30));
+            }
+
+            // ── 🔥 3: Predicción de desconexión ─────────────────────────────
+            // Factores: batería baja + señal mala + modo degradado = riesgo alto
+            let disconnectionRisk = 'low'; // 'low' | 'medium' | 'high'
+            if (heartbeatMeta) {
+                const batt = heartbeatMeta.battery_level ?? 100;
+                const isDeg = heartbeatMeta.is_degraded ?? false;
+                const noGps = heartbeatMeta.is_gps_enabled === false;
+                const riskScore = (batt < 15 ? 3 : batt < 30 ? 1 : 0)
+                                + (isDeg ? 2 : 0)
+                                + (noGps ? 2 : 0)
+                                + (liveStatus === 'stale' ? 1 : 0);
+                if (riskScore >= 4) disconnectionRisk = 'high';
+                else if (riskScore >= 2) disconnectionRisk = 'medium';
+            } else if (liveStatus === 'stale' || liveStatus === 'offline') {
+                disconnectionRisk = 'medium';
+            }
+
+            statuses.push({
+                employeeId:   emp.id,
+                name:         emp.name,
+                liveStatus,
+                reason,
+                reasonLabel,
+                lastState,
+                lastSeenMs,
+                ageSeconds,
+                // 🟡 2: Último evento significativo
+                lastGpsTs:    heartbeatMeta?.last_gps_ts    || lastSeenMs,
+                lastSyncTs:   heartbeatMeta?.last_sync_ts   || null,
+                socketConnected: heartbeatMeta?.socket_connected ?? null,
+                isGpsEnabled: heartbeatMeta?.is_gps_enabled ?? null,
+                isDegraded:   heartbeatMeta?.is_degraded    ?? false,
+                batteryLevel: heartbeatMeta?.battery_level  ?? null,
+                // 🟡 4: Historial de estado
+                statusHistory: statusHistory.slice(-5), // últimas 5 transiciones
+                // 🔥 1: Score de calidad
+                trackingScore,
+                // 🔥 3: Predicción de desconexión
+                disconnectionRisk,
+                metrics: metrics ? {
+                    total_received: metrics.total_received,
+                    total_inserted: metrics.total_inserted,
+                    total_filtered: metrics.total_filtered,
+                    batches:        metrics.batches,
+                    last_batch_ts:  metrics.last_batch_ts,
+                } : null,
+            });
+        }
+
+        res.json(statuses);
+    } catch (e) {
+        console.error('[heartbeat-status] Error:', e);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});

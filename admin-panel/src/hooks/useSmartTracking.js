@@ -6,6 +6,8 @@
  * 2. Socket → fast-path: actualiza la posición al instante cuando llega un punto
  * 3. Interpolación suave: entre dos puntos reales, el marcador se mueve gradualmente
  *    en lugar de saltar. Solo aplica a vendedores en movimiento (DRIVING / WALKING).
+ * 4. Heartbeat status: cada 30s consulta /heartbeat-status para detectar
+ *    empleados silenciosos (alive / stale / offline / dead / degraded).
  *
  * Resultado: marcadores siempre actualizados, nunca congelados.
  */
@@ -14,9 +16,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../services/api';
 import { socket } from '../services/socket';
 
-const POLL_MS       = 5000;   // Polling HTTP cada 5s
-const INTERP_MS     = 250;    // Tick de animación (4 fps — suficiente, no sobrecarga el browser)
-const MAX_INTERP_MS = 15000;  // Dejar de interpolar si el punto tiene >15s de antigüedad
+const POLL_MS            = 5000;   // Polling HTTP cada 5s
+const INTERP_MS          = 250;    // Tick de animación (4 fps)
+const MAX_INTERP_MS      = 15000;  // Dejar de interpolar si el punto tiene >15s de antigüedad
+const HEARTBEAT_POLL_MS  = 30000;  // Consultar heartbeat-status cada 30s
 
 // Estados que implican movimiento real
 const MOVING_STATES = new Set([
@@ -40,9 +43,11 @@ export function useSmartTracking() {
   // rawLocations: datos reales del servidor, nunca se renderizan directamente
   const raw = useRef({});
 
-  const [locations, setLocations]       = useState({});
+  const [locations, setLocations]         = useState({});
   const [liveActiveIds, setLiveActiveIds] = useState(new Set());
-  const [isConnected, setIsConnected]   = useState(true);
+  const [isConnected, setIsConnected]     = useState(true);
+  // heartbeatStatus: { [employeeId]: 'alive' | 'stale' | 'offline' | 'dead' | 'unknown' }
+  const [heartbeatStatus, setHeartbeatStatus] = useState({});
 
   const mounted = useRef(true);
 
@@ -73,6 +78,43 @@ export function useSmartTracking() {
       setIsConnected(true);
     } catch {
       if (mounted.current) setIsConnected(false);
+    }
+  }, []);
+
+  // ── 1b. Heartbeat status polling (cada 30s) ──────────────────────────────────
+  // Detecta empleados silenciosos: alive / stale / offline / dead
+  // 🟡 3: Emite alertas de browser cuando un empleado cambia a offline/dead
+  const prevHbRef = useRef({});
+  const pollHeartbeat = useCallback(async () => {
+    try {
+      const { data } = await api.get('/api/locations/heartbeat-status');
+      if (!mounted.current) return;
+      const map = {};
+      data.forEach((s) => {
+        map[s.employeeId] = s;
+
+        // 🟡 3: Alerta automática cuando el estado empeora
+        const prev = prevHbRef.current[s.employeeId];
+        if (prev && prev.liveStatus !== s.liveStatus) {
+          const worsened =
+            (s.liveStatus === 'offline' && (prev.liveStatus === 'alive' || prev.liveStatus === 'stale')) ||
+            (s.liveStatus === 'dead'    && prev.liveStatus !== 'dead');
+
+          if (worsened && 'Notification' in window && Notification.permission === 'granted') {
+            const label = s.liveStatus === 'dead' ? '🔴 SIN SEÑAL' : '🟠 OFFLINE';
+            const reason = s.reasonLabel || '';
+            new Notification(`${label} — ${s.name}`, {
+              body: reason ? `Razón: ${reason}` : `Sin datos por ${Math.round((s.ageSeconds || 0) / 60)}min`,
+              icon: '/favicon.png',
+              tag: `hb-${s.employeeId}`, // evita duplicados
+            });
+          }
+        }
+        prevHbRef.current[s.employeeId] = s;
+      });
+      setHeartbeatStatus(map);
+    } catch {
+      // silencioso — no crítico
     }
   }, []);
 
@@ -139,9 +181,16 @@ export function useSmartTracking() {
   useEffect(() => {
     mounted.current = true;
 
-    poll(); // Primer fetch inmediato
-    const pollTimer  = setInterval(poll, POLL_MS);
-    const interpTimer = setInterval(tick, INTERP_MS);
+    // 🟡 3: Solicitar permiso de notificaciones al montar (solo una vez)
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
+    poll();          // Primer fetch inmediato
+    pollHeartbeat(); // Primer heartbeat check inmediato
+    const pollTimer      = setInterval(poll, POLL_MS);
+    const interpTimer    = setInterval(tick, INTERP_MS);
+    const heartbeatTimer = setInterval(pollHeartbeat, HEARTBEAT_POLL_MS);
 
     socket.on('location_update', onSocketUpdate);
 
@@ -149,9 +198,10 @@ export function useSmartTracking() {
       mounted.current = false;
       clearInterval(pollTimer);
       clearInterval(interpTimer);
+      clearInterval(heartbeatTimer);
       socket.off('location_update', onSocketUpdate);
     };
-  }, [poll, tick, onSocketUpdate]);
+  }, [poll, tick, onSocketUpdate, pollHeartbeat]);
 
-  return { locations, liveActiveIds, isConnected };
+  return { locations, liveActiveIds, isConnected, heartbeatStatus };
 }
