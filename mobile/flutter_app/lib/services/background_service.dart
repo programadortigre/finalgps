@@ -10,6 +10,7 @@ import 'api_service.dart';
 import 'local_storage.dart';
 import '../models/local_point.dart';
 import '../utils/kalman_filter.dart';
+import '../utils/motion_detector.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'socket_service.dart';
@@ -50,13 +51,11 @@ class TrackingEngine {
 
   // ── Estado interno ─────────────────────────────────────────────────────────
   TrackingState _currentState = TrackingState.STOPPED;
-  DateTime _lastValidLocationTime = DateTime.parse("2020-01-01 00:00:00"); // ✅ Inicialización segura
+  DateTime _lastValidLocationTime = DateTime.parse("2020-01-01 00:00:00");
   LocalPoint? _lastValidPoint;
-  int _duplicatePointCount = 0;
   double _lastRawLat = 0;
   double _lastRawLng = 0;
-
-  double _totalDistanceKm = 0.0; // Source of Truth for distance
+  double _totalDistanceKm = 0.0;
 
   // PRO: Buffering & Caching
   final List<LocalPoint> _pointBuffer = [];
@@ -65,17 +64,20 @@ class TrackingEngine {
 
    // PRO: Hysteresis & Filtering
   DateTime _lastStateChangeTime = DateTime.now();
-  int _lowSpeedTicks = 0;  // Para WALKING -> STOPPED (< 0.8 m/s)
-  int _highSpeedTicks = 0; // Para STOPPED -> WALKING (> 1.2 m/s)
-  int _stationaryTicks = 0; // Para compatibilidad y filtrado fino
+  int _highSpeedTicks = 0;
+  int _stationaryTicks = 0;
 
   // Socket status cache
   bool _isSocketConnectedByAdmin = true;
   String? _lastSentGpsState;
-  final List<Map<String, dynamic>> _offlineBuffer = [];
+  // ── CANAL ÚNICO: HTTP batch (el socket solo recibe comandos) ──────────────
+  // _offlineBuffer eliminado — todo va por SQLite → _syncLoop
   static const int _maxBufferSize = 500;
   static const int _gapThresholdMs = 20 * 60 * 1000; // 20 min unificado
- // ✅ Para evitar latidos repetidos innecesarios
+
+  // ── Conectividad: event-driven, sin polling ───────────────────────────────
+  bool _isOnline = true; // Asumimos online al inicio, el listener corrige
+  DateTime? _wentOfflineAt; // Para saber cuánto tiempo estuvo sin señal
 
   // FIX C5: guardamos la referencia al ServiceInstance para siempre estar disponible
   ServiceInstance? _serviceInstance;
@@ -88,8 +90,8 @@ class TrackingEngine {
 
   // PRO: Unified Maintenance Timer
   Timer? _mainMaintenanceTimer;
+  Timer? _syncTimer;
   int _maintenanceTicks = 0;
-  int _retryBackoffSeconds = 0;
 
   // SUBS: Connectivity
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
@@ -121,10 +123,24 @@ class TrackingEngine {
   // FIX LIVE: Guardar si el admin pidió ubicación mientras offline
   bool _pendingLocationRequest = false;
 
+  // ZUPT: detector de quietud por acelerómetro
+  final MotionDetector _motionDetector = MotionDetector();
+
+  // BUG #1 FIX: guard con timestamp para detectar bloqueo permanente
+  DateTime? _lastProcessingStart;
+
+  // BUG #7 FIX: guard atómico para hard reset
+  bool _isResetting = false;
+
+  // BUG #13 FIX: contador propio del sync timer (independiente de _maintenanceTicks)
+  int _syncTicks = 0;
+
+  // BUG #6 FIX: cache del estado de notificación para evitar IPC en cada punto GPS
+  TrackingState? _lastNotificationState;
+  bool _isForegroundCached = true;
+
   // FIX V3: Timestamp del último punto RAW de GPS para el Watchdog
   DateTime _lastRawTime = DateTime.now();
-
-  static const int _cleanupIntervalTicks = 1440; // 1440 × 60s = 24 horas
 
   // ── Constructor: inicialización segura (sin `late`) ───────────────────────
   TrackingEngine({required ApiService api, required LocalStorage storage})
@@ -148,13 +164,16 @@ class TrackingEngine {
 
       // 2. Stream GPS
       _log('INIT', 'Iniciando Stream GPS...');
-      _startLocationStream(reason: 'Initial Start');
+      await _startLocationStream(reason: 'Initial Start'); // BUG #5 FIX: await para que el stream esté listo antes de que _deferredInitialization pueda llamar pause()
 
       // 3. Listener de Conectividad para Synchro Inmediato
       _initConnectivityListener();
 
       // ✅ NUEVO: Listener de Batería para recuperación instantánea
       _battery.onBatteryStateChanged.listen(_handleBatteryStateChange);
+
+      // ZUPT: iniciar detector de quietud por acelerómetro
+      _motionDetector.start();
 
       // PRO: Unified Maintenance Loop (60s)
       _mainMaintenanceTimer = Timer.periodic(const Duration(seconds: 60), (_) {
@@ -163,6 +182,30 @@ class TrackingEngine {
         } catch (e) {
           _log('CRITICAL', 'Fallo en Main Maintenance Timer: $e');
         }
+      });
+
+      // ── SYNC TIMER: solo corre cuando hay red Y hay algo que enviar ──────────
+      // La frecuencia se adapta al estado de movimiento.
+      // Si no hay red (_isOnline=false), el timer existe pero _syncLoop sale inmediatamente.
+      // El trigger real al reconectar lo hace _initConnectivityListener.
+      _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+        _syncTicks++; // BUG #4 FIX: contador propio, independiente del maintenance loop
+        if (!_isOnline) return;
+        if (_currentState == TrackingState.PAUSED || _currentState == TrackingState.DEEP_SLEEP) return;
+
+        final tickInterval = switch (_currentState) {
+          TrackingState.DRIVING  => 1,
+          TrackingState.WALKING  => 1,
+          TrackingState.STOPPED  => 6,   // 60s
+          TrackingState.BATT_SAVER => 12, // 120s
+          _ => 6,
+        };
+        if (_syncTicks % tickInterval != 0) return;
+
+        final pending = await _storage.getUnsyncedCount();
+        if (pending == 0) return;
+
+        _syncLoop(reason: 'Timer [${_currentState.name}] ($pending pts)');
       });
 
       // FIX 1: Reinicio limpio de distancia al iniciar
@@ -214,9 +257,11 @@ class TrackingEngine {
     _log('SYS', 'TrackingEngine.stop() — cancelando todos los recursos');
 
     _mainMaintenanceTimer?.cancel();
+    _syncTimer?.cancel();
     _positionStreamSub?.cancel();
     _activityStreamSub?.cancel();
     _connectivitySub?.cancel();
+    _motionDetector.stop();
 
     // PRO: Guardar puntos pendientes antes de morir
     _flushBufferToStorage();
@@ -237,6 +282,8 @@ class TrackingEngine {
     _positionStreamSub?.cancel();
     _activityStreamSub?.cancel();
     _mainMaintenanceTimer?.cancel();
+    _syncTimer?.cancel();
+    _motionDetector.stop();
     _currentState = TrackingState.PAUSED;
     
     // Guardar buffer antes de pausar
@@ -259,11 +306,20 @@ class TrackingEngine {
     if (_currentState != TrackingState.PAUSED) return;
     _log('REMOTE', 'Reanudando rastreo por comando remoto...');
     _currentState = TrackingState.STOPPED;
+    _motionDetector.start();
     _startLocationStream(reason: 'Remote Resume');
     
-    // Reiniciar loop de mantenimiento
+    // Reiniciar loops
     _mainMaintenanceTimer?.cancel();
     _mainMaintenanceTimer = Timer.periodic(const Duration(seconds: 60), (_) => _runMaintenanceTasks());
+    _syncTimer?.cancel();
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+      if (!_isOnline) return;
+      if (_currentState != TrackingState.PAUSED && _currentState != TrackingState.DEEP_SLEEP) {
+        final pending = await _storage.getUnsyncedCount();
+        if (pending > 0) _syncLoop(reason: 'Timer (resumed)');
+      }
+    });
   }
 
   void updateSocketStatus(bool connected) {
@@ -353,7 +409,8 @@ class TrackingEngine {
 
   void _emitManualPosition(Position pos, {required String source}) {
     final point = _pointFromPosition(pos, source: source);
-    _emitToSocket(point, manual: true);
+    // Encolar en SQLite y forzar sync inmediato (HTTP-only mode)
+    _addToBufferAndFlush(point.toJson()).then((_) => _syncLoop(reason: 'Manual Position ($source)'));
   }
 
   LocalPoint _pointFromPosition(Position pos, {String source = 'gps'}) {
@@ -386,50 +443,41 @@ class TrackingEngine {
   }
 
   Future<void> _emitToSocket(LocalPoint point, {bool manual = false}) async {
-    if (_socket == null || !_socket!.connected) return;
-    try {
-      final batteryLevel = await _battery.batteryLevel;
-      final batteryState = await _battery.batteryState;
-      final isCharging = batteryState == BatteryState.charging || batteryState == BatteryState.full;
-      
-      final payload = {
-        'lat': point.lat,
-        'lng': point.lng,
-        'speed': point.speed,
-        'accuracy': point.accuracy,
-        'state': point.state,
-        'timestamp': point.timestamp,
-        'employeeId': _cachedEmployeeId,
-        'point_type': manual ? 'manual' : (point.pointType ?? 'normal'),
-        'battery': batteryLevel,
-        'is_charging': isCharging,
-        'source': point.source ?? (manual ? 'manual' : 'gps'),
-      };
-
-      _socket!.emit('location_update', payload);
-      _log('SOCKET', 'Punto enviado (${manual ? "Manual" : "Auto"}) | Bat: $batteryLevel% | Source: ${point.source}');
-    } catch (e) {
-      _log('SOCKET', 'Error emitiendo a socket: $e');
-    }
+    // El socket ya NO envía ubicaciones — solo se usa para recibir comandos del admin.
+    // Las ubicaciones van exclusivamente por HTTP batch (_syncLoop).
+    // Esto elimina la desincronización y los recorridos erráticos causados por
+    // el socket en conexiones 3G inestables.
+    _log('SOCKET', 'Socket-send deshabilitado (HTTP-only mode). Punto encolado para batch.');
   }
 
   void _updateNotification() async {
+    // BUG #6 FIX: evitar IPC a Android en cada punto GPS
+    // Solo actualizar si el estado cambió realmente
+    if (_lastNotificationState == _currentState) return;
+    _lastNotificationState = _currentState;
+
     final svc = _serviceInstance;
     if (svc == null || svc is! AndroidServiceInstance) return;
-    if (!(await svc.isForegroundService())) return;
 
-    String title;
-    String content;
+    final String title;
+    final String content;
 
     if (_currentState == TrackingState.PAUSED) {
-      title = 'Rastreo Pausado 📶';
-      content = 'Control remoto activo · Esperando señal del Admin';
+      title = 'Rastreo Pausado ⏸️';
+      content = 'El administrador ha desactivado el rastreo.';
     } else {
-      final stats = await _storage.getStats();
-      final count = stats['unsynced'] ?? 0;
-      final status = _isSocketConnectedByAdmin ? '📡' : '🚫';
-      title = 'Rastreo: ${_currentState.name} $status';
-      content = 'Cola: $count pts | Control Remoto: ${_isSocketConnectedByAdmin ? "Conectado" : "Buscando..."}';
+      final icons = {
+        TrackingState.DRIVING:    '🚗',
+        TrackingState.WALKING:    '🚶',
+        TrackingState.STOPPED:    '⏸️',
+        TrackingState.DEEP_SLEEP: '😴',
+        TrackingState.BATT_SAVER: '🔋',
+        TrackingState.NO_SIGNAL:  '📵',
+        TrackingState.PAUSED:     '⏸️',
+      };
+      final icon = icons[_currentState] ?? '📍';
+      title = '$icon Rastreo activo · ${_currentState.name}';
+      content = 'Cola: ${_pointBuffer.length} pts pendientes';
     }
 
     svc.setForegroundNotificationInfo(title: title, content: content);
@@ -523,13 +571,41 @@ class TrackingEngine {
   }
 
   void _initConnectivityListener() {
-    _log('INIT', 'Iniciando Connectivity Listener...');
+    _log('INIT', 'Iniciando Connectivity Listener (event-driven)...');
+
+    // Verificar estado inicial de red
+    Connectivity().checkConnectivity().then((results) {
+      _isOnline = results.any((r) => r != ConnectivityResult.none);
+      _log('CONN', 'Estado inicial de red: ${_isOnline ? "ONLINE" : "OFFLINE"}');
+      if (_isOnline) _syncLoop(reason: 'Initial Online Check');
+    });
+
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
-      final isOnline = results.any((r) => r != ConnectivityResult.none);
-      if (isOnline) {
-        _log('CONN', 'Reconexión detectada (Network) → Triggering Sync');
-        _retryBackoffSeconds = 0; // Reset backoff
-        _syncLoop(reason: 'Network Reconnected');
+      final wasOnline = _isOnline;
+      _isOnline = results.any((r) => r != ConnectivityResult.none);
+
+      if (!wasOnline && _isOnline) {
+        // ── RECONEXIÓN: el OS nos avisa que hay red ──────────────────────────
+        final offlineDuration = _wentOfflineAt != null
+            ? DateTime.now().difference(_wentOfflineAt!).inMinutes
+            : 0;
+        _log('CONN', '🟢 Red restaurada (estuvo offline ~${offlineDuration}m) → Sync inmediato');
+
+        // Reset backoff — la red volvió, no tiene sentido esperar
+        _backoffIndex = 0;
+        _consecutiveFailures = 0;
+        _nextSyncAttempt = DateTime.now();
+        _wentOfflineAt = null;
+
+        // Sync inmediato sin esperar el timer
+        _syncLoop(reason: 'Network Restored (${offlineDuration}m offline)');
+
+      } else if (wasOnline && !_isOnline) {
+        // ── DESCONEXIÓN: guardar cuándo se fue la señal ──────────────────────
+        _wentOfflineAt = DateTime.now();
+        _log('CONN', '🔴 Red perdida — modo offline. Guardando en SQLite hasta reconexión.');
+        // No hacer nada más. El GPS sigue capturando → SQLite.
+        // El sync se reactiva solo cuando el OS diga que hay red de nuevo.
       }
     });
   }
@@ -613,9 +689,8 @@ class TrackingEngine {
       // 7. Watchdog de Salud (GPS/Túneles)
       await _checkWatchdogHealth();
       
-      // 8. Limpieza periódica (24h)
-      if (_maintenanceTicks >= 1440) {
-        _maintenanceTicks = 0;
+      // 8. Limpieza periódica (24h) — BUG #15 FIX: contador propio para no resetear _maintenanceTicks
+      if (_maintenanceTicks % 1440 == 0 && _maintenanceTicks > 0) {
         _storage.cleanOldSyncedPoints(daysToKeep: 7);
       }
     } catch (e) {
@@ -637,24 +712,25 @@ class TrackingEngine {
     }
   }
 
-  // ✅ NUEVO: Consultar comandos pendientes (Modo Despertar)
+  // Los comandos remotos llegan por socket (join_employee room).
+  // Este método se mantiene como fallback solo si el socket está desconectado.
   Future<void> _checkRemoteCommands() async {
     if (_currentState == TrackingState.PAUSED) return;
+    // Solo consultar si el socket está caído (evita petición redundante)
+    if (_socket != null && _socket!.connected) return;
     try {
       final dio = await _api.getDio();
       final token = await _api.getToken();
-      
       final res = await dio.get(
         '/api/employees/commands',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
-
       if (res.statusCode == 200 && res.data['command'] == 'locate') {
-        _log('POLLING', 'Comando manual detectado vía HTTP (Polling Fallback)');
+        _log('POLLING', 'Comando manual detectado vía HTTP fallback');
         handleRemoteLocationRequest();
       }
-    } catch (e) {
-      _log('POLLING', 'Error consultando comandos: $e');
+    } catch (_) {
+      // Silencioso — el endpoint puede no existir en todas las versiones del servidor
     }
   }
 
@@ -716,20 +792,23 @@ class TrackingEngine {
   }
 
   Future<void> _hardResetGPS({required String reason}) async {
+    if (_isResetting) return; // BUG #7 FIX: guard atómico contra llamadas concurrentes
     if (!_canPerformReset()) return;
+    _isResetting = true;
 
     _log('RESET', '🔥 HARD RESET GPS iniciado. Razón: $reason. Intento #${_resetCount + 1}');
     _lastResetTime = DateTime.now();
     _resetCount++;
 
-    await _sendNoFixHeartbeat(reason: reason);
-
-    // Ciclo completo de destruccion y recreación
-    await _positionStreamSub?.cancel();
-    _positionStreamSub = null;
-    
-    await Future.delayed(const Duration(milliseconds: 1500));
-    _restartLocationStream(reason: 'Hard Reset ($reason)');
+    try {
+      await _sendNoFixHeartbeat(reason: reason);
+      await _positionStreamSub?.cancel();
+      _positionStreamSub = null;
+      await Future.delayed(const Duration(milliseconds: 1500));
+      _restartLocationStream(reason: 'Hard Reset ($reason)');
+    } finally {
+      _isResetting = false;
+    }
   }
 
   // ✅ NUEVO: Enviar heartbeat al servidor cuando el GPS falla pero el app está viva
@@ -774,21 +853,15 @@ class TrackingEngine {
       
       await _addToBufferAndFlush(point);
       
-      // ✅ Si es manual y no hay GPS, enviar por HTTP Inmediato para que el backend calcule el GeoIP
-      // Evitamos emitirlo por el socket directamente porque enviaría las coordenadas "viejas" usadas por fallback.
+      // Si es manual, forzar sync inmediato para que el backend calcule GeoIP
       if (isManual) {
         _log('RADAR', 'Forzando SyncLoop Inmediato para procesar GeoIP...');
         _syncLoop(reason: 'Manual IP Location Request');
         return;
       }
       
-      if (_socket != null && _socket!.connected) {
-          _socket!.emit('location_update', {
-            ...point,
-            'employeeId': _cachedEmployeeId,
-            'name': 'Actualización de Estado'
-          });
-      }
+      // Heartbeat de estado va por HTTP batch (no socket)
+      _syncLoop(reason: 'Heartbeat State Change');
 
       // Recordar último estado enviado para no repetir
       _lastSentGpsState = currentState;
@@ -919,7 +992,17 @@ class TrackingEngine {
   // Procesamiento GPS y Hysteresis
   // ---------------------------------------------------------------------------
   Future<void> _processNewPosition(Position pos) async {
-    if (_isProcessingPosition) return;
+    // BUG #1 FIX: guard con timeout — si lleva >10s bloqueado es un bug, forzar reset
+    if (_isProcessingPosition) {
+      if (_lastProcessingStart != null &&
+          DateTime.now().difference(_lastProcessingStart!).inSeconds > 10) {
+        _log('CRITICAL', '_isProcessingPosition bloqueado >10s — forzando reset del guard');
+        _isProcessingPosition = false;
+      } else {
+        return;
+      }
+    }
+    _lastProcessingStart = DateTime.now();
     _isProcessingPosition = true;
 
     try {
@@ -1107,14 +1190,17 @@ class TrackingEngine {
       );
 
       // --- Gestión de Buffer Offline ---
+      // ZUPT: si el acelerómetro confirma quietud y la velocidad GPS es ruido, descartar
+      if (_motionDetector.isStationary && speed < 0.5) {
+        _log('ZUPT', 'Punto descartado: acelerómetro confirma quietud (drift GPS)');
+        _isProcessingPosition = false;
+        return;
+      }
       await _addToBufferAndFlush(point.toJson());
 
       // --- EMISIÓN EN TIEMPO REAL (SOCKET) ---
-      // Siempre enviamos al socket si la precisión es "decente" (<100m)
-      // Esto elimina el "retraso" que sentía el usuario.
-      if (pos.accuracy < 100) {
-        _emitToSocket(point);
-      }
+      // Deshabilitado — todo va por HTTP batch para evitar desincronización en 3G
+      // _emitToSocket solo existe para compatibilidad con comandos remotos
 
       // --- GUARDADO PARA HISTORIAL (BUFFER) ---
       // Solo guardamos en el buffer (que va a la BD para rutas) si es de alta calidad
@@ -1135,7 +1221,7 @@ class TrackingEngine {
           }
           _lastValidPoint = point;
       } else {
-        _log('GPS', 'Punto emitido a Live pero excluido de Historial (acc: ${pos.accuracy}m)');
+        _log('GPS', 'Punto excluido de Historial (acc: ${pos.accuracy}m)');
       }
 
       // Emitir al UI inmediatamente si es relevante
@@ -1173,103 +1259,133 @@ class TrackingEngine {
     }
   }
 
+  // Backoff exponencial con jitter: evita que todos los dispositivos reintenten al mismo tiempo
+  // Secuencia: 15s, 30s, 60s, 120s, 300s (máx 5 min)
+  static const List<int> _backoffSteps = [15, 30, 60, 120, 300];
+  int _backoffIndex = 0;
+  int _consecutiveFailures = 0;
+
+  Duration get _nextBackoff {
+    final base = _backoffSteps[_backoffIndex.clamp(0, _backoffSteps.length - 1)];
+    // Jitter ±20% para evitar thundering herd si hay muchos dispositivos
+    final jitter = (base * 0.2 * (DateTime.now().millisecond / 1000)).round();
+    return Duration(seconds: base + jitter);
+  }
+
   Future<void> _syncLoop({String reason = 'unknown'}) async {
-    if (_isSyncing) {
-      _log('FLOW-DIAG', 'Sync blocked: already syncing');
-      return;
-    }
+    if (_isSyncing) return;
     if (_cachedToken == null) {
-      _log('FLOW-DIAG', 'Sync blocked: NO TOKEN cacheado');
+      _log('SYNC', 'Bloqueado: sin token');
       return;
     }
+
+    // Respetar backoff solo si hay fallos previos
+    if (_consecutiveFailures > 0 && DateTime.now().isBefore(_nextSyncAttempt)) {
+      _log('SYNC', 'Backoff activo (fallo #$_consecutiveFailures). Reintento en ${_nextSyncAttempt.difference(DateTime.now()).inSeconds}s');
+      return;
+    }
+
     _isSyncing = true;
 
-    try {
-      _log('SYNC', 'Iniciando Sync Loop ($reason)...');
-      
-      // ✅ FIX: Time-based backoff robusto
-      if (DateTime.now().isBefore(_nextSyncAttempt)) {
-        _log('SYNC', 'Postergando sync por backoff hasta ${_nextSyncAttempt.toIso8601String()}');
-        return;
-      }
+    // Verificación doble de conectividad antes de gastar recursos
+    if (!_isOnline) {
+      _log('SYNC', 'Sin red — abortando sync, esperando evento de reconexión');
+      _isSyncing = false;
+      return;
+    }
 
-      int batchesProcessed = 0;
+    // BUG #9 FIX: una sola query al inicio en lugar de dos por iteración
+    final initialPending = await _storage.getUnsyncedCount();
+    _log('SYNC', '▶ Sync ($reason) — pendientes: $initialPending');
+    if (initialPending == 0) {
+      _isSyncing = false;
+      return;
+    }
+
+    try {
+      int batchesOk = 0;
+
       while (true) {
-        // 1. Obtener batch del almacenamiento
-        final unsynced = await _storage.getUnsyncedPoints(limit: 50);
+        final pending = await _storage.getUnsyncedCount();
+        final batchSize = pending > 500 ? 100 : (pending > 100 ? 75 : 50);
+
+        final unsynced = await _storage.getUnsyncedPoints(limit: batchSize);
         if (unsynced.isEmpty) {
-          _log('SYNC', 'Sync completado: no hay más puntos pendientes.');
+          _log('SYNC', '✅ Sync completo ($batchesOk batches enviados)');
+          _backoffIndex = 0;
+          _consecutiveFailures = 0;
           break;
         }
 
-        _log('SYNC', 'Procesando batch ${batchesProcessed + 1}: ${unsynced.length} puntos...');
-
-        // 2. Preparar datos
         final data = unsynced.map((p) => {
           'lat': p.lat, 'lng': p.lng,
           'speed': p.speed, 'accuracy': p.accuracy,
           'state': p.state, 'timestamp': p.timestamp,
+          'source': p.source ?? 'gps',
+          'point_type': p.pointType ?? 'normal',
           'is_manual_request': p.pointType == 'manual',
+          'battery': p.batteryLevel,
+          'is_charging': p.isCharging,
         }).toList();
 
-        // 3. Intentar envío
         final ok = await _api.uploadBatch(data);
-        
+
         if (ok) {
-          // 4. Éxito: Marcar como sincronizados y continuar bucle
           final ids = unsynced.map((p) => p.id!).toList();
           await _storage.markPointsAsSynced(ids);
-          _nextSyncAttempt = DateTime.now(); // Reset backoff en éxito
-          batchesProcessed++;
-          _log('SYNC', 'Batch exitoso. Restantes en DB: pendiente...');
-          
-          // Protección contra bucle infinito accidental o exceso de memoria
-          if (batchesProcessed > 100) {
-            _log('SYNC', 'Límite de seguridad alcanzado (100 batches). Postergando el resto.');
+          _nextSyncAttempt = DateTime.now();
+          _backoffIndex = 0;
+          _consecutiveFailures = 0;
+          batchesOk++;
+          _log('SYNC', 'Batch $batchesOk OK (${unsynced.length} pts). Pendientes: ${pending - unsynced.length}');
+
+          // Límite de seguridad: máx 200 batches por ciclo (evita bloquear el isolate)
+          if (batchesOk >= 200) {
+            _log('SYNC', 'Límite de ciclo alcanzado. Continuará en el próximo tick.');
             break;
           }
+
+          // Pausa mínima entre batches para no saturar el servidor ni la CPU
+          await Future.delayed(const Duration(milliseconds: 100));
         } else {
-          // 5. Fallo: Aplicar backoff inteligente y salir del bucle
-          final currentBackoff = _nextSyncAttempt.difference(DateTime.now()).inSeconds.abs();
-          final newBackoff = (currentBackoff == 0) ? 30 : (currentBackoff * 2).clamp(30, 300);
-          _nextSyncAttempt = DateTime.now().add(Duration(seconds: newBackoff));
-          _log('SYNC', 'Fallo en envío de batch. Reintento programado en $newBackoff s');
+          _consecutiveFailures++;
+          _backoffIndex = (_backoffIndex + 1).clamp(0, _backoffSteps.length - 1);
+          final delay = _nextBackoff;
+          _nextSyncAttempt = DateTime.now().add(delay);
+          _log('SYNC', '❌ Fallo #$_consecutiveFailures. Reintento en ${delay.inSeconds}s');
           break;
         }
       }
     } catch (e) {
-      _log('SYNC', 'Error crítico en Sync Loop: $e');
-      _nextSyncAttempt = DateTime.now().add(const Duration(seconds: 60));
+      _consecutiveFailures++;
+      _backoffIndex = (_backoffIndex + 1).clamp(0, _backoffSteps.length - 1);
+      _nextSyncAttempt = DateTime.now().add(_nextBackoff);
+      _log('SYNC', 'Error crítico: $e');
     } finally {
       _isSyncing = false;
     }
   }
 
-  /// 🔁 Gestión de Buffer Offline y Subida en Bloque
+  /// Guarda el punto en SQLite. El envío al servidor lo hace _syncLoop.
+  /// Esto elimina las peticiones HTTP concurrentes que causaban recorridos erráticos.
   Future<void> _addToBufferAndFlush(Map<String, dynamic> point) async {
-    // 1. Añadir al buffer (limitar tamaño)
-    if (_offlineBuffer.length >= _maxBufferSize) {
-      _offlineBuffer.removeAt(0); // Descartar el más viejo si está lleno
-    }
-    _offlineBuffer.add(point);
-
-    // 2. Intentar subir todo el buffer
-    if (_offlineBuffer.isEmpty) return;
-
     try {
-      _log('API', 'Intentando subir buffer: ${_offlineBuffer.length} puntos...');
-      final success = await _api.uploadBatch(List.from(_offlineBuffer));
-      
-      if (success) {
-        _log('API', '✅ Buffer subido con éxito. Limpiando.');
-        _offlineBuffer.clear();
-      } else {
-        _log('API', '⚠️ Falló subida de buffer. Se mantiene para reintento (${_offlineBuffer.length} pts)');
-      }
-    } on DioException catch (e) {
-      _log('API', '❌ Error de red Dio subiendo buffer: ${e.message}');
+      final lp = LocalPoint(
+        lat: (point['lat'] as num).toDouble(),
+        lng: (point['lng'] as num).toDouble(),
+        speed: (point['speed'] as num?)?.toDouble() ?? 0,
+        accuracy: (point['accuracy'] as num?)?.toDouble() ?? 99,
+        state: point['state']?.toString() ?? 'STOPPED',
+        timestamp: (point['timestamp'] as num).toInt(),
+        employeeId: _cachedEmployeeId,
+        source: point['source']?.toString(),
+        pointType: point['point_type']?.toString() ?? 'normal',
+        batteryLevel: (point['battery'] as num?)?.toInt(),
+        isCharging: point['is_charging'] as bool?,
+      );
+      await _storage.insertPoints([lp]);
     } catch (e) {
-      _log('API', '❌ Error inesperado subiendo buffer: $e');
+      _log('STORAGE', 'Error guardando punto en SQLite: $e');
     }
   }
 }

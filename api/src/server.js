@@ -17,6 +17,7 @@ try {
 
 const authRoutes = require('./routes/auth');
 const locationRoutes = require('./routes/locations');
+const locationBatchRoutes = require('./routes/locations_batch');
 const tripRoutes = require('./routes/trips');
 const employeeRoutes = require('./routes/employees');
 const geocodingRoutes = require('./routes/geocoding');
@@ -72,6 +73,7 @@ app.set('socketio', io);
 app.use('/api/auth', authRoutes);
 app.post('/api/locations/batch', locationLimiter);
 app.use('/api/locations', locationRoutes);
+app.use('/api/locations', locationBatchRoutes);
 app.use('/api/trips', tripRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/geocoding', geocodingRoutes);

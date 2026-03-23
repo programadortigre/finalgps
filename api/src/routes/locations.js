@@ -4,7 +4,8 @@ const auth = require('../middleware/auth');
 const { locationQueue, redis } = require('../services/queue');
 const { getIO } = require('../socket/socket');
 const db = require('../db/postgres');
-const { LocationKalmanFilter } = require('../utils/kalman_filter');
+const { GPSKalmanEKF } = require('../utils/ekf');
+const { detectOngoingStop } = require('../utils/stop_detector');
 const http = require('http');
 
 // Helper API gratuita para GeoIP
@@ -182,12 +183,12 @@ router.post('/batch', auth, async (req, res) => {
     const filteredPoints = [];
     let lastValidPoint = null;
 
-    // 🧠 APLICAR FILTRO KALMAN (Persistente por empleado en Redis)
-    const filterKey = `kalman:employee:${employeeId}`;
+    // 🧠 EKF — Extended Kalman Filter (persistente por empleado en Redis)
+    const filterKey   = `ekf:employee:${employeeId}`;
     const lastPointKey = `last_location:employee:${employeeId}`;
-    const lastStateKey = `last_state:employee:${employeeId}`; // Nuevo para el estado
-    const locationFilter = new LocationKalmanFilter(0, 0, 50);
+    const lastStateKey = `last_state:employee:${employeeId}`;
 
+    let locationFilter = null; // Se inicializa abajo con el primer punto o estado guardado
     let lastKnownGlobal = null;
     let lastStateInRedis = null;
 
@@ -195,23 +196,26 @@ router.post('/batch', auth, async (req, res) => {
         const [savedStateJson, lastPointJson, lastStateJson] = await Promise.all([
             redis.get(filterKey),
             redis.get(lastPointKey),
-            redis.get(lastStateKey)
+            redis.get(lastStateKey),
         ]);
 
         if (savedStateJson) {
-            locationFilter.setState(JSON.parse(savedStateJson));
+            locationFilter = GPSKalmanEKF.deserialize(JSON.parse(savedStateJson));
         } else if (points.length > 0) {
-            locationFilter.reset(points[0].lat, points[0].lng);
+            const p0 = points[0];
+            locationFilter = new GPSKalmanEKF(p0.lat, p0.lng, (p0.speed || 0) / 3.6, p0.heading || 0, p0.accuracy || 20);
+        } else {
+            locationFilter = new GPSKalmanEKF(0, 0, 0, 0, 50);
         }
 
-        if (lastPointJson) {
-            lastKnownGlobal = JSON.parse(lastPointJson);
-        }
-        if (lastStateJson) {
-            lastStateInRedis = lastStateJson;
-        }
+        if (lastPointJson) lastKnownGlobal = JSON.parse(lastPointJson);
+        if (lastStateJson) lastStateInRedis = lastStateJson;
     } catch (e) {
-        console.error(`[Redis] Error loading state for ${employeeId}:`, e);
+        console.error(`[Redis] Error loading EKF state for ${employeeId}:`, e);
+        if (!locationFilter && points.length > 0) {
+            const p0 = points[0];
+            locationFilter = new GPSKalmanEKF(p0.lat, p0.lng, 0, 0, 50);
+        }
     }
 
     /// ========================================================================
@@ -332,20 +336,33 @@ router.post('/batch', auth, async (req, res) => {
             }
         }
 
-        // 🧠 SUAVIZADO KALMAN
-        const smoothedCoords = locationFilter.update(
+        // 🧠 SUAVIZADO EKF (Extended Kalman Filter — modela velocidad + heading)
+        const speedMs = (point.speed || 0) / 3.6; // km/h → m/s
+        const headingDeg = point.heading || 0;
+        const ekfResult = locationFilter.update(
             point.lat,
             point.lng,
+            speedMs,
+            headingDeg,
             point.accuracy || 50,
-            point.speed ? point.speed * 3.6 : 0
+            point.timestamp
         );
+
+        // Si el EKF rechazó el punto (outlier imposible físicamente), descartarlo
+        if (ekfResult.rejected) {
+            console.log(`[EKF] Point REJECTED as outlier (physically impossible jump)`);
+            filtered++;
+            continue;
+        }
 
         // ✅ PUNTO VÁLIDO: Agregar a lista
         const finalPoint = {
             ...point,
-            lat: smoothedCoords.lat,
-            lng: smoothedCoords.lng,
-            quality: quality, // Asignar calidad corregida
+            lat: ekfResult.lat,
+            lng: ekfResult.lng,
+            speed: ekfResult.speed * 3.6, // m/s → km/h para consistencia
+            heading: ekfResult.heading,
+            quality: quality,
             source: point.source || source,
             battery: battery,
             is_charging: isCharging,
@@ -367,12 +384,32 @@ router.post('/batch', auth, async (req, res) => {
         `[FLOW-DIAG] Batch processing finished for emp ${employeeId}: Total:${points.length}, OK:${inserted}, Filtered:${filtered}`
     );
 
+    // 🛑 DETECCIÓN DE PARADA EN CURSO (tiempo real)
+    if (filteredPoints.length >= 3) {
+        const recentForStop = filteredPoints.slice(-20).map(p => ({
+            lat: p.lat, lng: p.lng, timestamp: p.timestamp
+        }));
+        const ongoingStop = detectOngoingStop(recentForStop);
+        if (ongoingStop) {
+            try {
+                await redis.set(
+                    `stop:employee:${employeeId}`,
+                    JSON.stringify({ ...ongoingStop, employeeId }),
+                    'EX', 600 // expira en 10 min si no se actualiza
+                );
+                console.log(`[STOP] Parada detectada para emp ${employeeId}: ${ongoingStop.durationS}s en (${ongoingStop.lat.toFixed(5)}, ${ongoingStop.lng.toFixed(5)})`);
+            } catch (e) {
+                console.error('[Redis] Error guardando stop state:', e);
+            }
+        }
+    }
+
     // 💾 GUARDAR ESTADO EN REDIS AL FINAL DEL LOTE
     try {
         if (filteredPoints.length > 0) {
             const last = filteredPoints[filteredPoints.length - 1];
             await Promise.all([
-                redis.set(filterKey, JSON.stringify(locationFilter.getState()), 'EX', 86400),
+                redis.set(filterKey, JSON.stringify(locationFilter.serialize()), 'EX', 86400),
                 redis.set(lastPointKey, JSON.stringify({
                     lat: last.lat,
                     lng: last.lng,

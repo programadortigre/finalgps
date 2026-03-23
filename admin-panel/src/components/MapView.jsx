@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Polygon, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -15,7 +15,135 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// Base Active Icon function to handle dynamic color
+// ── Cache de iconos por estado — evita recrear L.divIcon en cada render ───────
+const iconCache = {};
+function getLiveIcon(state, isStale, isGpsOff) {
+    const key = `${state}-${isStale}-${isGpsOff}`;
+    if (iconCache[key]) return iconCache[key];
+    const opacity = (isGpsOff || isStale) ? 0.6 : 1;
+    const pulseClass = isGpsOff ? 'pulse-off' : isStale ? 'pulse-stale' : 'pulse-active';
+    const coreClass  = isGpsOff ? 'core-off'  : isStale ? 'core-stale'  : 'core-active';
+    iconCache[key] = L.divIcon({
+        className: 'custom-div-icon',
+        html: `<div class="marker-container" style="opacity:${opacity}">
+                 <div class="marker-pulse ${pulseClass}"></div>
+                 <div class="marker-core ${coreClass}">
+                   <div class="marker-initial">?</div>
+                 </div>
+               </div>`,
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+        popupAnchor: [0, -20],
+    });
+    return iconCache[key];
+}
+
+// ── Marcador memoizado — solo se re-renderiza si cambia posición o estado ─────
+const LiveMarker = memo(({ loc, addr }) => {
+    const markerRef = useRef(null);
+    const isStale  = dayjs().diff(dayjs(loc.lastUpdate), 'minute') > 20;
+    const isGpsOff = loc.state === 'GPS_OFF' || loc.state === 'NO_FIX';
+
+    // Mover el marcador Leaflet directamente (sin re-render React)
+    useEffect(() => {
+        if (markerRef.current) {
+            markerRef.current.setLatLng([loc.lat, loc.lng]);
+        }
+    }, [loc.lat, loc.lng]);
+
+    const icon = getLiveIcon(loc.state, isStale, isGpsOff);
+
+    // Actualizar la inicial del nombre en el DOM directamente
+    useEffect(() => {
+        if (markerRef.current) {
+            const el = markerRef.current.getElement();
+            if (el) {
+                const initial = el.querySelector('.marker-initial');
+                if (initial) initial.textContent = (loc.name || 'U').charAt(0).toUpperCase();
+            }
+        }
+    }, [loc.name]);
+
+    const displayState = (loc.state || 'Quieto').replaceAll('_', ' ');
+    const stateColors = {
+        'Quieto': { bg: '#f1f5f9', color: '#475569' },
+        'SIN_MOVIMIENTO': { bg: '#f1f5f9', color: '#475569' },
+        'STOPPED': { bg: '#f1f5f9', color: '#475569' },
+        'DEEP_SLEEP': { bg: '#e2e8f0', color: '#334155' },
+        'A pie': { bg: '#dcfce7', color: '#166534' },
+        'CAMINANDO': { bg: '#dcfce7', color: '#166534' },
+        'WALKING': { bg: '#dcfce7', color: '#166534' },
+        'Lento': { bg: '#fef3c7', color: '#b45309' },
+        'MOVIMIENTO_LENTO': { bg: '#fef3c7', color: '#b45309' },
+        'BATT_SAVER': { bg: '#fef3c7', color: '#b45309' },
+        'NO_SIGNAL': { bg: '#fee2e2', color: '#991b1b' },
+        'En auto': { bg: '#dbeafe', color: '#0c4a6e' },
+        'VEHICULO': { bg: '#dbeafe', color: '#0c4a6e' },
+        'DRIVING': { bg: '#dbeafe', color: '#0c4a6e' },
+        'GPS_OFF': { bg: '#fee2e2', color: '#b91c1c' },
+        'NO_FIX': { bg: '#fef3c7', color: '#b45309' },
+    };
+    const stateColor = stateColors[loc.state] || stateColors['Quieto'];
+
+    return (
+        <Marker
+            ref={markerRef}
+            position={[loc.lat, loc.lng]}
+            icon={icon}
+        >
+            <Popup>
+                <div style={{ fontSize: '13px', minWidth: '240px', padding: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', gap: '8px' }}>
+                        <div style={{ flex: 1 }}>
+                            <strong style={{ fontSize: '14px', color: '#0f172a', display: 'block' }}>{loc.name || `Vendedor ${loc.employeeId}`}</strong>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <span style={{ fontSize: '11px', color: '#475569' }}>ID: {loc.employeeId}</span>
+                                {isGpsOff && (
+                                    <span style={{ background: '#ef4444', color: 'white', padding: '1px 5px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold' }}>
+                                        GPS OFF ⚠️
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                        <span style={{ background: stateColor.bg, color: stateColor.color, padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                            {displayState}
+                        </span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', color: '#64748b', borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
+                            <span style={{ marginTop: '2px', fontSize: '12px' }}>📍</span>
+                            <span style={{ fontSize: '12px' }}>{addr || 'Obteniendo dirección...'}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '12px', fontSize: '12px' }}>
+                            <span>🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}</span>
+                            {loc.speed !== undefined && !isGpsOff && (
+                                <span>📈 {Math.round(loc.speed)} km/h</span>
+                            )}
+                        </div>
+                    </div>
+                    <a
+                        href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
+                        target="_blank" rel="noopener noreferrer"
+                        style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', fontSize: '12px', display: 'block', textAlign: 'center', padding: '6px', background: '#dbeafe', borderRadius: '6px' }}
+                    >
+                        🗺️ Google Maps
+                    </a>
+                </div>
+            </Popup>
+        </Marker>
+    );
+}, (prev, next) => {
+    // Solo re-renderizar si cambia posición (con tolerancia de 0.00001°≈1m), estado o nombre
+    return (
+        Math.abs(prev.loc.lat - next.loc.lat) < 0.00001 &&
+        Math.abs(prev.loc.lng - next.loc.lng) < 0.00001 &&
+        prev.loc.state === next.loc.state &&
+        prev.loc.name  === next.loc.name  &&
+        prev.addr      === next.addr
+    );
+});
+LiveMarker.displayName = 'LiveMarker';
+
 const getActiveIcon = (state) => {
     let color = '#94a3b8'; // Default color (Slate/Gray)
     let isPaused = state === 'PAUSED';
@@ -106,23 +234,21 @@ const FitBounds = ({ positions }) => {
 // Vuela suavemente a la ubicación de un empleado seleccionado
 const FlyToEmployee = ({ lat, lng }) => {
     const map = useMap();
-    const lastPos = React.useRef(null);
+    // Solo vuela cuando el empleado CAMBIA (no en cada tick de interpolación)
+    // Usamos refs para comparar con tolerancia de 50m
+    const lastFlyPos = React.useRef(null);
 
     useEffect(() => {
-        if (lat != null && lng != null) {
-            const currentCenter = map.getCenter();
-            const dist = L.latLng(lat, lng).distanceTo(currentCenter);
-            
-            // Si está lejos (>200m) o es la primera vez, vuela (FlyTo)
-            if (!lastPos.current || dist > 200) {
-                map.flyTo([lat, lng], 19, { animate: true, duration: 1.2 });
-            } else if (dist > 5) {
-                // Si está cerca but moved, solo panea suavemente (para seguimiento en tiempo real)
-                map.panTo([lat, lng], { animate: true });
-            }
-            lastPos.current = { lat, lng };
+        if (lat == null || lng == null) return;
+        const prev = lastFlyPos.current;
+        // Si es la primera vez o el empleado seleccionado cambió (>50m de diferencia)
+        const dist = prev ? L.latLng(lat, lng).distanceTo(L.latLng(prev.lat, prev.lng)) : 999;
+        if (!prev || dist > 50) {
+            map.flyTo([lat, lng], 17, { animate: true, duration: 1.0 });
+            lastFlyPos.current = { lat, lng };
         }
-    }, [lat, lng, map]);
+        // Si dist < 50m: el vendedor se está moviendo cerca, no volar — la interpolación ya mueve el marcador
+    }, [lat, lng, map]); // eslint-disable-line react-hooks/exhaustive-deps
     return null;
 };
 
@@ -378,12 +504,16 @@ const MapView = ({
     // Si no hay puntos, mostrar mensaje amigable (solo si no es multi-recorrido)
     const noPoints = view === 'history' && routeData && !routeData.isMulti && points.length === 0;
 
-    const flyTarget = selectedEmployee && view === 'live'
-        ? (activeLocations[selectedEmployee.id])
-        : null;
-
-    // Nota: handleDrawClick y handleFinishDrawing fueron removidos
-    // Ahora Leaflet.Draw maneja todo el dibujo de polígonos automáticamente
+    // flyTarget: solo la posición INICIAL del empleado seleccionado (para el primer vuelo).
+    // No usamos activeLocations directamente para evitar que el mapa vuele en cada tick.
+    // FlyToEmployee internamente ignora movimientos pequeños (<50m).
+    const flyTarget = React.useMemo(() => {
+        if (!selectedEmployee || view !== 'live') return null;
+        const loc = activeLocations[selectedEmployee.id];
+        return loc?.lat && loc?.lng ? { lat: loc.lat, lng: loc.lng } : null;
+    // Solo recalcular cuando CAMBIA el empleado seleccionado, no en cada actualización de posición
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedEmployee?.id, view]);
 
     return (
         <div style={{ height: '100%', width: '100%', position: 'relative' }}>
@@ -775,118 +905,13 @@ const MapView = ({
 
                 {/* ── LIVE MODE ── */}
                 {view === 'live' && livePositions.map(loc => {
-                    if (!loc.lat || !loc.lng || loc.lat === 0 || loc.lng === 0) return null; // FIX: Prevent Leaflet crash
-                    
-                    const addr = addresses[`live-${loc.employeeId}`] || 'Obteniendo dirección...';
-                    const displayState = (loc.state || 'Quieto').replaceAll('_', ' ');
-                    const stateColors = {
-                        'Quieto': { bg: '#f1f5f9', color: '#475569' },
-                        'SIN_MOVIMIENTO': { bg: '#f1f5f9', color: '#475569' },
-                        'STOPPED': { bg: '#f1f5f9', color: '#475569' },
-                        'DEEP_SLEEP': { bg: '#e2e8f0', color: '#334155' },
-                        'A pie': { bg: '#dcfce7', color: '#166534' },
-                        'CAMINANDO': { bg: '#dcfce7', color: '#166534' },
-                        'WALKING': { bg: '#dcfce7', color: '#166534' },
-                        'Lento': { bg: '#fef3c7', color: '#b45309' },
-                        'MOVIMIENTO_LENTO': { bg: '#fef3c7', color: '#b45309' },
-                        'BATT_SAVER': { bg: '#fef3c7', color: '#b45309' },
-                        'NO_SIGNAL': { bg: '#fee2e2', color: '#991b1b' },
-                        'En auto': { bg: '#dbeafe', color: '#0c4a6e' },
-                        'VEHICULO': { bg: '#dbeafe', color: '#0c4a6e' },
-                        'DRIVING': { bg: '#dbeafe', color: '#0c4a6e' },
-                        'GPS_OFF': { bg: '#fee2e2', color: '#b91c1c' },
-                        'NO_FIX': { bg: '#fef3c7', color: '#b45309' }
-                    };
-                    const stateColor = stateColors[loc.state] || stateColors['Quieto'];
-                    const diffMins = dayjs().diff(dayjs(loc.lastUpdate), 'minute');
-                    const isStale = diffMins > 20; // GAP_THRESHOLD
-                    const isGpsOff = loc.state === 'GPS_OFF' || loc.state === 'NO_FIX';
-                    const markerOpacity = (isGpsOff || isStale) ? 0.6 : 1;
-
+                    if (!loc.lat || !loc.lng || loc.lat === 0 || loc.lng === 0) return null;
                     return (
-                        <Marker 
-                            key={loc.employeeId} 
-                            position={[loc.lat, loc.lng]} 
-                            icon={L.divIcon({
-                                className: 'custom-div-icon',
-                                html: `
-                                    <div class="marker-container" style="opacity: ${markerOpacity}">
-                                        <div class="marker-pulse ${isGpsOff ? 'pulse-off' : isStale ? 'pulse-stale' : 'pulse-active'}"></div>
-                                        <div class="marker-core ${isGpsOff ? 'core-off' : isStale ? 'core-stale' : 'core-active'}">
-                                            <div class="marker-initial">${(loc.name || 'U').charAt(0).toUpperCase()}</div>
-                                        </div>
-                                    </div>
-                                `,
-                                iconSize: [40, 40],
-                                iconAnchor: [20, 20],
-                                popupAnchor: [0, -20]
-                            })}
-                        >
-                            <Popup>
-                                <div style={{ fontSize: '13px', minWidth: '240px', padding: '8px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', gap: '8px' }}>
-                                        <div style={{ flex: 1 }}>
-                                            <strong style={{ fontSize: '14px', color: '#0f172a', display: 'block' }}>{loc.name || `Vendedor ${loc.employeeId}`}</strong>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                <span style={{ fontSize: '11px', color: '#475569' }}>ID: {loc.employeeId}</span>
-                                                {isGpsOff && (
-                                                    <span style={{ 
-                                                        background: '#ef4444', color: 'white', padding: '1px 5px', 
-                                                        borderRadius: '4px', fontSize: '9px', fontWeight: 'bold' 
-                                                    }}>
-                                                        GPS OFF ⚠️
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <span style={{
-                                            background: stateColor.bg,
-                                            color: stateColor.color,
-                                            padding: '3px 8px',
-                                            borderRadius: '12px',
-                                            fontSize: '11px',
-                                            fontWeight: 'bold',
-                                            whiteSpace: 'nowrap'
-                                        }}>
-                                            {displayState}
-                                        </span>
-                                    </div>
-
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', color: '#64748b', borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginBottom: '8px' }}>
-                                        <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
-                                            <span style={{ marginTop: '2px', fontSize: '12px' }}>📍</span>
-                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                                <span style={{ fontSize: '12px' }}>{addr}</span>
-                                                {isGpsOff && (
-                                                    <small style={{ color: '#ef4444', fontWeight: 'bold', fontSize: '10px' }}>
-                                                        (Última ubicación GPS conocida)
-                                                    </small>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <div style={{ display: 'flex', gap: '12px', fontSize: '12px' }}>
-                                            <span title="Última señal recibida">🕒 {dayjs(loc.lastUpdate).format('HH:mm:ss')}</span>
-                                            {loc.speed !== undefined && !isGpsOff && (
-                                                <span title="Velocidad actual">📈 {Math.round(loc.speed)} km/h</span>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                        <a
-                                            href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', fontSize: '12px', flex: 1, textAlign: 'center', padding: '6px', background: '#dbeafe', borderRadius: '6px', transition: 'all .2s' }}
-                                            onMouseEnter={(e) => e.target.style.background = '#bfdbfe'}
-                                            onMouseLeave={(e) => e.target.style.background = '#dbeafe'}
-                                        >
-                                            🗺️ Google Maps
-                                        </a>
-                                    </div>
-                                </div>
-                            </Popup>
-                        </Marker>
+                        <LiveMarker
+                            key={loc.employeeId}
+                            loc={loc}
+                            addr={addresses[`live-${loc.employeeId}`]}
+                        />
                     );
                 })}
 

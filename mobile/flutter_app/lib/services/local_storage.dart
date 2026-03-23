@@ -22,26 +22,35 @@ class LocalStorage {
     final path = join(dbPath, _dbName);
     return openDatabase(
       path,
-      version: 5,
+      version: 6, // BUG #10 FIX: bump version para migrar columnas faltantes
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      onOpen: (db) async {
+        // BUG #2 FIX: WAL mode — permite lecturas concurrentes sin database lock
+        // Crítico cuando background isolate y main isolate acceden a la misma DB
+        await db.execute('PRAGMA journal_mode=WAL');
+        await db.execute('PRAGMA synchronous=NORMAL');
+      },
     );
   }
 
   Future<void> _onCreate(Database db, int version) async {
     await db.execute('''
       CREATE TABLE $_tableName (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        lat          REAL    NOT NULL,
-        lng          REAL    NOT NULL,
-        speed        REAL    NOT NULL,
-        accuracy     REAL    NOT NULL,
-        state        TEXT    DEFAULT "SIN_MOVIMIENTO",
-        source       TEXT,
-        timestamp    INTEGER NOT NULL,
-        synced       INTEGER DEFAULT 0,
-        created_at   INTEGER DEFAULT 0,
-        employee_id  INTEGER
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        lat           REAL    NOT NULL,
+        lng           REAL    NOT NULL,
+        speed         REAL    NOT NULL,
+        accuracy      REAL    NOT NULL,
+        state         TEXT    DEFAULT "SIN_MOVIMIENTO",
+        source        TEXT,
+        timestamp     INTEGER NOT NULL,
+        synced        INTEGER DEFAULT 0,
+        created_at    INTEGER DEFAULT 0,
+        employee_id   INTEGER,
+        point_type    TEXT    DEFAULT "normal",
+        battery_level INTEGER,
+        is_charging   INTEGER
       )
     ''');
     await db.execute('CREATE INDEX idx_timestamp   ON $_tableName(timestamp)');
@@ -74,6 +83,14 @@ class LocalStorage {
         print('[STORAGE] v5 ignore: $e');
       }
     }
+    if (oldVersion < 6) {
+      // BUG #10 FIX: columnas faltantes — point_type/battery_level/is_charging
+      // se guardaban en LocalPoint pero se perdían silenciosamente en SQLite
+      print('[STORAGE] Migración v6: Agregando columnas point_type, battery_level, is_charging');
+      try { await db.execute('ALTER TABLE $_tableName ADD COLUMN point_type TEXT DEFAULT "normal"'); } catch (_) {}
+      try { await db.execute('ALTER TABLE $_tableName ADD COLUMN battery_level INTEGER'); } catch (_) {}
+      try { await db.execute('ALTER TABLE $_tableName ADD COLUMN is_charging INTEGER'); } catch (_) {}
+    }
   }
 
   // ── Escritura ───────────────────────────────────────────────────────────────
@@ -84,11 +101,12 @@ class LocalStorage {
     if (points.isEmpty) return;
     final database = await db;
 
-    // Check limit before batch insert
-    final countResult = await database.rawQuery('SELECT COUNT(*) as total FROM $_tableName');
-    final total = (countResult.first['total'] as int?) ?? 0;
+    // Check limit before batch insert — límite generoso para soportar días sin conexión
+    // A 1 punto/10s en DRIVING = 8640 puntos/día → 10k aguanta ~28h sin conexión
+    final countResult = await database.rawQuery('SELECT COUNT(*) as total FROM $_tableName WHERE synced = 0');
+    final unsyncedTotal = (countResult.first['total'] as int?) ?? 0;
 
-    if (total + points.length >= 5000) {
+    if (unsyncedTotal + points.length >= 10000) {
       await _purgeIfNeeded(database);
     }
 
@@ -107,6 +125,9 @@ class LocalStorage {
             'synced': 0,
             'created_at': DateTime.now().millisecondsSinceEpoch,
             'employee_id': point.employeeId,
+            'point_type': point.pointType ?? 'normal',
+            'battery_level': point.batteryLevel,
+            'is_charging': point.isCharging != null ? (point.isCharging! ? 1 : 0) : null,
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
@@ -131,47 +152,52 @@ class LocalStorage {
         'synced': 0,
         'created_at': DateTime.now().millisecondsSinceEpoch,
         'employee_id': point.employeeId,
+        'point_type': point.pointType ?? 'normal',
+        'battery_level': point.batteryLevel,
+        'is_charging': point.isCharging != null ? (point.isCharging! ? 1 : 0) : null,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
   Future<void> _checkLimit(Database database) async {
-    final countResult = await database.rawQuery('SELECT COUNT(*) as total FROM $_tableName');
+    final countResult = await database.rawQuery('SELECT COUNT(*) as total FROM $_tableName WHERE synced = 0');
     final total = (countResult.first['total'] as int?) ?? 0;
-    if (total >= 5000) {
+    if (total >= 10000) {
       await _purgeIfNeeded(database);
     }
   }
 
   Future<void> _purgeIfNeeded(Database database) async {
-    // ── PASO 1: eliminar los 500 sincronizados más antiguos ────────────────
+    // PASO 1: eliminar sincronizados más antiguos (nunca toca los pendientes)
     final deletedSynced = await database.rawDelete('''
       DELETE FROM $_tableName
       WHERE id IN (
         SELECT id FROM $_tableName
         WHERE synced = 1
         ORDER BY timestamp ASC
-        LIMIT 500
+        LIMIT 1000
       )
     ''');
 
-    if (deletedSynced == 0) {
-      // ── PASO 2: si no había sincronizados, ÚLTIMO RECURSO ─────────────────
-      final deletedUnsynced = await database.rawDelete('''
-        DELETE FROM $_tableName
-        WHERE id IN (
-          SELECT id FROM $_tableName
-          ORDER BY timestamp ASC
-          LIMIT 200
-        )
-      ''');
-      // ignore: avoid_print
-      print('[STORAGE] ⚠️ ÚLTIMO RECURSO: eliminados $deletedUnsynced puntos NO sincronizados');
-    } else {
-      // ignore: avoid_print
-      print('[STORAGE] Purga: $deletedSynced registros sincronizados eliminados');
+    if (deletedSynced > 0) {
+      print('[STORAGE] Purga limpia: $deletedSynced registros ya sincronizados eliminados');
+      return;
     }
+
+    // PASO 2: si no había sincronizados, eliminar los NO sincronizados más antiguos
+    // Solo como último recurso absoluto (servidor caído por días)
+    // Eliminamos los más viejos que ya no tienen valor de posición actual
+    final deletedUnsynced = await database.rawDelete('''
+      DELETE FROM $_tableName
+      WHERE id IN (
+        SELECT id FROM $_tableName
+        WHERE synced = 0
+        ORDER BY timestamp ASC
+        LIMIT 500
+      )
+    ''');
+    print('[STORAGE] ⚠️ ÚLTIMO RECURSO: $deletedUnsynced puntos no sincronizados eliminados (servidor caído mucho tiempo)');
   }
 
   // ── Lectura ─────────────────────────────────────────────────────────────────

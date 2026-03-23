@@ -3,14 +3,15 @@ const Redis = require('ioredis');
 
 let io;
 let redisSub;
+let redisPub; // BUG #3 FIX: cliente reutilizable — evita crear una conexión Redis por cada evento
 
 /**
  * Inicializar Socket.io con REDIS PUB/SUB para soporte multi-instancia
  */
 const initSocket = (server) => {
     io = new Server(server, {
-        pingTimeout: 60000,   // 60s (Aumentado para mayor estabilidad en 3G)
-        pingInterval: 25000,  // 25s
+        pingTimeout: 60000,
+        pingInterval: 25000,
         cors: { 
             origin: ['http://localhost:5173', 'http://admin-panel:80', 'http://admin-panel'],
             methods: ["GET", "POST"],
@@ -18,13 +19,13 @@ const initSocket = (server) => {
         }
     });
 
-    // ✅ CONFIGURAR REDIS SUBSCRIBER
     const redisConfig = {
         host: process.env.REDIS_HOST || 'localhost',
         port: process.env.REDIS_PORT || 6379,
     };
     
     redisSub = new Redis(redisConfig);
+    redisPub = new Redis(redisConfig); // BUG #3 FIX: un solo cliente para publicar, vive toda la vida del proceso
     
     redisSub.subscribe('location_updates', (err) => {
         if (err) console.error('[Redis] Error subscribing to location_updates:', err.message);
@@ -79,13 +80,10 @@ const initSocket = (server) => {
             console.log(`[Socket] User joined room: ${room}`);
         });
 
-        // ✅ El empleado envía su ubicación (usualmente en respuesta a una petición manual)
+        // BUG #3 FIX: reutilizar redisPub en lugar de crear cliente nuevo por evento
         socket.on('location_update', (data) => {
             console.log(`[Socket] Received real-time update from employee ${data.employeeId}`);
-            // Publicar en Redis para que todas las instancias de la API lo envíen a sus admins
-            const redisPub = new Redis(redisConfig); // Cliente temporal para publicar
-            redisPub.publish('location_updates', JSON.stringify(data))
-                .finally(() => redisPub.disconnect());
+            redisPub.publish('location_updates', JSON.stringify(data));
         });
 
         // ✅ Admin solicita ubicación en tiempo real de un empleado específico

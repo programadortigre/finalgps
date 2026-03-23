@@ -9,6 +9,7 @@ import ImportJSON from '../components/ImportJSON';
 import api from '../services/api';
 import { socket, connectSocket, disconnectSocket } from '../services/socket';
 import { FileJson, Plus } from 'lucide-react';
+import { useSmartTracking } from '../hooks/useSmartTracking';
 
 const formatTimeAgo = (dateStr) => {
     if (!dateStr) return '';
@@ -24,14 +25,14 @@ const formatTimeAgo = (dateStr) => {
 const Dashboard = ({ user, onLogout }) => {
     const [employees, setEmployees] = useState([]);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
-    const [activeLocations, setActiveLocations] = useState({});
-    const [liveActiveIds, setLiveActiveIds] = useState(new Set()); // Empleados activos last 5 min
     const [view, setView] = useState('live');
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedStatus, setSelectedStatus] = useState('all');
-    const [isConnected, setIsConnected] = useState(true);
+
+    // Smart tracking: polling + interpolación + socket fast-path
+    const { locations: activeLocations, liveActiveIds, isConnected } = useSmartTracking();
 
     // Customer Management State
     const [customers, setCustomers] = useState([]);
@@ -45,26 +46,13 @@ const Dashboard = ({ user, onLogout }) => {
     useEffect(() => {
         const token = localStorage.getItem('token');
         connectSocket(token);
-        setIsConnected(true);
         
         const adminId = user.user?.id || user.id;
         const adminName = user.user?.name || user.name || 'Admin';
         socket.emit('join_admins', { id: adminId, name: adminName });
 
-        socket.on('location_update', (data) => {
-            if (!data.employeeId) return;
-            setActiveLocations(prev => ({
-                ...prev,
-                [data.employeeId]: { 
-                    ...(prev[data.employeeId] || {}), 
-                    ...data, 
-                    lastUpdate: data.timestamp ? (isNaN(data.timestamp) ? new Date(data.timestamp).toISOString() : new Date(Number(data.timestamp)).toISOString()) : new Date().toISOString()
-                }
-            }));
-            // Mark as live active when receiving real-time update
-            setLiveActiveIds(prev => new Set([...prev, data.employeeId]));
-        });
-
+        // Socket solo para comandos de control (tracking toggle, etc.)
+        // Las ubicaciones las maneja useSmartTracking con polling + interpolación
         socket.on('tracking_status_changed', (data) => {
             if (!data.employeeId) return;
             setEmployees(prev => prev.map(emp => 
@@ -72,35 +60,11 @@ const Dashboard = ({ user, onLogout }) => {
             ));
         });
 
-        socket.on('disconnect', () => setIsConnected(false));
-        socket.on('connect', () => setIsConnected(true));
-
         const fetchEmployees = async () => {
             try {
                 const { data } = await api.get('/api/trips/employees');
                 setEmployees(data);
             } catch (e) { console.error('Error fetching vendors', e); }
-        };
-
-        const fetchLatestLocations = async () => {
-            try {
-                // Get ALL locations (includes inactive employees)
-                const { data } = await api.get('/api/locations');
-                const initialLocations = {};
-                data.forEach(loc => {
-                    initialLocations[loc.employeeId] = loc;
-                });
-                setActiveLocations(initialLocations);
-            } catch (e) { console.error('Error fetching latest locations', e); }
-        };
-
-        const fetchLiveActive = async () => {
-            try {
-                // Get ONLY employees active in last 5 minutes
-                const { data } = await api.get('/api/locations/active');
-                const activeIds = new Set(data.map(loc => loc.employeeId));
-                setLiveActiveIds(activeIds);
-            } catch (e) { console.error('Error fetching live active locations', e); }
         };
 
         const fetchCustomers = async () => {
@@ -111,44 +75,25 @@ const Dashboard = ({ user, onLogout }) => {
         };
 
         fetchEmployees();
-        fetchLatestLocations();
-        fetchLiveActive(); // Initial live status
         fetchCustomers();
-
-        // Refresh live status every 30 seconds
-        const liveInterval = setInterval(fetchLiveActive, 30000);
 
         const handleResize = () => setIsMobile(window.innerWidth < 768);
         window.addEventListener('resize', handleResize);
 
         return () => {
-            socket.off('location_update');
             socket.off('tracking_status_changed');
-            socket.off('disconnect');
-            socket.off('connect');
             disconnectSocket();
-            clearInterval(liveInterval);
             window.removeEventListener('resize', handleResize);
         };
     }, []);
 
     const toggleTracking = async (e, id, currentStatus) => {
-        e.stopPropagation(); // Evitar seleccionar empleado al tocar el switch
+        e.stopPropagation();
         try {
             await api.patch(`/api/employees/${id}/tracking`, { enabled: !currentStatus });
-            // Actualizar localmente la lista de empleados
             setEmployees(prev => prev.map(emp => 
                 emp.id === id ? { ...emp, is_tracking_enabled: !currentStatus } : emp
             ));
-            // También actualizar en activeLocations si existe para refrescar el mapa si es necesario
-            setActiveLocations(prev => {
-                const updated = { ...prev };
-                if (updated[id]) {
-                    // Si el admin apaga el rastreo, podríamos querer marcarlo visualmente
-                    // Aunque socket emitirá la señal, esto ayuda a la respuesta inmediata de la UI
-                }
-                return updated;
-            });
         } catch (e) {
             console.error('Error toggling tracking', e);
             alert('Error al cambiar estado de rastreo');
