@@ -1341,15 +1341,22 @@ class TrackingEngine {
         source: source,
       );
 
-      // --- FILTRO DE CALIDAD DINÁMICO (Por Velocidad) ---
+      // --- FILTRO DE CALIDAD DINÁMICO (Por Velocidad) — FIX S2 ---
+      // ANTERIOR: umbrales de 12/15/20m — demasiado agresivos para ciudad (GPS urbano ~15–40m típico)
+      // NUEVO: umbrales realistas que dejan pasar la ciudad. El EKF del backend limpia el ruido fino.
       bool isGoodForHistory = true;
       double historyAccLimit;
-      if (speed < 1.5) historyAccLimit = 12.0;       // Caminando (exige más precisión)
-      else if (speed < 10.0) historyAccLimit = 15.0; // Bici / lento
-      else historyAccLimit = (_currentState == TrackingState.STOPPED) ? 25.0 : 20.0; // Auto / Quieto
+      if (speed < 1.5) historyAccLimit = 35.0;       // Quieto / caminando (ciudad exige más paciencia)
+      else if (speed < 10.0) historyAccLimit = 50.0; // Bici / lento
+      else historyAccLimit = 65.0;                   // Auto / moto (velocidad alta → aceptamos más error)
 
       if (pos.accuracy > historyAccLimit) {
         isGoodForHistory = false;
+        // 🔍 LOG TEMPORAL S2 — validar descarte en campo (eliminar tras verificación)
+        _log('HIST-FILTER', 'Punto EXCLUIDO: acc=${pos.accuracy.toStringAsFixed(1)}m '
+            '> límite=${historyAccLimit.toStringAsFixed(0)}m '
+            '| speed=${speedKmh.toStringAsFixed(1)}km/h '
+            '| state=${_currentState.name}');
       }
 
       // --- SUAVIZADO MATEMÁTICO — FIX S1: Single-step accuracy-weighted average ---
