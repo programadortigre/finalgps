@@ -194,11 +194,18 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                 }
               } else {
                 final lastPoint = _segments.last.last;
-                // Solo agregar si hay movimiento real (> 5m) para no saturar con ruido
-                if (_distCalc.as(LengthUnit.Meter, lastPoint, ll) > 5) {
+                final distM = _distCalc.as(LengthUnit.Meter, lastPoint, ll);
+                
+                // ✅ GAP DETECTION: Si el salto es mayor a 1km, iniciar nuevo segmento
+                // esto evita rayas gigantes cruzando el mapa en el "Recovery"
+                if (distM > 1000) {
+                  _log('GPS', 'GAP detectado (${distM.toStringAsFixed(0)}m). Iniciando nuevo segmento.');
+                  _segments.add([ll]);
+                } else if (distM > 5) {
+                  // Solo agregar si hay movimiento real (> 5m) para no saturar con ruido
                   _segments.last.add(ll);
                 } else {
-                  _log('FILTER', 'DROP: distancia=${_distCalc.as(LengthUnit.Meter, lastPoint, ll).toStringAsFixed(1)}m < 5m');
+                  _log('FILTER', 'DROP: distancia=${distM.toStringAsFixed(1)}m < 5m');
                 }
               }
             }

@@ -572,12 +572,13 @@ class TrackingEngine {
   Future<void> _restoreStateFromStorage() async {
     try {
       final lastPoint = await _storage.getLastValidPoint();
-      if (lastPoint != null) {
+      if (lastPoint != null && lastPoint.lat != 0.0 && lastPoint.lng != 0.0) {
         _lastValidPoint = lastPoint;
         _lastValidLocationTime = DateTime.fromMillisecondsSinceEpoch(lastPoint.timestamp);
         _log('RESTORE', 'Último punto restaurado: ${lastPoint.lat}, ${lastPoint.lng} '
             '@ ${_lastValidLocationTime.toIso8601String()}');
-
+      } else if (lastPoint != null && lastPoint.lat == 0.0) {
+        _log('RESTORE', 'Omitiendo punto 0.0,0.0 detectado en Storage (Limpieza de estado)');
       } else {
         _log('RESTORE', 'Sin estado previo en SQLite — arranque fresco');
       }
@@ -869,8 +870,12 @@ class TrackingEngine {
       final now = DateTime.now().millisecondsSinceEpoch;
       final lastGpsAge = now - (_lastValidPoint?.timestamp ?? 0);
 
-      // Siempre enviar heartbeat — es la señal de vida del servicio
-      // El guard anterior (>90s) causaba que el panel nunca viera al vendedor activo
+      // ✅ FIX: No enviar heartbeats si aún no tenemos una ubicación válida inicial (evita 0,0)
+      if ((_lastValidPoint == null || _lastValidPoint!.lat == 0.0) && _lastRawLat == 0.0) {
+        _log('HEARTBEAT', 'Omitiendo heartbeat: Sin ubicación válida para reportar aún.');
+        return;
+      }
+
       _log('HEARTBEAT', 'Enviando heartbeat (GPS age: ${lastGpsAge ~/ 1000}s, state: ${_currentState.name})');
 
       final batteryLevel = await _battery.batteryLevel;
@@ -1417,11 +1422,19 @@ class TrackingEngine {
         if (seconds > 0) {
           final transitSpeedKmh = (dist / seconds) * 3.6;
           
-          // 1. Salto brutal general
+          // 1. Salto brutal general (> 160 km/h) — pero con RECOVERY si es extremo (> 1000 km/h)
           if (transitSpeedKmh > 160) {
-            _log('GPS', 'Salto bloqueado: $dist m en $seconds s (${transitSpeedKmh.toStringAsFixed(1)} km/h)');
-            _isProcessingPosition = false;
-            return;
+            // ✅ HARD RESET para autocuración: Si el salto es absurdo (> 1000 km/h) 
+            // probablemente el _lastValidPoint es basura o de otra sesión lejana.
+            // Aceptamos este punto como el nuevo "Origen" (Snap).
+            if (transitSpeedKmh > 1000) {
+              _log('GPS', 'RECOVERY: Salto extremo (${transitSpeedKmh.toStringAsFixed(0)} km/h). Reseteando origen a este punto.');
+              // Al no hacer return, el flujo continuará y este punto se convertirá en _lastValidPoint abajo.
+            } else {
+              _log('GPS', 'Salto bloqueado: $dist m en $seconds s (${transitSpeedKmh.toStringAsFixed(1)} km/h)');
+              _isProcessingPosition = false;
+              return;
+            }
           }
           
           // 2. Filtro de Picos de Ruido de Precisión (Consistency Filter)

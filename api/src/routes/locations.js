@@ -90,7 +90,7 @@ router.get('/', auth, async (req, res) => {
                     AND loc_sub.timestamp > (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000) - 86400000
                 ) as reliability_score
             FROM employees e
-            LEFT JOIN locations l ON e.id = l.employee_id
+            LEFT JOIN locations l ON e.id = l.employee_id AND (l.latitude != 0 OR l.longitude != 0)
             WHERE e.role = 'employee'
             ORDER BY e.id, l.timestamp DESC NULLS LAST
         `);
@@ -137,7 +137,7 @@ router.get('/active', auth, async (req, res) => {
                     AND loc_sub.timestamp > (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000) - 86400000
                 ) as reliability_score
             FROM employees e
-            INNER JOIN locations l ON e.id = l.employee_id
+            INNER JOIN locations l ON e.id = l.employee_id AND (l.latitude != 0 OR l.longitude != 0)
             WHERE e.role = 'employee' 
                 AND l.timestamp > (EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::BIGINT * 1000) - (5 * 60 * 1000)
             ORDER BY e.id, l.timestamp DESC
@@ -343,10 +343,12 @@ router.post('/batch', auth, async (req, res) => {
             }
         }
 
-        // 🔴 VALIDACIÓN 2: Coordenadas inválidas
+        // 🔴 VALIDACIÓN 2: Coordenadas inválidas o 0.0 (GPS de baja calidad/inicial)
         if (typeof point.lat !== 'number' || typeof point.lng !== 'number' ||
+            (point.lat === 0 && point.lng === 0) ||
             point.lat < MIN_LAT || point.lat > MAX_LAT ||
             point.lng < MIN_LNG || point.lng > MAX_LNG) {
+            console.log(`[FILTER] Point REJECTED: Invalid/Zero coordinates (${point.lat}, ${point.lng})`);
             filtered++;
             continue;
         }

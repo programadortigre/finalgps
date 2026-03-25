@@ -32,9 +32,9 @@ router.post('/batch', auth, async (req, res) => {
     const employeeId = req.user.id;
     const isTrackingEnabled = req.user.is_tracking_enabled;
 
-    // Validación básica
-    if (!latitude || !longitude || !timestamp) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    // Validación básica y 0.0 (GPS basura)
+    if (!latitude || !longitude || !timestamp || (latitude === 0 && longitude === 0)) {
+      return res.status(400).json({ error: 'Missing required fields or invalid coordinates (0.0)' });
     }
 
     // Filtrado Kalman (opcional)
