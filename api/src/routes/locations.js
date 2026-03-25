@@ -792,9 +792,9 @@ router.get('/heartbeat-status', auth, async (req, res) => {
             // ── Clasificación de estado de vida ──────────────────────────────
             let liveStatus = 'unknown';
             if (!lastSeenMs)            liveStatus = 'never_seen';
-            else if (ageSeconds < 120)  liveStatus = 'alive';
-            else if (ageSeconds < 600)  liveStatus = 'stale';
-            else if (ageSeconds < 3600) liveStatus = 'offline';
+            else if (ageSeconds < 600)  liveStatus = 'alive';   // 10 min (Modo Ahorro amigable)
+            else if (ageSeconds < 1800) liveStatus = 'stale';   // 30 min
+            else if (ageSeconds < 7200) liveStatus = 'offline'; // 2 horas
             else                        liveStatus = 'dead';
 
             // ── 🟡 1: Razón del estado (debug humano) ────────────────────────

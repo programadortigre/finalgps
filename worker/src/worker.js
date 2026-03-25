@@ -93,7 +93,6 @@ async function insertPoints(client, tripId, employeeId, points) {
     const routePoints = points.filter(p =>
         p.state !== 'GPS_OFF' &&
         p.state !== 'NO_FIX'  &&
-        p.point_type !== 'heartbeat' &&
         p.point_type !== 'gps_off'
     );
 

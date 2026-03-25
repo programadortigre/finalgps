@@ -26,9 +26,14 @@ class LocalStorage {
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
-        // WAL mode debe configurarse en onConfigure, antes de onCreate/onUpgrade
-        await db.execute('PRAGMA journal_mode=WAL');
-        await db.execute('PRAGMA synchronous=NORMAL');
+        try {
+          // FIX: Usar rawQuery para PRAGMAs que devuelven valor, evita errores en isolates de Android
+          await db.rawQuery('PRAGMA journal_mode=WAL');
+          await db.rawQuery('PRAGMA synchronous=NORMAL');
+        } catch (e) {
+          // ignore: avoid_print
+          print('[STORAGE] Error en onConfigure (PRAGMAs): $e');
+        }
       },
     );
   }

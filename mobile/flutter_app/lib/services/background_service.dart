@@ -21,9 +21,18 @@ import 'package:url_launcher/url_launcher.dart';
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
+ServiceInstance? _globalServiceInstance;
+
 void _log(String tag, String message) {
+  final timestamp = DateTime.now().toString().split(' ').last.substring(0, 12);
+  final fullMsg = '[$timestamp][$tag] $message';
   // ignore: avoid_print
-  print('[$tag] $message');
+  print(fullMsg);
+  
+  // Enviar a la UI si está conectada
+  _globalServiceInstance?.invoke('log_event', {
+    'msg': fullMsg,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +158,7 @@ class TrackingEngine {
   // BUG #6 FIX: cache del estado de notificación para evitar IPC en cada punto GPS
   TrackingState? _lastNotificationState;
   bool _isForegroundCached = true;
+  ar.ActivityType? _lastLoggedActivity; // Filtro de spam de logs
 
   // GPS-OFF: detección y fallback por red + listener event-driven
   bool _gpsWasOff = false;
@@ -170,27 +180,23 @@ class TrackingEngine {
   Future<void> start(ServiceInstance service) async {
     _log('ISOLATE', '>>> engine.start() [ENTER]');
     try {
+      _log('INIT', '>>> [FLOW-START] TrackingEngine.start() called');
       _serviceInstance = service;
+      _currentState = TrackingState.STOPPED;
+      _lastValidLocationTime = DateTime.now();
+      _lastProcessingStart = DateTime.now();
 
       // Wake lock solo cuando sea necesario (ver _applyWakelock)
       _applyWakelock();
 
-      // 1. Activity Recognition
-      _log('INIT', 'Iniciando Activity Recognition...');
-      await _initActivityRecognition();
-
-      // 2. Stream GPS
-      _log('INIT', 'Iniciando Stream GPS...');
-      await _startLocationStream(reason: 'Initial Start'); // BUG #5 FIX: await para que el stream esté listo antes de que _deferredInitialization pueda llamar pause()
-
-      // 3. Listener de Conectividad para Synchro Inmediato
-      _initConnectivityListener();
-
-      // ✅ NUEVO: Listener de Batería para recuperación instantánea
-      _battery.onBatteryStateChanged.listen(_handleBatteryStateChange);
-
-      // ZUPT: iniciar detector de quietud por acelerómetro
+      // 1. Inicializar Sensores (NO BLOQUEANTE para evitar colgar el isolate)
       _motionDetector.start();
+      _log('INIT', 'Sensors: [FLOW-PROC] MotionDetector iniciado');
+      
+      // No esperamos (await) a ActivityRecognition ni otros sensores no críticos para no retrasar el GPS
+      _initActivityRecognition().then((_) => _log('INIT', 'Sensors: [FLOW-PROC] Activity Recognition listo')).catchError((e) => _log('INIT', 'Sensors: Error en Activity: $e'));
+      _initConnectivityListener();
+      _initBatteryStateListener();
 
       // Notificaciones locales para alerta de GPS apagado
       await _localNotif.initialize(
@@ -256,7 +262,10 @@ class TrackingEngine {
       // Hydratación diferida para no bloquear el inicio
       _deferredInitialization();
 
-      _log('ISOLATE', '<<< engine.start() [DONE]');
+      // 2. Iniciar el motor de ubicación (CRÍTICO)
+      _log('INIT', 'Arrancando [FLOW-PROC] Location Stream...');
+      await _startLocationStream(reason: 'Initial Start');
+      _log('INIT', '>>> [FLOW-READY] TrackingEngine listo');
     } catch (e, stack) {
       _log('CRITICAL', 'Error fatal en engine.start(): $e\n$stack');
     }
@@ -594,8 +603,11 @@ class TrackingEngine {
         final activityRecognition = ar.FlutterActivityRecognition.instance;
         _activityStreamSub =
             activityRecognition.activityStream.listen((activity) {
-          _log('ACTIVITY',
-              'Detectado: ${activity.type.name} (Confianza: ${activity.confidence})');
+          // FILTRO DE SPAM: Solo loguear si cambia el tipo o han pasado > 5 min
+          if (activity.type != _lastLoggedActivity) {
+            _log('ACTIVITY', 'Detectado: ${activity.type.name} (Confianza: ${activity.confidence})');
+            _lastLoggedActivity = activity.type;
+          }
           _updateStateFromActivity(activity.type);
         });
       } else {
@@ -672,6 +684,10 @@ class TrackingEngine {
   }
 
   // ✅ NUEVO: Manejar cambios en el estado de carga
+  void _initBatteryStateListener() {
+    _battery.onBatteryStateChanged.listen(_handleBatteryStateChange);
+  }
+
   void _handleBatteryStateChange(BatteryState state) {
     _log('BATT-EVENT', 'Nuevo estado detectado: ${state.name}');
     if (state == BatteryState.charging || state == BatteryState.full) {
@@ -1209,13 +1225,13 @@ class TrackingEngine {
               _log('GPS', 'SLEEP MODE: Lowering Accuracy');
             } else {
               _isSleepModeActive = false;
-              intervalSec = 20; 
-              distanceFilter = 10;
-              accuracy = LocationAccuracy.medium; // "Balanced" mode
+              accuracy = LocationAccuracy.high; // ← Cambiado de medium a high para asegurar fix rápido
+              distanceFilter = 5;               // ← Reducido de 15 a 5 para detectar el primer paso inmediatamente
+              intervalSec = 25;               // ← Reducido de 30 a 25
             }
             break;
           case TrackingState.DEEP_SLEEP:
-            intervalSec = 600; 
+            intervalSec = 300; 
             distanceFilter = 30;
             accuracy = LocationAccuracy.low;
             break;
@@ -1264,12 +1280,13 @@ class TrackingEngine {
         ),
       ).listen(
         (Position pos) {
+          _log('GPS-RAW', 'Recibido: lat=${pos.latitude}, lng=${pos.longitude}, acc=${pos.accuracy.toStringAsFixed(1)}m, speed=${pos.speed.toStringAsFixed(1)}m/s');
           _lastRawTime = DateTime.now();
           _processNewPosition(pos);
         },
         onError: (e) {
-          _log('GPS', 'Error en stream: $e');
-          _restartLocationStream(reason: 'Stream Error');
+          _log('GPS-RAW', 'Error en stream: $e');
+          _hardResetGPS(reason: 'stream_error');
         },
       );
     } catch (e) {
@@ -1285,11 +1302,14 @@ class TrackingEngine {
   // Procesamiento GPS y Hysteresis
   // ---------------------------------------------------------------------------
   Future<void> _processNewPosition(Position pos) async {
+    _log('FLOW-ENTRY', 'Iniciando procesamiento de punto (acc: ${pos.accuracy.toStringAsFixed(1)}m)');
+    
     // BUG #1 FIX: guard con timeout — si lleva >10s bloqueado es un bug, forzar reset
     if (_isProcessingPosition) {
-      if (_lastProcessingStart != null &&
-          DateTime.now().difference(_lastProcessingStart!).inSeconds > 10) {
-        _log('CRITICAL', '_isProcessingPosition bloqueado >10s — forzando reset del guard');
+      final lockTime = DateTime.now().difference(_lastProcessingStart!).inSeconds;
+      _log('FLOW-GUARD', 'Procesador ocupado (Lock age: ${lockTime}s)');
+      if (lockTime > 15) {
+        _log('CRITICAL', '_isProcessingPosition bloqueado >15s — forzando reset del guard');
         _isProcessingPosition = false;
       } else {
         return;
@@ -1317,11 +1337,11 @@ class TrackingEngine {
         if (dist < 10 && speed < 1.0) {
           // El GPS parece no moverse significativamente
           if (timeDiff > 180) {
-            _log('FREEZE', '⚠️ GPS Congelado detectado! (${dist.toStringAsFixed(1)}m en ${timeDiff}s). Forzando Hard Reset.');
-            _lastStaticTime = now; // Reset timer to avoid spam
+            _log('FLOW-PROC', '⚠️ [FREEZE] GPS Congelado (${dist.toStringAsFixed(1)}m en ${timeDiff}s)');
+            _lastStaticTime = now; 
             _hardResetGPS(reason: 'gps_freeze_detected');
             _isProcessingPosition = false;
-            return; // Abortamos proceso de este punto "congelado"
+            return; 
           }
         } else {
           // Hay movimiento real o cambio de posición, reseteamos el timer de freeze
@@ -1462,8 +1482,8 @@ class TrackingEngine {
       if (targetState != _currentState && _currentState != TrackingState.BATT_SAVER) {
         _log('STATE', 'Hysteresis -> $targetState (speed=${speed.toStringAsFixed(1)}m/s)');
         _setState(targetState, reason: 'Hysteresis ($speedKmh km/h)');
-        _isProcessingPosition = false;
-        return; 
+        // NO RETORNAR AQUÍ. Si retornamos, el punto que causó el cambio de estado se pierde para la UI y el buffer.
+        // El _setState ya se encarga de aplicar wakelock y reiniciar stream si es necesario.
       }
 
       _lastSentGpsState = 'OK'; 
@@ -1578,6 +1598,7 @@ class TrackingEngine {
         'state': _currentState.name,
         'total_distance': _totalDistanceKm,
       });
+      _log('UI-NOTIF', 'Evento enviado a la UI: lat=${point.lat}, state=${_currentState.name}');
 
       // ✅ Actualizar el watchdog timer para evitar falsos positivos de NO_SIGNAL
       _lastValidLocationTime = pointTime;
@@ -1716,6 +1737,7 @@ class TrackingEngine {
   /// Guarda el punto en SQLite. El envío al servidor lo hace _syncLoop.
   /// Esto elimina las peticiones HTTP concurrentes que causaban recorridos erráticos.
   Future<void> _addToBufferAndFlush(Map<String, dynamic> point) async {
+    _log('BUFFER-ADD', 'Guardando punto en Storage: lat=${point['lat']}, source=${point['source']}');
     try {
       final lp = LocalPoint(
         lat: (point['lat'] as num).toDouble(),
@@ -1773,6 +1795,7 @@ bool onIosBackground(ServiceInstance service) {
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
+  _globalServiceInstance = service;
   // ⚠️ PASO CRÍTICO 1: Notificar a Android INMEDIATAMENTE (dentro de 5 segundos)
   if (service is AndroidServiceInstance) {
     service.setAsForegroundService();

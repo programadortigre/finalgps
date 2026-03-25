@@ -42,7 +42,9 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   StreamSubscription<Map<String, dynamic>?>? _stateSub;
   StreamSubscription<Map<String, dynamic>?>? _locationEventSub;
   StreamSubscription<Map<String, dynamic>?>? _heartbeatSub;
+  StreamSubscription<Map<String, dynamic>?>? _logSub;
   Timer? _healthCheckTimer;    // Monitor de heartbeat
+  final List<String> _logEvents = []; // Almacén de logs para auditoría UI
 
   // ─ User info ─
   String _userName = '';
@@ -130,6 +132,15 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
         } else if (!active) {
           _stopClock();
         }
+      }
+    });
+
+    _logSub = service.on('log_event').listen((event) {
+      if (event != null && mounted) {
+        setState(() {
+          _logEvents.add(event['msg'] ?? '');
+          if (_logEvents.length > 300) _logEvents.removeAt(0); // Mantener últimos 300
+        });
       }
     });
 
@@ -302,11 +313,68 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
     _stateSub?.cancel();
     _locationEventSub?.cancel();
     _heartbeatSub?.cancel();
+    _logSub?.cancel();
     _healthCheckTimer?.cancel();
     _clockTimer?.cancel();
     _pulseCtrl.dispose();
     _slideCtrl.dispose();
     super.dispose();
+  }
+
+  void _showLogsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: Row(
+          children: [
+            const Icon(Icons.bug_report_outlined, color: Color(0xFF6C63FF)),
+            const SizedBox(width: 10),
+            const Text('Logs de Auditoría', style: TextStyle(color: Colors.white, fontSize: 18)),
+          ],
+        ),
+        content: Container(
+          width: double.maxFinite,
+          height: 400,
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.3),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: _logEvents.isEmpty 
+            ? const Center(child: Text('No hay logs aún...', style: TextStyle(color: Colors.white38)))
+            : ListView.builder(
+                padding: const EdgeInsets.all(8),
+                itemCount: _logEvents.length,
+                reverse: true,
+                itemBuilder: (context, index) {
+                  final log = _logEvents[_logEvents.length - 1 - index];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2.0),
+                    child: Text(
+                      log, 
+                      style: const TextStyle(color: Colors.greenAccent, fontSize: 10, fontFamily: 'monospace')
+                    ),
+                  );
+                },
+              ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _logEvents.join('\n')));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Logs copiados al portapapeles'))
+              );
+            },
+            child: const Text('COPIAR TODO', style: TextStyle(color: Color(0xFF6C63FF))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CERRAR', style: TextStyle(color: Colors.white60)),
+          ),
+        ],
+      ),
+    );
   }
 
   // Locals removed: we react to events now instead of Geolocator.
@@ -741,37 +809,40 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                   )
                 else
                   // Indicador de solo lectura para vendedores — el admin controla el rastreo remotamente
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 400),
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 18),
-                    decoration: BoxDecoration(
-                      color: _isOnline
-                        ? const Color(0xFF22C55E).withOpacity(.1)
-                        : const Color(0xFF64748B).withOpacity(.1),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
+                  GestureDetector(
+                    onLongPress: _showLogsDialog,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 400),
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      decoration: BoxDecoration(
                         color: _isOnline
-                          ? const Color(0xFF22C55E).withOpacity(.3)
-                          : const Color(0xFF64748B).withOpacity(.3),
-                      ),
-                    ),
-                    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      Icon(
-                        _isOnline ? Icons.gps_fixed : Icons.gps_off,
-                        color: _isOnline ? const Color(0xFF22C55E) : const Color(0xFF64748B),
-                        size: 22,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        _isOnline ? 'Rastreo activo' : 'Rastreo pausado por administrador',
-                        style: TextStyle(
-                          color: _isOnline ? const Color(0xFF22C55E) : const Color(0xFF64748B),
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
+                          ? const Color(0xFF22C55E).withOpacity(.1)
+                          : const Color(0xFF64748B).withOpacity(.1),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: _isOnline
+                            ? const Color(0xFF22C55E).withOpacity(.3)
+                            : const Color(0xFF64748B).withOpacity(.3),
                         ),
                       ),
-                    ]),
+                      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Icon(
+                          _isOnline ? Icons.gps_fixed : Icons.gps_off,
+                          color: _isOnline ? const Color(0xFF22C55E) : const Color(0xFF64748B),
+                          size: 22,
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          _isOnline ? 'Rastreo activo' : 'Rastreo pausado por administrador',
+                          style: TextStyle(
+                            color: _isOnline ? const Color(0xFF22C55E) : const Color(0xFF64748B),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ]),
+                    ),
                   ),
               ]),
             ),

@@ -122,7 +122,13 @@ class ApiService {
       }
     } on DioException catch (e) {
       final status = e.response?.statusCode;
-      final error = e.response?.data?['message'] ?? e.message;
+      String error = e.message ?? 'Unknown error';
+      
+      // FIX: Evitar error "String is not a subtype of int of index" si la respuesta es HTML/Texto
+      if (e.response?.data != null && e.response?.data is Map) {
+        error = e.response?.data['message'] ?? error;
+      }
+      
       print('[ApiService] DioError en uploadBatch ($status): $error');
       return false;
     } catch (e) {
