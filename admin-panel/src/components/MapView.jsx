@@ -17,35 +17,101 @@ L.Icon.Default.mergeOptions({
 
 // ── Cache de iconos por estado — evita recrear L.divIcon en cada render ───────
 const iconCache = {};
-function getLiveIcon(state, isStale, isGpsOff, hbStatus) {
-    const key = `${state}-${isStale}-${isGpsOff}-${hbStatus}`;
+
+// Paleta de colores por employeeId (mismo que sidebar)
+const AVATAR_COLORS = [
+    { bg: '#7c3aed', border: '#6d28d9' }, // violet
+    { bg: '#2563eb', border: '#1d4ed8' }, // blue
+    { bg: '#059669', border: '#047857' }, // emerald
+    { bg: '#d97706', border: '#b45309' }, // amber
+    { bg: '#dc2626', border: '#b91c1c' }, // rose
+    { bg: '#4f46e5', border: '#4338ca' }, // indigo
+];
+
+function getAvatarColor(employeeId) {
+    return AVATAR_COLORS[((employeeId || 1) - 1) % AVATAR_COLORS.length];
+}
+
+function getLiveIcon(state, isStale, isGpsOff, hbStatus, name, employeeId) {
+    const initial = (name || '?').charAt(0).toUpperCase();
+    const key = `${state}-${isStale}-${isGpsOff}-${hbStatus}-${initial}-${employeeId}`;
     if (iconCache[key]) return iconCache[key];
 
-    // Prioridad visual: dead > offline > gpsOff > stale > normal
     const isDead    = hbStatus === 'dead';
     const isOffline = hbStatus === 'offline';
-    const opacity   = (isDead || isGpsOff) ? 0.4 : (isOffline || isStale) ? 0.65 : 1;
+    const isAlive   = hbStatus === 'alive';
 
-    const pulseClass = isDead    ? 'pulse-off'   :
-                       isGpsOff  ? 'pulse-off'   :
-                       isOffline ? 'pulse-stale' :
-                       isStale   ? 'pulse-stale' : 'pulse-active';
-    const coreClass  = isDead    ? 'core-off'    :
-                       isGpsOff  ? 'core-off'    :
-                       isOffline ? 'core-stale'  :
-                       isStale   ? 'core-stale'  : 'core-active';
+    const color = getAvatarColor(employeeId);
+
+    // Color del pin según estado
+    let pinBg     = color.bg;
+    let pinBorder = color.border;
+    let opacity   = 1;
+    let pulseHtml = '';
+
+    if (isDead || isGpsOff) {
+        pinBg = '#475569'; pinBorder = '#334155'; opacity = 0.55;
+    } else if (isOffline) {
+        pinBg = '#ef4444'; pinBorder = '#dc2626'; opacity = 0.75;
+    } else if (isStale) {
+        pinBg = '#f59e0b'; pinBorder = '#d97706'; opacity = 0.85;
+    }
+
+    // Anillo de pulso solo cuando está vivo
+    if (isAlive && !isGpsOff) {
+        pulseHtml = `<div style="
+            position:absolute; inset:-6px; border-radius:50%;
+            border:2px solid ${pinBg}; opacity:0.4;
+            animation:lm-pulse 2s ease-out infinite;
+        "></div>`;
+    }
+
+    // Estado de movimiento como emoji pequeño
+    const moveEmoji = {
+        DRIVING: '🚗', WALKING: '🚶', BATT_SAVER: '🔋',
+        DEEP_SLEEP: '😴', GPS_OFF: '📵', NO_FIX: '📵',
+    }[state] || '';
 
     iconCache[key] = L.divIcon({
-        className: 'custom-div-icon',
-        html: `<div class="marker-container" style="opacity:${opacity}">
-                 <div class="marker-pulse ${pulseClass}"></div>
-                 <div class="marker-core ${coreClass}">
-                   <div class="marker-initial">?</div>
-                 </div>
-               </div>`,
-        iconSize: [40, 40],
-        iconAnchor: [20, 20],
-        popupAnchor: [0, -20],
+        className: '',
+        html: `
+        <style>
+          @keyframes lm-pulse {
+            0%   { transform:scale(1);   opacity:0.4; }
+            70%  { transform:scale(1.6); opacity:0;   }
+            100% { transform:scale(1.6); opacity:0;   }
+          }
+        </style>
+        <div style="position:relative; width:44px; height:52px; opacity:${opacity}">
+          ${pulseHtml}
+          <!-- Pin shape -->
+          <div style="
+            position:absolute; top:0; left:2px;
+            width:40px; height:40px; border-radius:50% 50% 50% 0;
+            transform:rotate(-45deg);
+            background:${pinBg};
+            border:2.5px solid ${pinBorder};
+            box-shadow:0 3px 10px rgba(0,0,0,0.35);
+          "></div>
+          <!-- Avatar circle inside pin -->
+          <div style="
+            position:absolute; top:5px; left:7px;
+            width:30px; height:30px; border-radius:50%;
+            background:rgba(255,255,255,0.18);
+            display:flex; align-items:center; justify-content:center;
+            font-size:13px; font-weight:800; color:#fff;
+            font-family:system-ui,sans-serif; letter-spacing:0;
+            text-shadow:0 1px 2px rgba(0,0,0,0.4);
+          ">${initial}</div>
+          <!-- Emoji de movimiento -->
+          ${moveEmoji ? `<div style="
+            position:absolute; bottom:0; right:0;
+            font-size:11px; line-height:1;
+          ">${moveEmoji}</div>` : ''}
+        </div>`,
+        iconSize:    [44, 52],
+        iconAnchor:  [22, 50],
+        popupAnchor: [0, -52],
     });
     return iconCache[key];
 }
@@ -63,18 +129,14 @@ const LiveMarker = memo(({ loc, addr, hbStatus = 'unknown', hbReason = null }) =
         }
     }, [loc.lat, loc.lng]);
 
-    const icon = getLiveIcon(loc.state, isStale, isGpsOff, hbStatus);
+    const icon = getLiveIcon(loc.state, isStale, isGpsOff, hbStatus, loc.name, loc.employeeId);
 
-    // Actualizar la inicial del nombre en el DOM directamente
+    // Actualizar icono cuando cambia nombre/estado (invalida cache key)
     useEffect(() => {
         if (markerRef.current) {
-            const el = markerRef.current.getElement();
-            if (el) {
-                const initial = el.querySelector('.marker-initial');
-                if (initial) initial.textContent = (loc.name || 'U').charAt(0).toUpperCase();
-            }
+            markerRef.current.setIcon(getLiveIcon(loc.state, isStale, isGpsOff, hbStatus, loc.name, loc.employeeId));
         }
-    }, [loc.name]);
+    }, [loc.name, loc.state, hbStatus, isStale, isGpsOff, loc.employeeId]);
 
     const displayState = (loc.state || 'Quieto').replaceAll('_', ' ');
     const stateColors = {
