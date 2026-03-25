@@ -42,20 +42,21 @@ app.use(compression());
 /// Protege contra abuso y DDoS
 const locationLimiter = rateLimit({
   windowMs: 60 * 1000, // Ventana de 1 minuto
-  max: 1000, // Máximo 1000 requests por minuto
+  max: 5000, // Aumentado para soportar flujo pesado de múltiples móviles
   message: 'Demasiadas solicitudes desde esta IP, por favor intente más tarde',
-  standardHeaders: true, // Retorna info de rate limit en header RateLimit-*
-  legacyHeaders: false, // Desactiva headers X-RateLimit-*
-  skip: (req) => req.user?.role === 'admin', // Admins no tienen rate limit
-  trustProxy: true, // Confiar en X-Forwarded-For header (para proxies como nginx)
+  standardHeaders: true, 
+  legacyHeaders: false, 
+  skip: (req) => req.user?.role === 'admin',
+  trustProxy: true,
 });
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // Ventana de 15 minutos
-  max: 500, // Máximo 500 requests por 15 minutos
+  max: 10000, // Aumentado drásticamente (Dashboard pollea 6 endpoints cada 5s = 1080 req/15min)
   message: 'Demasiadas solicitudes, por favor intente más tarde',
-  skip: (req) => req.user?.role === 'admin', // Admins no tienen rate limit
-  trustProxy: true, // Confiar en X-Forwarded-For header (para proxies como nginx)
+  standardHeaders: true,
+  skip: (req) => req.user?.role === 'admin',
+  trustProxy: true,
 });
 
 // Trust proxy for X-Forwarded-For header (required for rate-limit)
