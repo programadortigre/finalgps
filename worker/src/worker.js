@@ -18,6 +18,7 @@ const { Worker, Queue, UnrecoverableError } = require('bullmq');
 const Redis = require('ioredis');
 const { Pool } = require('pg');
 const pino = require('pino');
+const { detectStops } = require('./stopDetector');
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -239,6 +240,8 @@ async function processJob(job) {
         // 🔴 2. updateTripDistance idempotente — seguro en reintentos
         if (inserted > 0) {
             await updateTripDistance(client, tripId);
+            // ✅ NUEVO: Detectar paradas automáticamente después de cada lote
+            await detectStops(client, tripId, employeeId);
         }
 
         await client.query('COMMIT');

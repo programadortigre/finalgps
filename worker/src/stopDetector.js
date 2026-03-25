@@ -1,15 +1,16 @@
 async function detectStops(client, tripId, employeeId) {
     const MIN_DURATION_MS = 25 * 1000;  // 25s mínimo
-    const MAX_SPREAD = 20;              // metros de radio máximo para un cluster
-    const MAX_JUMP_M = 100;             // metros para filtrar puntos "locos"
-    const MAX_SPEED_KMH = 3.5;          // velocidad base para parada
+    const MAX_SPREAD = 30;              // Aumentado de 20 a 30 para tolerar ruido urbano
+    const MAX_JUMP_M = 150;             // Aumentado de 100 a 150 para no romper clusters por un solo punto malo
+    const MAX_SPEED_KMH = 4.0;          // Aumentado de 3.5 a 4.0 para capturar paradas con drift
 
     // 1. Obtener puntos (Siempre usar GPS Raw para que la parada caiga dentro de la tienda, no en la pista)
     const query = `
         SELECT id, latitude, longitude, speed, timestamp 
         FROM locations 
         WHERE trip_id = $1 
-        AND quality != 'no_fix' AND quality != 'low' AND source != 'geoip'
+        AND quality != 'no_fix' AND source != 'geoip'
+        AND (accuracy < 100 OR accuracy IS NULL)
         ORDER BY timestamp ASC
     `;
 
