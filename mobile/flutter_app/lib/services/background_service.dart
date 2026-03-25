@@ -1352,24 +1352,31 @@ class TrackingEngine {
         isGoodForHistory = false;
       }
 
-      // --- SUAVIZADO MATEMÁTICO (Simplified Kalman / Accuracy Weighting) ---
+      // --- SUAVIZADO MATEMÁTICO — FIX S1: Single-step accuracy-weighted average ---
+      // ANTERIOR (roto): doble paso → punto nuevo tenía solo ~23% de influencia real.
+      // NUEVO: un solo paso ponderado por (1/accuracy). Alta precisión (5m) → más peso.
       double smoothedLat = pos.latitude;
       double smoothedLng = pos.longitude;
 
       if (_lastValidPoint != null && isGoodForHistory) {
-        // Peso inversamente proporcional al error. Menos accuracy (ej 5m) = Más peso (0.2).
-        double weight = 1.0 / (pos.accuracy > 0 ? pos.accuracy : 1.0); 
-        
-        // EWMA Dinámico según velocidad
-        double alpha = (speedKmh > 40) ? 0.85 : 0.65; // A mayor velocidad, confiamos más en la posición nueva pura
-        
-        // Combinamos la nueva(ponderada) con la vieja(peso 1 base)
-        double rawSmoothLat = (pos.latitude * weight + _lastValidPoint!.lat) / (weight + 1.0);
-        double rawSmoothLng = (pos.longitude * weight + _lastValidPoint!.lng) / (weight + 1.0);
+        // Peso del nuevo punto: inversamente proporcional al error de precisión
+        // acc=5m → weight=0.20 | acc=15m → weight=0.067 | acc=30m → weight=0.033
+        final double newWeight = 1.0 / pos.accuracy.clamp(1.0, 100.0);
+        const double oldWeight = 1.0; // peso fijo del punto anterior como ancla
 
-        // Aplicamos el suavizado inercial EWMA sobre el resultado compensado
-        smoothedLat = (rawSmoothLat * alpha) + (_lastValidPoint!.lat * (1.0 - alpha));
-        smoothedLng = (rawSmoothLng * alpha) + (_lastValidPoint!.lng * (1.0 - alpha));
+        smoothedLat = (pos.latitude * newWeight + _lastValidPoint!.lat * oldWeight) / (newWeight + oldWeight);
+        smoothedLng = (pos.longitude * newWeight + _lastValidPoint!.lng * oldWeight) / (newWeight + oldWeight);
+
+        // 🔍 LOG TEMPORAL S1 — validar EWMA en campo (eliminar tras verificación)
+        final double rawDistM = Geolocator.distanceBetween(
+          _lastValidPoint!.lat, _lastValidPoint!.lng, pos.latitude, pos.longitude);
+        final double smoothDistM = Geolocator.distanceBetween(
+          _lastValidPoint!.lat, _lastValidPoint!.lng, smoothedLat, smoothedLng);
+        _log('EWMA', 'acc=${pos.accuracy.toStringAsFixed(1)}m '
+            'newW=${newWeight.toStringAsFixed(3)} '
+            'raw_dist=${rawDistM.toStringAsFixed(1)}m '
+            'smooth_dist=${smoothDistM.toStringAsFixed(1)}m '
+            '(reduction=${((1-smoothDistM/rawDistM.clamp(0.01,9999))*100).toStringAsFixed(0)}%)');
       }
 
       // FILTRO 2: Descartar saltos imposibles y picos de ruido
