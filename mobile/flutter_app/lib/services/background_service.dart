@@ -1528,27 +1528,47 @@ class TrackingEngine {
       // Deshabilitado — todo va por HTTP batch para evitar desincronización en 3G
       // _emitToSocket solo existe para compatibilidad con comandos remotos
 
-      // --- GUARDADO PARA HISTORIAL (BUFFER) ---
-      // Solo guardamos en el buffer (que va a la BD para rutas) si es de alta calidad
-      if (isGoodForHistory) {
-          _pointBuffer.add(point);
-          
-          if (_pointBuffer.length >= 5) {
-            _flushBufferToStorage().then((_) => _syncLoop(reason: 'Buffer Full'));
-          }
+      // --- GUARDADO PARA HISTORIAL (BUFFER) — FIX S3 ---
+      // ANTERIOR: _lastValidPoint solo se actualizaba dentro del bloque isGoodForHistory.
+      // → Si llegaban 5+ puntos malos seguidos, la referencia se congelaba y el spike filter
+      //   rechazaba los puntos buenos siguientes (los comparaba contra posición de 30–60s atrás).
+      // NUEVO: _lastValidPoint se actualiza SIEMPRE para mantener la referencia fresca.
+      //        El buffer de historial (ruta) sigue tomando solo puntos de calidad.
 
-          // Actualizar distancia local solo con puntos buenos
-          if (_lastValidPoint != null) {
-            final d = Geolocator.distanceBetween(
-              _lastValidPoint!.lat, _lastValidPoint!.lng,
-              point.lat, point.lng
-            );
-            if (d > 5 && d < 1000) _totalDistanceKm += (d / 1000.0);
-          }
-          _lastValidPoint = point;
+      if (isGoodForHistory) {
+        _pointBuffer.add(point);
+
+        if (_pointBuffer.length >= 5) {
+          _flushBufferToStorage().then((_) => _syncLoop(reason: 'Buffer Full'));
+        }
+
+        // Distancia solo con puntos buenos (sin ruido)
+        if (_lastValidPoint != null) {
+          final d = Geolocator.distanceBetween(
+            _lastValidPoint!.lat, _lastValidPoint!.lng,
+            point.lat, point.lng,
+          );
+          if (d > 5 && d < 1000) _totalDistanceKm += (d / 1000.0);
+        }
       } else {
-        _log('GPS', 'Punto excluido de Historial (acc: ${pos.accuracy}m)');
+        _log('GPS', 'Punto excluido de Historial (acc: ${pos.accuracy.toStringAsFixed(1)}m)');
       }
+
+      // 🔍 LOG TEMPORAL S3 — detectar congelamiento de referencia (eliminar tras verificación)
+      if (_lastValidPoint != null) {
+        final refAge = pointTime.millisecondsSinceEpoch - _lastValidPoint!.timestamp;
+        final refDist = Geolocator.distanceBetween(
+          _lastValidPoint!.lat, _lastValidPoint!.lng, point.lat, point.lng);
+        final frozen = !isGoodForHistory && refAge > 10000;
+        _log('LVP', '${frozen ? "⚠️ REF CONGELADA" : "✅ ref ok"} '
+            'age=${(refAge/1000).toStringAsFixed(0)}s '
+            'dist_desde_ref=${refDist.toStringAsFixed(1)}m '
+            'goodHist=$isGoodForHistory '
+            'acc=${pos.accuracy.toStringAsFixed(1)}m');
+      }
+
+      // FIX S3: Actualizar referencia con CUALQUIER punto válido
+      _lastValidPoint = point;
 
       // Emitir al UI inmediatamente si es relevante
       _serviceInstance?.invoke('trackingLocation', {

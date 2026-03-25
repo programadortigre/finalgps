@@ -713,6 +713,29 @@ router.get('/metrics/:employeeId', auth, async (req, res) => {
 });
 
 /// ============================================================================
+/// ENDPOINT: GET /live-stops - Paradas activas en tiempo real (desde Redis)
+/// ============================================================================
+router.get('/live-stops', auth, async (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    try {
+        const employees = await db.query(`SELECT id FROM employees WHERE role = 'employee'`);
+        const stops = [];
+        for (const emp of employees.rows) {
+            const raw = await redis.get(`stop:employee:${emp.id}`);
+            if (raw) {
+                const stop = JSON.parse(raw);
+                stops.push(stop);
+            }
+        }
+        res.json(stops);
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to fetch live stops' });
+    }
+});
+
+/// ============================================================================
 /// ENDPOINT: GET /queue-stats - Métricas de la cola BullMQ (desde Redis)
 /// ============================================================================
 router.get('/queue-stats', auth, async (req, res) => {

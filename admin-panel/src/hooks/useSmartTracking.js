@@ -43,10 +43,14 @@ function lerp(prev, next, nowMs) {
 export function useSmartTracking() {
   // rawLocations: datos reales del servidor, nunca se renderizan directamente
   const raw = useRef({});
+  // trail: últimos 50 puntos por vendedor para dibujar el recorrido en vivo
+  const trails = useRef({});
 
   const [locations, setLocations]         = useState({});
   const [liveActiveIds, setLiveActiveIds] = useState(new Set());
   const [isConnected, setIsConnected]     = useState(true);
+  const [liveTrails, setLiveTrails]       = useState({});
+  const [liveStops, setLiveStops]         = useState([]); // paradas activas en tiempo real
   // heartbeatStatus: { [employeeId]: 'alive' | 'stale' | 'offline' | 'dead' | 'unknown' }
   const [heartbeatStatus, setHeartbeatStatus] = useState({});
   // queueStats: { waiting, active, failed, completed, ageSeconds, workerStatus, jobsPerSec }
@@ -69,7 +73,6 @@ export function useSmartTracking() {
         const prev = raw.current[loc.employeeId];
         raw.current[loc.employeeId] = {
           ...loc,
-          // Guardamos snapshot anterior para interpolar
           _prevLat:        prev?.lat        ?? loc.lat,
           _prevLng:        prev?.lng        ?? loc.lng,
           _prevReceivedAt: prev?.receivedAt ?? nowMs - POLL_MS,
@@ -84,7 +87,39 @@ export function useSmartTracking() {
     }
   }, []);
 
-  // ── 1b. Heartbeat status polling (cada 30s) ──────────────────────────────────  // Detecta empleados silenciosos: alive / stale / offline / dead
+  // ── 1a. Cargar trail histórico del día al iniciar ────────────────────────────
+  // Cuando el admin abre el panel, carga los últimos puntos del día de cada vendedor
+  // para que el trail no empiece vacío
+  const loadHistoricalTrails = useCallback(async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const { data: employees } = await api.get('/api/trips/employees');
+      if (!mounted.current) return;
+
+      for (const emp of employees) {
+        try {
+          const { data: trips } = await api.get(
+            `/api/trips?employeeId=${emp.id}&date=${today}`
+          );
+          if (!trips?.length) continue;
+
+          // Tomar el último viaje del día
+          const lastTrip = trips[trips.length - 1];
+          const { data: detail } = await api.get(`/api/trips/${lastTrip.id}?simplify=true`);
+          if (!mounted.current) return;
+
+          const pts = detail?.points;
+          if (pts?.length >= 2) {
+            const trail = pts.map(p => [p.lat, p.lng]);
+            trails.current[emp.id] = trail;
+            setLiveTrails(t => ({ ...t, [emp.id]: trail }));
+          }
+        } catch { /* vendedor sin viajes hoy — ok */ }
+      }
+    } catch { /* silencioso */ }
+  }, []);
+
+  // ── 1b. Heartbeat + live stops polling (cada 30s) ───────────────────────────
   // 🟡 3: Emite alertas de browser cuando un empleado cambia a offline/dead
   const prevHbRef = useRef({});
   const pollHeartbeat = useCallback(async () => {
@@ -115,6 +150,12 @@ export function useSmartTracking() {
         prevHbRef.current[s.employeeId] = s;
       });
       setHeartbeatStatus(map);
+
+      // Paradas activas en tiempo real
+      try {
+        const { data: stops } = await api.get('/api/locations/live-stops');
+        if (mounted.current) setLiveStops(stops || []);
+      } catch { /* silencioso */ }
     } catch {
       // silencioso — no crítico
     }
@@ -244,6 +285,20 @@ export function useSmartTracking() {
       receivedAt:      nowMs,
     };
 
+    // Acumular trail en vivo — máx 100 puntos, solo si hay coordenadas válidas
+    if (data.lat && data.lng && data.lat !== 0 && data.lng !== 0 &&
+        data.point_type !== 'heartbeat') {
+      const empId = data.employeeId;
+      const current = trails.current[empId] || [];
+      const last = current[current.length - 1];
+      // Solo agregar si se movió al menos 2m (evita duplicados de puntos quietos)
+      const moved = !last || Math.abs(last[0] - data.lat) > 0.00002 || Math.abs(last[1] - data.lng) > 0.00002;
+      if (moved) {
+        trails.current[empId] = [...current.slice(-99), [data.lat, data.lng]];
+        setLiveTrails(t => ({ ...t, [empId]: trails.current[empId] }));
+      }
+    }
+
     // Marcar como activo en vivo
     setLiveActiveIds((s) => new Set([...s, data.employeeId]));
   }, []);
@@ -299,6 +354,7 @@ export function useSmartTracking() {
     poll();          // Primer fetch inmediato
     pollHeartbeat(); // Primer heartbeat check inmediato
     pollQueueStats(); // Primer queue-stats — programa el siguiente adaptativo internamente
+    loadHistoricalTrails(); // Cargar trail del día al abrir el panel
     const pollTimer      = setInterval(poll, POLL_MS);
     const interpTimer    = setInterval(tick, INTERP_MS);
     const heartbeatTimer = setInterval(pollHeartbeat, HEARTBEAT_POLL_MS);
@@ -313,7 +369,7 @@ export function useSmartTracking() {
       if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
       socket.off('location_update', onSocketUpdate);
     };
-  }, [poll, tick, onSocketUpdate, pollHeartbeat, pollQueueStats]);
+  }, [poll, tick, onSocketUpdate, pollHeartbeat, pollQueueStats, loadHistoricalTrails]);
 
-  return { locations, liveActiveIds, isConnected, heartbeatStatus, queueStats };
+  return { locations, liveActiveIds, isConnected, heartbeatStatus, queueStats, liveTrails, liveStops };
 }

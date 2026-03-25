@@ -14,9 +14,12 @@ import 'package:sensors_plus/sensors_plus.dart';
 class MotionDetector {
   // Ventana deslizante de muestras del acelerómetro (últimos ~1.5s a 50Hz)
   static const int _windowSize = 75;
-  // Umbral de varianza: < 0.04 m²/s⁴ = quieto (calibrado empíricamente)
-  // Google usa ~0.03, nosotros usamos 0.05 para ser más permisivos con vibraciones de bolsillo
-  static const double _varianceThreshold = 0.05;
+  // Umbral de varianza calibrado para bolsillo/auto:
+  // - Quieto en mesa: ~0.001
+  // - Bolsillo caminando: ~0.08-0.3
+  // - Auto en movimiento: ~0.02-0.15 (vibraciones del motor)
+  // Usamos 0.02 — solo descarta si el teléfono está COMPLETAMENTE quieto (en mesa/escritorio)
+  static const double _varianceThreshold = 0.02;
   // Mínimo de muestras antes de tomar decisión
   static const int _minSamples = 20;
 

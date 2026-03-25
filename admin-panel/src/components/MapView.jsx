@@ -456,7 +456,9 @@ const MapView = ({
     isDrawingPerimeter,
     onPolygonComplete,
     onCancelDrawing,
-    heartbeatStatus = {},   // { [employeeId]: 'alive'|'stale'|'offline'|'dead'|'unknown' }
+    heartbeatStatus = {},
+    liveTrails = {},
+    liveStops = [],        // paradas activas en tiempo real [{ employeeId, lat, lng, durationS }]
 }) => {
     const [trips, setTrips] = useState([]);
     const [selectedTrip, setTrip] = useState(propSelectedTrip || null);
@@ -996,6 +998,28 @@ const MapView = ({
                 )}
 
                 {/* ── LIVE MODE ── */}
+                {/* Trails en tiempo real — una polyline por vendedor */}
+                {view === 'live' && Object.entries(liveTrails).map(([empId, trail]) => {
+                    if (!trail || trail.length < 2) return null;
+                    const loc = activeLocations[empId];
+                    const isSelected = selectedEmployee?.id === parseInt(empId);
+                    // Color único por vendedor (mismo que el avatar)
+                    const trailColors = ['#7c3aed','#2563eb','#059669','#d97706','#dc2626','#4f46e5'];
+                    const color = trailColors[(parseInt(empId) - 1) % trailColors.length];
+                    return (
+                        <Polyline
+                            key={`trail-${empId}`}
+                            positions={trail}
+                            pathOptions={{
+                                color,
+                                weight: isSelected ? 4 : 2.5,
+                                opacity: isSelected ? 0.9 : 0.55,
+                                dashArray: loc?.state === 'STOPPED' ? '6 6' : null,
+                            }}
+                        />
+                    );
+                })}
+
                 {view === 'live' && livePositions.map(loc => {
                     if (!loc.lat || !loc.lng || loc.lat === 0 || loc.lng === 0) return null;
                     const hbEntry = heartbeatStatus?.[loc.employeeId];

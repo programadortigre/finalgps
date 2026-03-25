@@ -25,7 +25,8 @@ class LocalStorage {
       version: 7, // v7: client_id UUID para deduplicación en backend
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
-      onOpen: (db) async {
+      onConfigure: (db) async {
+        // WAL mode debe configurarse en onConfigure, antes de onCreate/onUpgrade
         await db.execute('PRAGMA journal_mode=WAL');
         await db.execute('PRAGMA synchronous=NORMAL');
       },

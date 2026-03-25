@@ -32,7 +32,7 @@ const Dashboard = ({ user, onLogout }) => {
     const [selectedStatus, setSelectedStatus] = useState('all');
 
     // Smart tracking: polling + interpolación + socket fast-path + heartbeat
-    const { locations: activeLocations, liveActiveIds, isConnected, heartbeatStatus, queueStats } = useSmartTracking();
+    const { locations: activeLocations, liveActiveIds, isConnected, heartbeatStatus, queueStats, liveTrails, liveStops } = useSmartTracking();
 
     // Customer Management State
     const [customers, setCustomers] = useState([]);
@@ -708,6 +708,8 @@ const Dashboard = ({ user, onLogout }) => {
                             selectedEmployee={selectedEmployee}
                             activeLocations={activeLocations}
                             heartbeatStatus={heartbeatStatus}
+                            liveTrails={liveTrails}
+                            liveStops={liveStops}
                             customers={customers}
                             onMapClick={handleMapClick}
                             onCustomerMove={handleCustomerMove}
