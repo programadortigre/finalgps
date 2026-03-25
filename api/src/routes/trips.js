@@ -229,7 +229,7 @@ router.get('/events/history/:employeeId', auth, async (req, res) => {
         const countResult = await db.query(`
             WITH ranked_locations AS (
                 SELECT 
-                    timestamp, state, reset_reason, quality, confidence,
+                    timestamp, state,
                     LAG(state) OVER (ORDER BY timestamp) as prev_state,
                     LAG(timestamp) OVER (ORDER BY timestamp) as prev_timestamp
                 FROM locations
@@ -245,7 +245,7 @@ router.get('/events/history/:employeeId', auth, async (req, res) => {
         const result = await db.query(`
             WITH ranked_locations AS (
                 SELECT 
-                    timestamp, state, reset_reason, quality, confidence,
+                    timestamp, state,
                     LAG(state) OVER (ORDER BY timestamp) as prev_state,
                     LAG(timestamp) OVER (ORDER BY timestamp) as prev_timestamp
                 FROM locations
