@@ -508,187 +508,151 @@ const Dashboard = ({ user, onLogout }) => {
                                             <p className="text-slate-500 text-sm">Sin coincidencias</p>
                                         </div>
                                     ) : (
-                                        filteredVendors.map(vendor => (
+                                        filteredVendors.map(vendor => {
+                                            // Color único por vendedor basado en su id
+                                            const avatarColors = [
+                                                'from-violet-500 to-purple-600',
+                                                'from-blue-500 to-cyan-600',
+                                                'from-emerald-500 to-teal-600',
+                                                'from-orange-500 to-amber-600',
+                                                'from-rose-500 to-pink-600',
+                                                'from-indigo-500 to-blue-600',
+                                            ];
+                                            const avatarColor = avatarColors[(vendor.id - 1) % avatarColors.length];
+                                            const initials = vendor.name
+                                                .split(' ')
+                                                .map(w => w[0])
+                                                .slice(0, 2)
+                                                .join('')
+                                                .toUpperCase();
+
+                                            const isSelected = selectedEmployee?.id === vendor.id;
+
+                                            // Estado legible
+                                            const diffMs = vendor.lastUpdate ? (Date.now() - new Date(vendor.lastUpdate).getTime()) : Infinity;
+                                            const diffMins = Math.floor(diffMs / 60000);
+                                            const diffSec = Math.floor(diffMs / 1000);
+                                            const timeLabel = diffSec < 60 ? `${diffSec}s` : diffMins < 60 ? `${diffMins}m` : `${Math.floor(diffMins/60)}h`;
+                                            const latencyColor = diffSec < 15 ? 'text-green-400' : diffSec < 120 ? 'text-yellow-400' : 'text-slate-500';
+
+                                            let statusDot = 'bg-slate-600';
+                                            let statusLabel = 'Sin datos';
+                                            let statusColor = 'text-slate-400';
+                                            if (vendor.hbStatus === 'alive') { statusDot = 'bg-green-400 animate-pulse shadow-green-400/60 shadow-sm'; statusLabel = 'En línea'; statusColor = 'text-green-400'; }
+                                            else if (vendor.hbStatus === 'stale') { statusDot = 'bg-yellow-400'; statusLabel = 'Inactivo'; statusColor = 'text-yellow-400'; }
+                                            else if (vendor.hbStatus === 'offline') { statusDot = 'bg-red-500'; statusLabel = 'Offline'; statusColor = 'text-red-400'; }
+                                            else if (vendor.hbStatus === 'dead') { statusDot = 'bg-slate-600'; statusLabel = 'Sin señal'; statusColor = 'text-slate-500'; }
+
+                                            const movementIcon = {
+                                                DRIVING: '🚗', En_auto: '🚗',
+                                                WALKING: '🚶', A_pie: '🚶',
+                                                STOPPED: '⏸', DEEP_SLEEP: '😴',
+                                                BATT_SAVER: '🔋', GPS_OFF: '📵',
+                                            }[vendor.status?.replace(' ', '_')] || '📍';
+
+                                            return (
                                             <div
                                                 key={vendor.id}
                                                 onClick={() => {
-                                                    setSelectedEmployee(selectedEmployee?.id === vendor.id ? null : vendor);
+                                                    setSelectedEmployee(isSelected ? null : vendor);
                                                     isMobile && setSidebarOpen(false);
                                                 }}
-                                                className={`p-3 rounded-lg cursor-pointer transition-all border group ${
-                                                    selectedEmployee?.id === vendor.id
-                                                        ? 'bg-primary-600/20 border-primary-500/30'
-                                                        : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10'
+                                                className={`rounded-xl cursor-pointer transition-all duration-200 border overflow-hidden ${
+                                                    isSelected
+                                                        ? 'bg-primary-600/15 border-primary-500/40 shadow-lg shadow-primary-500/10'
+                                                        : 'bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.07] hover:border-white/10'
                                                 }`}
                                             >
-                                                <div className="flex items-center gap-2 mb-2">
-                                                    {/* Dot de estado — color según heartbeat */}
-                                                    <span
-                                                        title={{
-                                                            alive:      'Activo — heartbeat reciente',
-                                                            stale:      'Sin datos 2-10 min',
-                                                            offline:    'Offline >10 min',
-                                                            dead:       'Sin señal >1h',
-                                                            unknown:    'Estado desconocido',
-                                                        }[vendor.hbStatus] || ''}
-                                                        className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                                                            vendor.hbStatus === 'alive'   ? 'bg-green-400 shadow-lg shadow-green-400/50 animate-pulse' :
-                                                            vendor.hbStatus === 'stale'   ? 'bg-yellow-400' :
-                                                            vendor.hbStatus === 'offline' ? 'bg-red-500' :
-                                                            vendor.hbStatus === 'dead'    ? 'bg-slate-600' :
-                                                            'bg-slate-700'
-                                                        }`}
-                                                    />
-                                                    <span className="font-medium text-sm flex-1 group-hover:text-primary-300 flex items-center gap-2 min-w-0">
-                                                        <span className="truncate">{vendor.name}</span>
-                                                        {/* 🔥 1: Tracking score */}
-                                                        {vendor.trackingScore !== null && (
-                                                            <span
-                                                                className={`text-[9px] font-bold px-1 py-0.5 rounded flex-shrink-0 ${
-                                                                    vendor.trackingScore >= 70 ? 'bg-green-500/20 text-green-400' :
-                                                                    vendor.trackingScore >= 40 ? 'bg-yellow-500/20 text-yellow-400' :
-                                                                    'bg-red-500/20 text-red-400'
-                                                                }`}
-                                                                title={`Score de calidad: ${vendor.trackingScore}/100`}
-                                                            >
-                                                                ⚡{vendor.trackingScore}
-                                                            </span>
-                                                        )}
-                                                        {/* 🔥 3: Predicción de desconexión */}
-                                                        {vendor.disconnectionRisk === 'high' && (
-                                                            <span className="text-[9px] font-bold px-1 py-0.5 rounded flex-shrink-0 bg-red-500/20 text-red-400 animate-pulse" title="Riesgo alto de desconexión (batería baja / señal mala)">
-                                                                ⚠️
-                                                            </span>
-                                                        )}
-                                                        {vendor.disconnectionRisk === 'medium' && (
-                                                            <span className="text-[9px] font-bold px-1 py-0.5 rounded flex-shrink-0 bg-yellow-500/20 text-yellow-400" title="Riesgo medio de desconexión">
-                                                                ⚡
-                                                            </span>
-                                                        )}
-                                                    </span>
-                                                    
-                                                    {/* Locate Now Button */}
-                                                    <button 
-                                                        onClick={(e) => {
-                                                            requestLocate(e, vendor.id);
-                                                        }}
-                                                        className={`p-1.5 rounded-lg transition-all ${
-                                                            vendor.isLive ? 'text-primary-400 hover:bg-primary-500/20' : 'text-slate-500 hover:bg-white/10 opacity-60'
-                                                        }`}
-                                                        title={
-                                                            !vendor.isLive ? "Localizar al reconectar (guardado en servidor)" :
-                                                            vendor.status === 'GPS_OFF' ? "Localizar por red (GPS Apagado)" : "Localizar ahora"
-                                                        }
-                                                    >
-                                                        <Radar size={14} className={vendor.status === 'GPS_OFF' ? 'text-amber-500' : ''} />
-                                                    </button>
+                                                {/* Barra de color superior si está seleccionado */}
+                                                {isSelected && <div className={`h-0.5 w-full bg-gradient-to-r ${avatarColor}`} />}
 
-                                                    {/* Quick Control */}
-                                                    <button 
-                                                        onClick={(e) => toggleTracking(e, vendor.id, vendor.is_tracking_enabled ?? true)}
-                                                        className={`p-1.5 rounded-lg transition-all ${
-                                                            (vendor.is_tracking_enabled ?? true)
-                                                                ? 'text-green-400 hover:bg-green-500/20'
-                                                                : 'text-slate-500 hover:bg-slate-500/20'
-                                                        }`}
-                                                        title={vendor.is_tracking_enabled === false ? "Activar Rastreo" : "Desactivar Rastreo"}
-                                                    >
-                                                        {(vendor.is_tracking_enabled ?? true) ? <Power size={14} /> : <PowerOff size={14} />}
-                                                    </button>
-                                                </div>
-                                                <div className="text-xs text-slate-400 space-y-1 pl-5 flex justify-between items-end">
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-[10px] opacity-70 flex items-center gap-1">🏎️ {vendor.speed ? (vendor.speed.toFixed(1) + ' km/h') : '---'}
-                                                            {vendor.battery !== undefined && (
-                                                                <>
-                                                                    <span className="mx-1 opacity-20">|</span>
-                                                                    <span className="flex items-center gap-0.5" title={vendor.is_charging ? "Cargando" : "Nivel de batería"}>
-                                                                        {vendor.is_charging ? <Zap size={10} className="text-yellow-400" /> : <Battery size={10} />}
-                                                                        {vendor.battery}%
-                                                                    </span>
-                                                                </>
-                                                            )}
-                                                            </span>
-                                                            {vendor.lastUpdate && (() => {
-                                                                const diffMs = vendor.lastUpdate ? (Date.now() - new Date(vendor.lastUpdate).getTime()) : Infinity;
-                                                                const diffMins = Math.floor(diffMs / 60000);
-                                                                const isStaleReal = diffMins > 20;
-                                                                
-                                                                let timeLabel = `${diffMins}m`;
-                                                                if (diffMins > 1440) timeLabel = '>24h';
-
-                                                                let statusText = '🔴 NO GPS';
-                                                                let statusClass = 'bg-red-500/10 text-red-400';
-
-                                                                if (vendor.is_tracking_enabled === false || vendor.status === 'PAUSED') {
-                                                                    statusText = '⏸️ Pausado';
-                                                                    statusClass = 'bg-slate-500/20 text-slate-400 border border-white/10';
-                                                                } else if (vendor.status === 'OFFLINE') {
-                                                                    statusText = '🔌 Desconectado';
-                                                                    statusClass = 'bg-slate-500/20 text-slate-400 border border-white/10';
-                                                                } else if (diffMins >= 500000 || !vendor.lastUpdate) {
-                                                                    statusText = '🕳️ Sin datos';
-                                                                    statusClass = 'bg-slate-800 text-slate-400 border border-slate-700 font-bold';
-                                                                } else if (vendor.status === 'GPS_OFF') {
-                                                                    statusText = '⛔ Apagado';
-                                                                    statusClass = 'bg-red-600 text-white font-bold animate-pulse px-2';
-                                                                } else if (isStaleReal) {
-                                                                    statusText = `🕳️ Sin señal (${timeLabel})`;
-                                                                    statusClass = 'bg-slate-800 text-slate-400 border border-slate-700 font-bold';
-                                                                } else if (vendor.point_type === 'recovery') {
-                                                                    statusText = '🔄 Recuperado';
-                                                                    statusClass = 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
-                                                                } else if ((vendor.confidence || 1.0) >= 0.8) {
-                                                                    statusText = '🟢 Live';
-                                                                    statusClass = 'bg-green-500/10 text-green-400';
-                                                                }
-
-                                                                return (
-                                                                    <div className="flex flex-wrap gap-1 mt-0.5">
-                                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded-sm flex items-center gap-1 font-medium ${statusClass}`}>
-                                                                            {statusText}
-                                                                        </span>
-                                                                        {vendor.point_type === 'manual' && (
-                                                                            <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold flex items-center gap-1 animate-pulse" title="Actualizado Manualmente">
-                                                                                ⚡ MANUAL
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                );
-                                                            })()}
+                                                <div className="p-3">
+                                                    {/* Fila principal: avatar + nombre + acciones */}
+                                                    <div className="flex items-center gap-3">
+                                                        {/* Avatar con iniciales */}
+                                                        <div className="relative flex-shrink-0">
+                                                            <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${avatarColor} flex items-center justify-center text-white text-xs font-bold shadow-md`}>
+                                                                {initials}
+                                                            </div>
+                                                            {/* Dot de estado sobre el avatar */}
+                                                            <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-dark-950 ${statusDot}`} />
                                                         </div>
-                                                        <div className="text-slate-500 flex items-center gap-2">
-                                                            {/* 🟡 5: Latencia visible en segundos */}
-                                                            {vendor.lastUpdate ? (() => {
-                                                                const diffMs = Date.now() - new Date(vendor.lastUpdate).getTime();
-                                                                const diffSec = Math.floor(diffMs / 1000);
-                                                                const label = diffSec < 60
-                                                                    ? `${diffSec}s`
-                                                                    : diffSec < 3600
-                                                                        ? `${Math.floor(diffSec / 60)}m`
-                                                                        : `${Math.floor(diffSec / 3600)}h`;
-                                                                const color = diffSec < 15 ? 'text-green-400' : diffSec < 120 ? 'text-yellow-400' : 'text-slate-500';
-                                                                return <span className={`text-[10px] font-mono ${color}`} title="Hace cuánto llegó el último dato">⏱ {label}</span>;
-                                                            })() : <span className="text-[10px]">Offline</span>}
+
+                                                        {/* Nombre + estado */}
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="text-sm font-semibold text-white truncate">{vendor.name}</span>
+                                                                {vendor.trackingScore !== null && (
+                                                                    <span className={`text-[9px] font-bold px-1 py-0.5 rounded flex-shrink-0 ${
+                                                                        vendor.trackingScore >= 70 ? 'bg-green-500/20 text-green-400' :
+                                                                        vendor.trackingScore >= 40 ? 'bg-yellow-500/20 text-yellow-400' :
+                                                                        'bg-red-500/20 text-red-400'
+                                                                    }`}>⚡{vendor.trackingScore}</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="flex items-center gap-1.5 mt-0.5">
+                                                                <span className={`text-[11px] font-medium ${statusColor}`}>{statusLabel}</span>
+                                                                {vendor.lastUpdate && (
+                                                                    <span className={`text-[10px] font-mono ${latencyColor}`}>· {timeLabel}</span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Acciones */}
+                                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); requestLocate(e, vendor.id); }}
+                                                                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                                                                    vendor.isLive ? 'text-primary-400 hover:bg-primary-500/20' : 'text-slate-600 opacity-50'
+                                                                }`}
+                                                                title="Localizar ahora"
+                                                            >
+                                                                <Radar size={13} />
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => toggleTracking(e, vendor.id, vendor.is_tracking_enabled ?? true)}
+                                                                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                                                                    (vendor.is_tracking_enabled ?? true)
+                                                                        ? 'text-green-400 hover:bg-green-500/20'
+                                                                        : 'text-slate-500 hover:bg-white/10'
+                                                                }`}
+                                                                title={(vendor.is_tracking_enabled ?? true) ? "Pausar rastreo" : "Activar rastreo"}
+                                                            >
+                                                                {(vendor.is_tracking_enabled ?? true) ? <Power size={13} /> : <PowerOff size={13} />}
+                                                            </button>
                                                         </div>
                                                     </div>
-                                                    <div className="flex items-center gap-1">
-                                                        {/* 🟡 1: Razón del estado */}
+
+                                                    {/* Fila secundaria: velocidad + batería + estado GPS */}
+                                                    <div className="mt-2.5 flex items-center justify-between pl-12">
+                                                        <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                                                            <span>{movementIcon} {vendor.speed > 0 ? `${vendor.speed.toFixed(0)} km/h` : '—'}</span>
+                                                            {vendor.battery !== undefined && (
+                                                                <span className="flex items-center gap-0.5">
+                                                                    {vendor.is_charging
+                                                                        ? <Zap size={9} className="text-yellow-400" />
+                                                                        : <Battery size={9} className={vendor.battery < 20 ? 'text-red-400' : ''} />
+                                                                    }
+                                                                    <span className={vendor.battery < 20 ? 'text-red-400' : ''}>{vendor.battery}%</span>
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {/* Chip de estado GPS */}
                                                         {vendor.hbReason && vendor.hbStatus !== 'alive' && (
-                                                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                                                                vendor.hbStatus === 'dead'    ? 'bg-slate-700 text-slate-400' :
+                                                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                                                                vendor.hbStatus === 'dead' ? 'bg-slate-700/80 text-slate-400' :
                                                                 vendor.hbStatus === 'offline' ? 'bg-red-500/15 text-red-400' :
                                                                 'bg-yellow-500/15 text-yellow-400'
-                                                            }`} title="Razón del estado">
-                                                                {vendor.hbReason}
-                                                            </span>
+                                                            }`}>{vendor.hbReason}</span>
                                                         )}
-                                                        {vendor.isLive && <span className="text-[9px] text-green-500 font-bold uppercase tracking-wider">Live</span>}
+                                                        {vendor.disconnectionRisk === 'high' && (
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400 animate-pulse font-medium">⚠ Riesgo</span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>
-                                        ))
+                                            );
+                                        })
                                     )}
                                 </div>
                             </>

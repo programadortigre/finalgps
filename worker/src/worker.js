@@ -370,8 +370,8 @@ const metricsInterval = setInterval(async () => {
             logger.error({ failed }, '[WORKER] 🚨 High failure count — check DLQ');
         }
 
-        // 🟢 2: Alerta si lag real > 60s (datos llegando tarde a la DB)
-        if (lagMs !== null && lagMs > 60000) {
+        // 🟢 2: Alerta si lag real > 5min (datos llegando muy tarde a la DB)
+        if (lagMs !== null && lagMs > 300000) {
             logger.warn({ lagMs: Math.round(lagMs / 1000) + 's' }, '[WORKER] ⚠️ High processing lag');
         }
     } catch (_) {}

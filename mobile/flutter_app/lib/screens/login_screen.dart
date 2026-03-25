@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import '../services/api_service.dart';
@@ -80,7 +81,11 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
       await SocketService.init(token);
       await FlutterBackgroundService().startService();
-      // El servicio ya corre — el vendedor no necesita hacer nada más
+
+      // Enviar ubicación inmediata al servidor — sin esperar el servicio en background
+      // Esto hace que el panel muestre al vendedor como activo desde el primer segundo
+      _sendImmediateLocation(token);
+
       if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const TrackingScreen()));
     } else {
       _snack('Credenciales incorrectas');
@@ -91,6 +96,35 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating, backgroundColor: const Color(0xFF1A1A2E)),
   );
+
+  // Envía la ubicación actual al servidor inmediatamente después del login.
+  // No bloquea la UI — corre en background. Si falla, el servicio lo reintentará.
+  Future<void> _sendImmediateLocation(String token) async {
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await _api.uploadBatch([{
+        'lat': pos.latitude,
+        'lng': pos.longitude,
+        'speed': pos.speed * 3.6,
+        'accuracy': pos.accuracy,
+        'state': 'STOPPED',
+        'timestamp': now,
+        'point_type': 'manual',
+        'source': 'login',
+        'is_manual_request': true,
+      }]);
+      print('[LOGIN] Ubicación inmediata enviada: ${pos.latitude}, ${pos.longitude}');
+    } catch (e) {
+      print('[LOGIN] No se pudo enviar ubicación inmediata: $e');
+      // No crítico — el servicio en background lo enviará en el próximo ciclo
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

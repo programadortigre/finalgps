@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:geolocator/geolocator.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import 'tracking_screen.dart';
@@ -32,9 +33,37 @@ class _AuthWrapperState extends State<AuthWrapper> {
           await service.startService();
         }
         SocketService.init(t);
+        // Enviar ubicación inmediata al abrir la app con sesión activa
+        _sendImmediateLocation(t);
       }
       if (mounted) setState(() { _token = t; _checking = false; });
     });
+  }
+
+  Future<void> _sendImmediateLocation(String token) async {
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await _api.uploadBatch([{
+        'lat': pos.latitude,
+        'lng': pos.longitude,
+        'speed': pos.speed * 3.6,
+        'accuracy': pos.accuracy,
+        'state': 'STOPPED',
+        'timestamp': now,
+        'point_type': 'manual',
+        'source': 'app_open',
+        'is_manual_request': true,
+      }]);
+      print('[AUTH] Ubicación inmediata enviada al abrir app');
+    } catch (e) {
+      print('[AUTH] No se pudo enviar ubicación inmediata: $e');
+    }
   }
 
   // Solicitar exención de optimización de batería

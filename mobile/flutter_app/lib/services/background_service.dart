@@ -220,14 +220,15 @@ class TrackingEngine {
       _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
         _syncTicks++; // BUG #4 FIX: contador propio, independiente del maintenance loop
         if (!_isOnline) return;
-        if (_currentState == TrackingState.PAUSED || _currentState == TrackingState.DEEP_SLEEP) return;
+        if (_currentState == TrackingState.PAUSED) return; // Solo bloquear si admin pausó
 
         final tickInterval = switch (_currentState) {
-          TrackingState.DRIVING  => 1,
-          TrackingState.WALKING  => 1,
-          TrackingState.STOPPED  => 6,   // 60s
-          TrackingState.BATT_SAVER => 12, // 120s
-          _ => 6,
+          TrackingState.DRIVING    => 1,
+          TrackingState.WALKING    => 1,
+          TrackingState.STOPPED    => 6,    // 60s
+          TrackingState.BATT_SAVER => 12,   // 120s
+          TrackingState.DEEP_SLEEP => 18,   // 180s — sigue sincronizando, solo más lento
+          _                        => 6,
         };
         if (_syncTicks % tickInterval != 0) return;
 
@@ -285,9 +286,15 @@ class TrackingEngine {
         if (!isTrackingEnabled) {
           _log('FLOW-DIAG', 'ENTER PAUSE: admin desactivó el rastreo');
           pause();
+        } else {
+          // Rastreo habilitado — forzar sync inmediato por si hay puntos acumulados
+          _log('FLOW-DIAG', 'Rastreo activo — forzando sync inicial');
+          _syncLoop(reason: 'Deferred Init');
         }
       } else {
         _log('FLOW-DIAG', 'Profile check FAILED (null response) — continuando con estado anterior');
+        // Intentar sync de todas formas — puede haber puntos acumulados
+        _syncLoop(reason: 'Deferred Init (profile failed)');
       }
 
       _log('INIT', '<<< _deferredInitialization() [DONE]');
@@ -365,7 +372,7 @@ class TrackingEngine {
     _syncTimer?.cancel();
     _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
       if (!_isOnline) return;
-      if (_currentState != TrackingState.PAUSED && _currentState != TrackingState.DEEP_SLEEP) {
+      if (_currentState != TrackingState.PAUSED) {
         final pending = await _storage.getUnsyncedCount();
         if (pending > 0) _syncLoop(reason: 'Timer (resumed)');
       }
@@ -846,10 +853,9 @@ class TrackingEngine {
       final now = DateTime.now().millisecondsSinceEpoch;
       final lastGpsAge = now - (_lastValidPoint?.timestamp ?? 0);
 
-      // Solo enviar si el GPS lleva >90s sin datos (evita spam cuando todo funciona bien)
-      if (lastGpsAge < 90000 && _currentState != TrackingState.DEEP_SLEEP) return;
-
-      _log('HEARTBEAT', 'Enviando heartbeat de servicio (GPS age: ${lastGpsAge ~/ 1000}s, state: ${_currentState.name})');
+      // Siempre enviar heartbeat — es la señal de vida del servicio
+      // El guard anterior (>90s) causaba que el panel nunca viera al vendedor activo
+      _log('HEARTBEAT', 'Enviando heartbeat (GPS age: ${lastGpsAge ~/ 1000}s, state: ${_currentState.name})');
 
       final batteryLevel = await _battery.batteryLevel;
       final batteryState = await _battery.batteryState;
@@ -876,7 +882,7 @@ class TrackingEngine {
         'lat': _lastValidPoint?.lat ?? _lastRawLat,
         'lng': _lastValidPoint?.lng ?? _lastRawLng,
         'speed': 0,
-        'accuracy': 9999,
+        'accuracy': _lastValidPoint != null ? _lastValidPoint!.accuracy : 9999,
         'state': _currentState.name,
         'timestamp': now,
         'point_type': 'heartbeat',
@@ -1477,9 +1483,12 @@ class TrackingEngine {
       );
 
       // --- Gestión de Buffer Offline ---
-      // ZUPT: si el acelerómetro confirma quietud y la velocidad GPS es ruido, descartar
-      // MEDIO 1 FIX: No descartar si hay desplazamiento acumulado real (tráfico lento, bici)
-      if (_motionDetector.isStationary && speed < 0.5) {
+      // ZUPT: solo descartar drift GPS si el estado confirma que estamos parados
+      // Si el estado es WALKING, DRIVING, BATT_SAVER → dejar pasar siempre
+      // Si _lastValidPoint es null (primer punto) → dejar pasar siempre para arrancar
+      final isStationaryState = _currentState == TrackingState.STOPPED ||
+                                 _currentState == TrackingState.DEEP_SLEEP;
+      if (_motionDetector.isStationary && speed < 0.5 && isStationaryState && _lastValidPoint != null) {
         // Calcular distancia acumulada de los últimos puntos del buffer
         double accumulatedDist = 0.0;
         if (_pointBuffer.length >= 2) {
