@@ -44,7 +44,7 @@ router.get('/latest-trails', auth, async (req, res) => {
             ORDER BY e.id, t.start_time DESC
         `, [tzOffset]);
 
-        const processed = result.rows.map(row => {
+        const processed = await Promise.all(result.rows.map(async row => {
             let points = [];
             if (row.points_json) {
                 try {
@@ -53,7 +53,23 @@ router.get('/latest-trails', auth, async (req, res) => {
                     // Limitamos a los últimos 500 puntos por seguridad de payload
                     points = geojson.coordinates.slice(-500).map(c => ({ lat: c[1], lng: c[0] }));
                 } catch (e) { /* fallback vacío */ }
+            } else if (row.tripId) {
+                // ✅ PRO FIX: Si el viaje está activo y no tiene ruta final (empaquetada),
+                // sacamos los puntos recientes directo de la tabla locations
+                try {
+                    const locResult = await db.query(`
+                        SELECT latitude as lat, longitude as lng 
+                        FROM locations 
+                        WHERE trip_id = $1 
+                        AND quality != 'no_fix'
+                        ORDER BY timestamp DESC LIMIT 500
+                    `, [row.tripId]);
+                    points = locResult.rows.reverse(); // Reverse para mantener orden cronológico
+                } catch (e) {
+                    console.error('[API] Error fetching live points fallback:', e.message);
+                }
             }
+            
             return {
                 employeeId: row.employeeId,
                 name: row.name,
@@ -61,7 +77,7 @@ router.get('/latest-trails', auth, async (req, res) => {
                 points: points,
                 confidence: row.confidence
             };
-        });
+        }));
 
         const elapsed = Date.now() - start;
         const payloadSize = JSON.stringify(processed).length;
