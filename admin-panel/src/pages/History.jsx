@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, memo, useRef } from '
 import { Search, Calendar, Clock, MapPin, ChevronRight, ArrowLeft, Loader, AlertCircle, ChevronUp, ChevronDown, TrendingUp, X, Navigation } from 'lucide-react';
 import api from '../services/api';
 import MapView from '../components/MapView';
+import dayjs from 'dayjs';
 
 /* ── helpers ── */
 const formatTime = (t) => {

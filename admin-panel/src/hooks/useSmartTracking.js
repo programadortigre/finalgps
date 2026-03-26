@@ -15,6 +15,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../services/api';
 import { socket } from '../services/socket';
+import dayjs from 'dayjs';
 
 const POLL_MS            = 5000;   // Polling HTTP cada 5s
 const INTERP_MS          = 250;    // Tick de animación (4 fps)
