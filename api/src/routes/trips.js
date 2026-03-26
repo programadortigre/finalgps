@@ -29,6 +29,7 @@ router.get('/latest-trails', auth, async (req, res) => {
         
         // Query optimizada: un solo paso para traer todos los trails pre-compilados
         // ✅ PRO FIX: Calcular 'Hoy' en la zona horaria del cliente para evitar dashboard vacío en la noche
+        // ✅ PRO FIX: Si el viaje está activo (is_active = true), incluirlo siempre aunque haya empezado ayer
         const result = await db.query(`
             SELECT DISTINCT ON (e.id)
                 e.id as "employeeId",
@@ -38,7 +39,7 @@ router.get('/latest-trails', auth, async (req, res) => {
                 tr.match_confidence as confidence
             FROM employees e
             LEFT JOIN trips t ON e.id = t.employee_id 
-                AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $1) = DATE(CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE $1)
+                AND (DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $1) = DATE(CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE $1) OR t.is_active = true)
             LEFT JOIN trip_routes tr ON t.id = tr.trip_id
             WHERE e.role = 'employee'
             ORDER BY e.id, t.start_time DESC
