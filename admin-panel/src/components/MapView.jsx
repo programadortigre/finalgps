@@ -15,6 +15,28 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
+// ── Icons para paradas, inicio y fin ──────────────────────────────────────────
+const stopIcon = L.divIcon({
+    className: 'custom-stop-icon',
+    html: `<div style="background-color: #ef4444; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
+    iconSize: [12, 12],
+    iconAnchor: [6, 6]
+});
+
+const startIcon = L.divIcon({
+    className: 'custom-start-icon',
+    html: `<div style="background-color: #22c55e; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
+    iconSize: [14, 14],
+    iconAnchor: [7, 7]
+});
+
+const endIcon = L.divIcon({
+    className: 'custom-end-icon',
+    html: `<div style="background-color: #3b82f6; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
+    iconSize: [14, 14],
+    iconAnchor: [7, 7]
+});
+
 // ── Cache de iconos por estado — evita recrear L.divIcon en cada render ───────
 const iconCache = {};
 
@@ -1121,7 +1143,7 @@ const MapView = ({
                                 ))}
                                 {/* Siempre mostrar marcador de inicio */}
                                 {points[0] && (
-                                    <Marker position={[points[0].lat, points[0].lng]}>
+                                    <Marker position={[points[0].lat, points[0].lng]} icon={startIcon}>
                                         <Popup>
                                             <div style={{ fontSize: '12px', minWidth: '220px' }}>
                                                 <strong>🚀 Inicio del viaje</strong><br />
@@ -1141,7 +1163,7 @@ const MapView = ({
                                 )}
                                 {/* Fin solo si hay más de 1 punto */}
                                 {points.length > 1 && (
-                                    <Marker position={[points.at(-1).lat, points.at(-1).lng]}>
+                                    <Marker position={[points.at(-1).lat, points.at(-1).lng]} icon={endIcon}>
                                         <Popup>
                                             <div style={{ fontSize: '12px', minWidth: '220px' }}>
                                                 <strong>🏁 Fin del viaje</strong><br />
