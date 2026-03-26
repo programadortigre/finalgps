@@ -115,7 +115,8 @@ router.get('/', auth, async (req, res) => {
                 ROUND((distance_meters::numeric / 1000)::numeric, 2) as distance_km
             FROM trips 
             WHERE employee_id = $1 
-            AND DATE(start_time AT TIME ZONE 'UTC' AT TIME ZONE $3) = $2
+            AND DATE(start_time AT TIME ZONE 'UTC' AT TIME ZONE $3) <= $2
+            AND DATE(COALESCE(end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE $3) >= $2
             ORDER BY start_time DESC
         `, [userId, date, tzOffset]);
 
@@ -151,8 +152,9 @@ router.get('/stops/history/:employeeId', auth, async (req, res) => {
             SELECT COUNT(*) as total FROM stops s
             INNER JOIN trips t ON s.trip_id = t.id
             WHERE s.employee_id = $1
-            AND DATE(s.start_time) >= $2
-            AND DATE(s.start_time) <= $3
+            AND DATE(s.start_time AT TIME ZONE 'UTC' AT TIME ZONE '-05:00') <= $3
+            AND DATE(COALESCE(s.end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE '-05:00') >= $2
+
         `, [employeeId, startDate, endDate]);
 
         const result = await db.query(`
@@ -232,8 +234,9 @@ router.get('/history/:employeeId', auth, async (req, res) => {
         const countResult = await db.query(`
             SELECT COUNT(*) as total FROM trips t
             WHERE t.employee_id = $1
-            AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $4) >= $2
             AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $4) <= $3
+            AND DATE(COALESCE(t.end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE $4) >= $2
+
         `, [employeeId, startDate, endDate, tzOffset]);
 
         // Paginated results with pre-formatted data
@@ -253,9 +256,10 @@ router.get('/history/:employeeId', auth, async (req, res) => {
                 t.distance_meters
             FROM trips t
             WHERE t.employee_id = $1
-            AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6) >= $2
             AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6) <= $3
+            AND DATE(COALESCE(t.end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE $6) >= $2
             ORDER BY t.start_time DESC
+
             LIMIT $4 OFFSET $5
         `, [employeeId, startDate, endDate, limitNum, offset, tzOffset]);
 
