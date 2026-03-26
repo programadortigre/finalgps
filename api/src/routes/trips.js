@@ -16,9 +16,68 @@ router.get('/employees', auth, async (req, res) => {
     }
 });
 
+// ✅ ENDPOINT: Obtener los últimos recorridos del día de TODOS los empleados (BULK)
+// Evita N+1 solicitudes desde el Dashboard
+router.get('/latest-trails', auth, async (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const start = Date.now();
+    try {
+        const { tzOffset = '-00:00' } = req.query;
+        
+        // Query optimizada: un solo paso para traer todos los trails pre-compilados
+        // ✅ PRO FIX: Calcular 'Hoy' en la zona horaria del cliente para evitar dashboard vacío en la noche
+        const result = await db.query(`
+            SELECT DISTINCT ON (e.id)
+                e.id as "employeeId",
+                e.name,
+                t.id as "tripId",
+                ST_AsGeoJSON(COALESCE(tr.geom_matched, tr.geom_raw)) as "points_json",
+                tr.match_confidence as confidence
+            FROM employees e
+            LEFT JOIN trips t ON e.id = t.employee_id 
+                AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $1) = DATE(CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE $1)
+            LEFT JOIN trip_routes tr ON t.id = tr.trip_id
+            WHERE e.role = 'employee'
+            ORDER BY e.id, t.start_time DESC
+        `, [tzOffset]);
+
+        const processed = result.rows.map(row => {
+            let points = [];
+            if (row.points_json) {
+                try {
+                    const geojson = JSON.parse(row.points_json);
+                    // No devolvemos miles de puntos, el frontend no los necesita para el live trail
+                    // Limitamos a los últimos 500 puntos por seguridad de payload
+                    points = geojson.coordinates.slice(-500).map(c => ({ lat: c[1], lng: c[0] }));
+                } catch (e) { /* fallback vacío */ }
+            }
+            return {
+                employeeId: row.employeeId,
+                name: row.name,
+                tripId: row.tripId,
+                points: points,
+                confidence: row.confidence
+            };
+        });
+
+        const elapsed = Date.now() - start;
+        const payloadSize = JSON.stringify(processed).length;
+        
+        console.log(`[PERF] /latest-trails: ${processed.length} employees, ${Math.round(payloadSize/1024)}KB, ${elapsed}ms`);
+
+        res.json(processed);
+    } catch (err) {
+        console.error('[ERROR] Failed to fetch bulk latest trails:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // Get trips for a specific date and employee
 router.get('/', auth, async (req, res) => {
-    const { employeeId, date } = req.query; // date format: YYYY-MM-DD
+    const { employeeId, date, tzOffset = '-00:00' } = req.query; // date: YYYY-MM-DD, tzOffset: e.g. -05:00
     const userId = req.user.role === 'admin' ? employeeId : req.user.id;
 
     if (!userId || !date) {
@@ -26,16 +85,26 @@ router.get('/', auth, async (req, res) => {
     }
 
     try {
+        // ✅ PRO FIX: Filtrar usando la zona horaria del cliente para evitar saltos de día UTC
         const result = await db.query(`
-      SELECT id, start_time, end_time, distance_meters 
-      FROM trips 
-      WHERE employee_id = $1 
-      AND DATE(start_time) = $2
-      ORDER BY start_time DESC
-    `, [userId, date]);
+            SELECT 
+                id, 
+                start_time, 
+                end_time, 
+                distance_meters,
+                TO_CHAR(start_time AT TIME ZONE 'UTC' AT TIME ZONE $3, 'HH24:MI') as start_time_formatted,
+                TO_CHAR(end_time AT TIME ZONE 'UTC' AT TIME ZONE $3, 'HH24:MI') as end_time_formatted,
+                EXTRACT(EPOCH FROM (end_time - start_time))::int as duration_seconds,
+                ROUND((distance_meters::numeric / 1000)::numeric, 2) as distance_km
+            FROM trips 
+            WHERE employee_id = $1 
+            AND DATE(start_time AT TIME ZONE 'UTC' AT TIME ZONE $3) = $2
+            ORDER BY start_time DESC
+        `, [userId, date, tzOffset]);
 
         res.json(result.rows);
     } catch (err) {
+        console.error('[ERROR] Failed to get trips:', err.message);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -124,7 +193,7 @@ router.get('/stops/history/:employeeId', auth, async (req, res) => {
 // GET /api/trips/history/:employeeId?page=1&limit=50
 router.get('/history/:employeeId', auth, async (req, res) => {
     const employeeId = req.params.employeeId;
-    const { startDate, endDate, page = 1, limit = 50 } = req.query;
+    const { startDate, endDate, page = 1, limit = 50, tzOffset = '-00:00' } = req.query;
 
     // Validar autorización (admin o propietario)
     if (req.user.role !== 'admin' && req.user.id !== parseInt(employeeId)) {
@@ -140,23 +209,23 @@ router.get('/history/:employeeId', auth, async (req, res) => {
     const offset = (pageNum - 1) * limitNum;
 
     try {
-        console.log(`[TRIPS] History request: employeeId=${employeeId}, dates=${startDate} to ${endDate}, page=${pageNum}, limit=${limitNum}`);
+        console.log(`[TRIPS] History request: employeeId=${employeeId}, dates=${startDate} to ${endDate}, page=${pageNum}, limit=${limitNum}, tz=${tzOffset}`);
         
         // Total count
         const countResult = await db.query(`
             SELECT COUNT(*) as total FROM trips t
             WHERE t.employee_id = $1
-            AND DATE(t.start_time) >= $2
-            AND DATE(t.start_time) <= $3
-        `, [employeeId, startDate, endDate]);
+            AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $4) >= $2
+            AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $4) <= $3
+        `, [employeeId, startDate, endDate, tzOffset]);
 
         // Paginated results with pre-formatted data
         const result = await db.query(`
             SELECT 
                 t.id,
-                TO_CHAR(t.start_time, 'YYYY-MM-DD') as trip_date,
-                TO_CHAR(t.start_time, 'HH24:MI') as start_time_formatted,
-                TO_CHAR(t.end_time, 'HH24:MI') as end_time_formatted,
+                TO_CHAR(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6, 'YYYY-MM-DD') as trip_date,
+                TO_CHAR(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6, 'HH24:MI') as start_time_formatted,
+                TO_CHAR(t.end_time AT TIME ZONE 'UTC' AT TIME ZONE $6, 'HH24:MI') as end_time_formatted,
                 EXTRACT(EPOCH FROM (t.end_time - t.start_time))::int as duration_seconds,
                 ROUND((t.distance_meters::numeric / 1000)::numeric, 2) as distance_km,
                 t.is_active,
@@ -167,11 +236,11 @@ router.get('/history/:employeeId', auth, async (req, res) => {
                 t.distance_meters
             FROM trips t
             WHERE t.employee_id = $1
-            AND DATE(t.start_time) >= $2
-            AND DATE(t.start_time) <= $3
+            AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6) >= $2
+            AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6) <= $3
             ORDER BY t.start_time DESC
             LIMIT $4 OFFSET $5
-        `, [employeeId, startDate, endDate, limitNum, offset]);
+        `, [employeeId, startDate, endDate, limitNum, offset, tzOffset]);
 
         console.log(`[TRIPS] Found ${result.rows.length} trips for employee ${employeeId}`);
 

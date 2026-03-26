@@ -7,6 +7,7 @@ const pino = require('pino');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const logger = pino({ transport: { target: 'pino-pretty' } });
+const jwt = require('jsonwebtoken');
 
 // Environment configuration
 try {
@@ -14,6 +15,18 @@ try {
 } catch (e) {
   logger.info('Running without .env file, using system env');
 }
+
+// Lightweight middleware to identify user if token exists (for rate limiting skip)
+const identifyUser = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return next();
+
+  jwt.verify(token, process.env.JWT_SECRET || 'supersecret', (err, user) => {
+    if (!err) req.user = user;
+    next();
+  });
+};
 
 const authRoutes = require('./routes/auth');
 const locationRoutes = require('./routes/locations');
@@ -65,7 +78,8 @@ app.set('trust proxy', 1);
 // Middlewares
 app.use(cors());
 app.use(express.json());
-app.use(apiLimiter); // Aplicar rate limiting general a toda la API
+app.use(identifyUser); // Identify user before rate limiting
+app.use(apiLimiter);   // Apply general rate limiting
 
 // Real-time integration
 const io = initSocket(server);

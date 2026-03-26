@@ -145,8 +145,15 @@ class ApiService {
       final now = DateTime.now();
       final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
       
+      // ✅ PRO FIX: Calcular offset de zona horaria (ej: -05:00)
+      final offset = now.timeZoneOffset;
+      final hours = offset.inHours.abs().toString().padLeft(2, '0');
+      final minutes = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+      final sign = offset.isNegative ? '-' : '+';
+      final tzOffset = '$sign$hours:$minutes';
+
       final res = await dio.get(
-        '/api/trips?date=$todayStr',
+        '/api/trips?date=$todayStr&tzOffset=$tzOffset',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
       
@@ -274,8 +281,14 @@ class ApiService {
     if (token == null) return null;
     try {
       final dio = await getDio();
+      final offset = DateTime.now().timeZoneOffset;
+      final hours = offset.inHours.abs().toString().padLeft(2, '0');
+      final minutes = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+      final sign = offset.isNegative ? '-' : '+';
+      final tzOffset = '$sign$hours:$minutes';
+
       final res = await dio.get(
-        '/api/trips?employeeId=$employeeId&date=$date',
+        '/api/trips?employeeId=$employeeId&date=$date&tzOffset=$tzOffset',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
       if (res.statusCode == 200) {

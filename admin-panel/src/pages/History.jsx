@@ -133,11 +133,12 @@ const History = ({ user }) => {
         setLoading(true); setError('');
         setTripsPage(1); setStopsPage(1); setEventsPage(1);
         if (!selectedEmployee) { setLoading(false); return; }
+        const tzOffset = dayjs().format('Z');
         try {
             const [tripsRes, stopsRes, eventsRes] = await Promise.all([
-                api.get(`/api/trips/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}`),
-                api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}`),
-                api.get(`/api/trips/events/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}`)
+                api.get(`/api/trips/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}&tzOffset=${tzOffset}`),
+                api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}&tzOffset=${tzOffset}`),
+                api.get(`/api/trips/events/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=1&limit=${itemsPerPage}&tzOffset=${tzOffset}`)
             ]);
             setTrips(tripsRes.data.trips || []);
             setStops(stopsRes.data.stops || []);
@@ -160,8 +161,9 @@ const History = ({ user }) => {
     const loadMoreTrips = useCallback(async () => {
         if (loading) return;
         const nextPage = tripsPage + 1;
+        const tzOffset = dayjs().format('Z');
         try {
-            const { data } = await api.get(`/api/trips/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}`);
+            const { data } = await api.get(`/api/trips/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}&tzOffset=${tzOffset}`);
             setTrips(prev => [...prev, ...(data.trips || [])]);
             setTripsPage(nextPage);
             setPaginationInfo(prev => ({ ...prev, trips: { total: data.total, hasMore: data.hasMore } }));
@@ -171,8 +173,9 @@ const History = ({ user }) => {
     const loadMoreStops = useCallback(async () => {
         if (loading) return;
         const nextPage = stopsPage + 1;
+        const tzOffset = dayjs().format('Z');
         try {
-            const { data } = await api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}`);
+            const { data } = await api.get(`/api/trips/stops/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}&tzOffset=${tzOffset}`);
             setStops(prev => [...prev, ...(data.stops || [])]);
             setStopsPage(nextPage);
             setPaginationInfo(prev => ({ ...prev, stops: { total: data.total, hasMore: data.hasMore } }));
@@ -182,8 +185,9 @@ const History = ({ user }) => {
     const loadMoreEvents = useCallback(async () => {
         if (loading) return;
         const nextPage = eventsPage + 1;
+        const tzOffset = dayjs().format('Z');
         try {
-            const { data } = await api.get(`/api/trips/events/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}`);
+            const { data } = await api.get(`/api/trips/events/history/${selectedEmployee}?startDate=${startDate}&endDate=${endDate}&page=${nextPage}&limit=${itemsPerPage}&tzOffset=${tzOffset}`);
             setEvents(prev => [...prev, ...(data.events || [])]);
             setEventsPage(nextPage);
             setPaginationInfo(prev => ({ ...prev, events: { total: data.total, hasMore: data.hasMore } }));

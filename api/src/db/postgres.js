@@ -69,6 +69,10 @@ async function syncSchema() {
 
             // 4. Ensure existing tables have new columns (Migrations)
             
+            // Performance Indices (v10)
+            await pool.query('CREATE INDEX IF NOT EXISTS idx_trips_employee_date ON trips (employee_id, start_time DESC);');
+            await pool.query('CREATE INDEX IF NOT EXISTS idx_trip_routes_trip_id ON trip_routes (trip_id);');
+
             // Employees: pending_command
             const checkCmdColumn = await pool.query(`
                 SELECT 1 FROM information_schema.columns 

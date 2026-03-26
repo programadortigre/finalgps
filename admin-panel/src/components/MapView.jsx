@@ -507,7 +507,8 @@ const MapView = ({
     useEffect(() => {
         if (view === 'history' && selectedEmployee && !propTripDetails) {
             setRouteData(null); setTrip(null); setPlayback(false);
-            api.get(`/api/trips?employeeId=${selectedEmployee.id}&date=${date}`)
+            const tzOffset = dayjs().format('Z');
+            api.get(`/api/trips?employeeId=${selectedEmployee.id}&date=${date}&tzOffset=${tzOffset}`)
                 .then(r => setTrips(r.data))
                 .catch(console.error);
         }

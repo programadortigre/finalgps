@@ -87,36 +87,26 @@ export function useSmartTracking() {
     }
   }, []);
 
-  // ── 1a. Cargar trail histórico del día al iniciar ────────────────────────────
-  // Cuando el admin abre el panel, carga los últimos puntos del día de cada vendedor
-  // para que el trail no empiece vacío
+  // ── 1a. Cargar trail histórico del día al iniciar (AHORA EN BULK) ────────────
+  // Optimizado: 1 solo request para todos los vendedores
   const loadHistoricalTrails = useCallback(async () => {
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const { data: employees } = await api.get('/api/trips/employees');
+      const tzOffset = dayjs().format('Z');
+      const { data: trailsData } = await api.get(`/api/trips/latest-trails?tzOffset=${tzOffset}`);
       if (!mounted.current) return;
 
-      for (const emp of employees) {
-        try {
-          const { data: trips } = await api.get(
-            `/api/trips?employeeId=${emp.id}&date=${today}`
-          );
-          if (!trips?.length) continue;
-
-          // Tomar el último viaje del día
-          const lastTrip = trips[trips.length - 1];
-          const { data: detail } = await api.get(`/api/trips/${lastTrip.id}?simplify=true`);
-          if (!mounted.current) return;
-
-          const pts = detail?.points;
-          if (pts?.length >= 2) {
-            const trail = pts.map(p => [p.lat, p.lng]);
-            trails.current[emp.id] = trail;
-            setLiveTrails(t => ({ ...t, [emp.id]: trail }));
-          }
-        } catch { /* vendedor sin viajes hoy — ok */ }
-      }
-    } catch { /* silencioso */ }
+      const newTrails = {};
+      trailsData.forEach(row => {
+        if (row.points?.length >= 2) {
+          const trail = row.points.map(p => [p.lat, p.lng]);
+          trails.current[row.employeeId] = trail;
+          newTrails[row.employeeId] = trail;
+        }
+      });
+      setLiveTrails(t => ({ ...t, ...newTrails }));
+    } catch (e) {
+      console.error('[SmartTracking] Error loading historical trails:', e);
+    }
   }, []);
 
   // ── 1b. Heartbeat + live stops polling (cada 30s) ───────────────────────────
@@ -351,13 +341,22 @@ export function useSmartTracking() {
       Notification.requestPermission();
     }
 
-    poll();          // Primer fetch inmediato
-    pollHeartbeat(); // Primer heartbeat check inmediato
-    pollQueueStats(); // Primer queue-stats — programa el siguiente adaptativo internamente
     loadHistoricalTrails(); // Cargar trail del día al abrir el panel
-    const pollTimer      = setInterval(poll, POLL_MS);
+
+    // Optimización: Solo pollear si la pestaña está visible
+    const handlePolls = () => {
+      if (document.hidden) return;
+      poll();
+      pollHeartbeat();
+      pollQueueStats();
+    };
+
+    const pollTimer      = setInterval(() => { if (!document.hidden) poll(); }, POLL_MS);
     const interpTimer    = setInterval(tick, INTERP_MS);
-    const heartbeatTimer = setInterval(pollHeartbeat, HEARTBEAT_POLL_MS);
+    const heartbeatTimer = setInterval(() => { if (!document.hidden) pollHeartbeat(); }, HEARTBEAT_POLL_MS);
+
+    // Evento de visibilidad para retomar polling inmediatamente al volver
+    document.addEventListener('visibilitychange', handlePolls);
 
     socket.on('location_update', onSocketUpdate);
 
@@ -366,6 +365,7 @@ export function useSmartTracking() {
       clearInterval(pollTimer);
       clearInterval(interpTimer);
       clearInterval(heartbeatTimer);
+      document.removeEventListener('visibilitychange', handlePolls);
       if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
       socket.off('location_update', onSocketUpdate);
     };
