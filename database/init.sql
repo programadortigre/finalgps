@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS locations (
     id           SERIAL PRIMARY KEY,
     trip_id      INTEGER REFERENCES trips(id)     ON DELETE CASCADE,
     employee_id  INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+    sub_trip_id  INTEGER,
+    segment_id   INTEGER,
     geom         GEOGRAPHY(Point, 4326),
     latitude     FLOAT   NOT NULL,
     longitude    FLOAT   NOT NULL,
@@ -82,6 +84,13 @@ CREATE TABLE IF NOT EXISTS locations (
     -- Dedup primario por timestamp (legacy)
     UNIQUE(employee_id, timestamp)
 );
+
+-- Índices para sub_trip_id y segment_id
+CREATE INDEX IF NOT EXISTS idx_locations_sub_trip_id ON locations (sub_trip_id);
+CREATE INDEX IF NOT EXISTS idx_locations_segment_id ON locations (segment_id);
+
+COMMENT ON COLUMN locations.sub_trip_id IS 'ID lógico de sub-viaje (corte por gap largo, continuidad).';
+COMMENT ON COLUMN locations.segment_id IS 'ID visual de segmento (corte por gap corto, accuracy, etc).';
 
 -- Índice dedup por client_id (parcial — solo cuando no es NULL)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_locations_emp_client_id

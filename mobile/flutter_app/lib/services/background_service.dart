@@ -483,16 +483,31 @@ class TrackingEngine {
     _addToBufferAndFlush(point.toJson()).then((_) => _syncLoop(reason: 'Manual Position ($source)'));
   }
 
-  LocalPoint _pointFromPosition(Position pos, {String source = 'gps'}) {
+  LocalPoint _pointFromPosition(Position pos, {String? source}) {
+    // Determinar fuente real
+    String src;
+    if (source != null) {
+      src = source;
+    } else if (pos.accuracy <= 25 && pos.provider != null && pos.provider!.toLowerCase().contains('gps')) {
+      src = 'gps';
+    } else if (pos.provider != null && pos.provider!.toLowerCase().contains('wifi')) {
+      src = 'wifi';
+    } else if (pos.provider != null && pos.provider!.toLowerCase().contains('cell')) {
+      src = 'cell';
+    } else if (pos.accuracy > 50) {
+      src = 'fallback';
+    } else {
+      src = 'unknown';
+    }
     return LocalPoint(
         lat: pos.latitude,
         lng: pos.longitude,
         speed: pos.speed * 3.6,
         accuracy: pos.accuracy,
         state: _currentState.name,
-        timestamp: pos.timestamp.millisecondsSinceEpoch, // ✅ FIX: Usar tiempo del sensor
+        timestamp: pos.timestamp.millisecondsSinceEpoch,
         employeeId: _cachedEmployeeId,
-        source: source,
+        source: src,
     );
   }
 
@@ -1241,9 +1256,26 @@ class TrackingEngine {
             accuracy = LocationAccuracy.low;
             break;
           case TrackingState.BATT_SAVER:
-            intervalSec = 180; 
-            distanceFilter = 50;
-            accuracy = LocationAccuracy.low;
+            // Granularidad de thresholds de batería
+            final level = await _battery.batteryLevel;
+            if (level < 10) {
+              intervalSec = 240;
+              distanceFilter = 100;
+              accuracy = LocationAccuracy.low;
+            } else if (level < 20) {
+              intervalSec = 180;
+              distanceFilter = 70;
+              accuracy = LocationAccuracy.low;
+            } else if (level < 30) {
+              intervalSec = 120;
+              distanceFilter = 50;
+              accuracy = LocationAccuracy.medium;
+            } else {
+              intervalSec = 90;
+              distanceFilter = 30;
+              accuracy = LocationAccuracy.medium;
+            }
+            _log('GPS', 'BATT_SAVER: Battery $level% | Interval=$intervalSec | Dist=$distanceFilter | Acc=${accuracy.name}');
             break;
           case TrackingState.WALKING:
             intervalSec = 5; 
@@ -1258,18 +1290,28 @@ class TrackingEngine {
             break;
         }
 
-        // 2. Overrides por Batería (Granular)
+        // 2. Overrides por Batería (Granular, fuera de BATT_SAVER)
         final level = await _battery.batteryLevel;
         if (_isInRecoveryBoost) {
           intervalSec = 3;
           accuracy = LocationAccuracy.high;
           distanceFilter = 0;
           _log('GPS', '🚀 RECOVERY BOOST ACTIVE: 3s interval forced');
+        } else if (level < 10) {
+          intervalSec = 120;
+          accuracy = LocationAccuracy.low;
+          distanceFilter = 50;
+          _log('GPS', 'BATTERY OVERRIDE (<10%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
+        } else if (level < 20) {
+          intervalSec = 60;
+          accuracy = LocationAccuracy.low;
+          distanceFilter = 30;
+          _log('GPS', 'BATTERY OVERRIDE (<20%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
         } else if (level < 30) {
-          intervalSec = (level < 10) ? 120 : ((level < 20) ? 60 : 30);
-          accuracy = (level < 10) ? LocationAccuracy.low : LocationAccuracy.medium;
-          distanceFilter = (level < 10) ? 50 : 20;
-          _log('GPS', 'BATTERY OVERRIDE ($level%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
+          intervalSec = 30;
+          accuracy = LocationAccuracy.medium;
+          distanceFilter = 20;
+          _log('GPS', 'BATTERY OVERRIDE (<30%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
         }
       }
 
@@ -1284,9 +1326,28 @@ class TrackingEngine {
           forceLocationManager: false, // Usa FusedLocationProvider de Google (Uber/Google Maps mode)
         ),
       ).listen(
-        (Position pos) {
-          _log('GPS-RAW', 'Recibido: lat=${pos.latitude}, lng=${pos.longitude}, acc=${pos.accuracy.toStringAsFixed(1)}m, speed=${pos.speed.toStringAsFixed(1)}m/s');
+        (Position pos) async {
+          _log('GPS-RAW', 'Recibido: lat=${pos.latitude}, lng=${pos.longitude}, acc=${pos.accuracy.toStringAsFixed(1)}m, speed=${pos.speed.toStringAsFixed(1)}m/s, provider=${pos.provider}');
           _lastRawTime = DateTime.now();
+          // Fallback: Si accuracy es mala (>80m) y GPS está encendido, intentar obtener posición por red
+          if (pos.accuracy > 80) {
+            try {
+              final netPos = await Geolocator.getCurrentPosition(
+                locationSettings: AndroidSettings(
+                  accuracy: LocationAccuracy.low,
+                  timeLimit: const Duration(seconds: 5),
+                  forceLocationManager: true, // Forzar WiFi/cell
+                ),
+              );
+              if (netPos.accuracy < pos.accuracy) {
+                _log('GPS-FALLBACK', 'Usando posición de red: acc=${netPos.accuracy}m');
+                _processNewPosition(netPos);
+                return;
+              }
+            } catch (e) {
+              _log('GPS-FALLBACK', 'Error obteniendo posición de red: $e');
+            }
+          }
           _processNewPosition(pos);
         },
         onError: (e) {

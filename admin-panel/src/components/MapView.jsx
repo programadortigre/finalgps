@@ -23,6 +23,33 @@ const stopIcon = L.divIcon({
     iconAnchor: [6, 6]
 });
 
+// ── Iconos diferenciados por fuente y calidad ────────────────────────────────
+function getPointIcon(source = 'gps', quality = 'high') {
+    // Colores estándar por fuente
+    const sourceColors = {
+        gps:    '#2563eb', // azul
+        wifi:   '#22c55e', // verde
+        cell:   '#f59e0b', // naranja
+        fallback: '#64748b', // gris
+        unknown: '#a1a1aa', // gris claro
+    };
+    // Bordes por calidad
+    const qualityBorders = {
+        high:   '3px solid #22d3ee', // cyan
+        medium: '3px solid #fbbf24', // amber
+        low:    '3px solid #ef4444', // red
+    };
+    const bg = sourceColors[source] || sourceColors.unknown;
+    const border = qualityBorders[quality] || qualityBorders.low;
+    const opacity = quality === 'low' ? 0.5 : quality === 'medium' ? 0.75 : 1;
+    return L.divIcon({
+        className: 'point-icon',
+        html: `<div style="width:16px;height:16px;border-radius:50%;background:${bg};border:${border};opacity:${opacity};box-shadow:0 0 6px rgba(0,0,0,0.18);"></div>`,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+    });
+}
+
 const startIcon = L.divIcon({
     className: 'custom-start-icon',
     html: `<div style="background-color: #22c55e; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
@@ -860,6 +887,17 @@ const MapView = ({
                         <div className="legend-item"><div className="legend-dot" style={{ background: '#94a3b8' }} /> Quieto</div>
                         <div className="legend-divider" />
                         <div className="legend-item" style={{ fontWeight: 700, color: '#2563eb' }}>🔴 Activos: {livePositions.length}</div>
+                        <div className="legend-divider" style={{ margin: '10px 0' }} />
+                        <div style={{ fontSize: '12px', fontWeight: 700, marginBottom: '6px', color: '#0f172a' }}>Fuente de Punto</div>
+                        <div className="legend-item"><span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: '50%', background: '#2563eb', border: '2px solid #e0e7ef', marginRight: 6 }}></span>GPS</div>
+                        <div className="legend-item"><span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: '50%', background: '#22c55e', border: '2px solid #e0e7ef', marginRight: 6 }}></span>WiFi</div>
+                        <div className="legend-item"><span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: '50%', background: '#f59e0b', border: '2px solid #e0e7ef', marginRight: 6 }}></span>Cellular</div>
+                        <div className="legend-item"><span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: '50%', background: '#64748b', border: '2px solid #e0e7ef', marginRight: 6 }}></span>Fallback</div>
+                        <div className="legend-divider" style={{ margin: '10px 0' }} />
+                        <div style={{ fontSize: '12px', fontWeight: 700, marginBottom: '6px', color: '#0f172a' }}>Calidad de Punto</div>
+                        <div className="legend-item"><span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: '50%', background: '#e0e7ef', border: '3px solid #22d3ee', marginRight: 6 }}></span>Alta (high)</div>
+                        <div className="legend-item"><span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: '50%', background: '#e0e7ef', border: '3px solid #fbbf24', marginRight: 6 }}></span>Media (medium)</div>
+                        <div className="legend-item"><span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: '50%', background: '#e0e7ef', border: '3px solid #ef4444', marginRight: 6 }}></span>Baja (low)</div>
                     </div>
                 </div>
             )}
@@ -1142,15 +1180,23 @@ const MapView = ({
                                     </React.Fragment>
                                 ))}
                                 {/* Siempre mostrar marcador de inicio */}
-                                {points[0] && (
-                                    <Marker position={[points[0].lat, points[0].lng]} icon={startIcon}>
+                                {points.map((p, idx) => (
+                                    <Marker 
+                                        key={`pt-${idx}`}
+                                        position={[p.lat, p.lng]}
+                                        icon={getPointIcon(p.source, p.quality)}
+                                    >
                                         <Popup>
                                             <div style={{ fontSize: '12px', minWidth: '220px' }}>
-                                                <strong>🚀 Inicio del viaje</strong><br />
-                                                📍 {addresses[`start-${selectedTrip.id}`] || 'Cargando...'}<br />
-                                                🕐 {dayjs(selectedTrip.start_time).format('HH:mm:ss')}<br />
+                                                <strong>📍 Punto #{idx + 1}</strong><br />
+                                                Fuente: <b>{p.source || 'gps'}</b><br />
+                                                Calidad: <b>{p.quality || 'high'}</b><br />
+                                                Precisión: {p.accuracy ? `${p.accuracy} m` : 'N/A'}<br />
+                                                {p.timestamp && (
+                                                    <>🕒 {dayjs(Number(p.timestamp)).format('HH:mm:ss')}<br /></>
+                                                )}
                                                 <a
-                                                    href={`https://www.google.com/maps?q=${points[0].lat},${points[0].lng}`}
+                                                    href={`https://www.google.com/maps?q=${p.lat},${p.lng}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
@@ -1160,7 +1206,7 @@ const MapView = ({
                                             </div>
                                         </Popup>
                                     </Marker>
-                                )}
+                                ))}
                                 {/* Fin solo si hay más de 1 punto */}
                                 {points.length > 1 && (
                                     <Marker position={[points.at(-1).lat, points.at(-1).lng]} icon={endIcon}>
