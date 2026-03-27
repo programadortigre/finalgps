@@ -10,9 +10,12 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - TZ=America/Lima
     volumes:
       - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql
       - postgres_data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks: [ tracking-net ]
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
@@ -25,6 +28,11 @@ services:
     image: redis:7-alpine
     container_name: gps-redis
     restart: always
+    environment:
+      - TZ=America/Lima
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     ports: [ "6379:6379" ]
     networks: [ tracking-net ]
     healthcheck:
@@ -45,11 +53,15 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - REDIS_HOST=redis
       - JWT_SECRET=${JWT_SECRET}
+      - TZ=America/Lima
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks: [ tracking-net ]
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:3000/health" ]
@@ -69,11 +81,15 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - REDIS_HOST=redis
       - OSRM_URL=http://osrm:5000
+      - TZ=America/Lima
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks: [ tracking-net ]
     healthcheck:
       test: [ "CMD", "node", "-e", "process.exit(0)" ]
@@ -86,8 +102,12 @@ services:
     image: osrm/osrm-backend
     container_name: gps-osrm
     restart: always
+    environment:
+      - TZ=America/Lima
     volumes:
       - ./osrm_data:/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     command: osrm-routed --algorithm mld /data/peru-260321.osrm
     ports:
       - "5000:5000"
@@ -97,10 +117,15 @@ services:
     build: ./admin-panel
     container_name: gps-admin
     restart: always
+    environment:
+      - TZ=America/Lima
     ports: [ "80:80" ]
     depends_on:
       api:
         condition: service_healthy
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     networks: [ tracking-net ]
 
 networks:

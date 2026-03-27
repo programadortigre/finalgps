@@ -185,7 +185,29 @@ router.post('/batch', auth, async (req, res) => {
     }
 
     // ── CRÍTICO 2: Ordenar por timestamp antes de cualquier procesamiento ──────
+    let outOfOrderCount = 0;
+    for (let i = 1; i < points.length; i++) {
+        if ((points[i - 1].timestamp || 0) > (points[i].timestamp || 0)) {
+            outOfOrderCount++;
+        }
+    }
+    if (outOfOrderCount > 0) {
+        console.warn(`[ORDER-WARN] emp ${employeeId}: Batch received ${outOfOrderCount} points out of chronological order! Sorting applied.`);
+    }
     points.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+    // Validar Drift (desviación de tiempo)
+    const server_time = Date.now();
+    if (points.length > 0) {
+        const firstPoint = points[0];
+        const driftMs = server_time - (firstPoint.timestamp || server_time);
+        
+        console.log(`[TIME-INFO] emp ${employeeId} | server_time (ms): ${server_time} | device_time (ms): ${firstPoint.timestamp}`);
+        
+        if (Math.abs(driftMs) > 120000) {
+            console.warn(`[TIME-DRIFT] ⚠️ emp ${employeeId}: TIME DRIFT ALERT. device_time is offset by ${Math.round(driftMs/1000)}s compared to server.`);
+        }
+    }
 
     // ── CRÍTICO 1: Deduplicación por client_id via Redis SET (TTL 24h) ────────
     const seenKey = `seen_points:employee:${employeeId}`;
@@ -435,7 +457,7 @@ router.post('/batch', auth, async (req, res) => {
 
         // Si el EKF rechazó el punto (outlier imposible físicamente), descartarlo
         if (ekfResult.rejected) {
-            console.log(`[EKF] Point REJECTED as outlier (physically impossible jump)`);
+            console.log(`[EKF] Point REJECTED as outlier for emp ${employeeId} at ts=${point.timestamp} | Reason: ${ekfResult.rejectReason}`);
             filtered++;
             continue;
         }

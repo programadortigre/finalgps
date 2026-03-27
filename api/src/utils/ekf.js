@@ -135,7 +135,7 @@ class GPSKalmanEKF {
     const dt = Math.min((timestampMs - this._lastTimestamp) / 1000, 30); // máx 30s
     this._lastTimestamp = timestampMs;
 
-    if (dt <= 0) return this._result(false);
+    if (dt <= 0) return this._result(false, "dt <= 0");
 
     // ── Predicción ──────────────────────────────────────────────────────────
     this._predict(dt);
@@ -151,7 +151,7 @@ class GPSKalmanEKF {
     if (distFromPred > maxExpected && distFromPred > 50) {
       // Punto demasiado lejos de lo predicho — probablemente ruido GPS
       // No actualizar, pero sí avanzar el tiempo
-      return this._result(true);
+      return this._result(true, `Outlier: distFromPred=${distFromPred.toFixed(1)}m > maxExpected=${maxExpected.toFixed(1)}m`);
     }
 
     // ── Actualización (corrección) ───────────────────────────────────────────
@@ -201,13 +201,14 @@ class GPSKalmanEKF {
     return this._result(false);
   }
 
-  _result(rejected) {
+  _result(rejected, reason = null) {
     return {
       lat:      this.x[0],
       lng:      this.x[1],
       speed:    Math.max(0, this.x[2]),
       heading:  this.x[3] * RAD2DEG,
       rejected,
+      rejectReason: reason
     };
   }
 
