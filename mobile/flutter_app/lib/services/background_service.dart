@@ -98,6 +98,9 @@ class TrackingEngine {
 
   // PRO: Unified Maintenance Timer
   Timer? _mainMaintenanceTimer;
+  
+  // PRO: Filtering (Kalman)
+  LocationKalmanFilter? _kalman;
   Timer? _syncTimer;
   int _maintenanceTicks = 0;
 
@@ -327,6 +330,7 @@ class TrackingEngine {
 
     _totalDistanceKm = 0;
     _lastValidPoint = null;
+    _kalman = null;
 
     _serviceInstance?.invoke('trackingState', {
       'is_active': false,
@@ -986,6 +990,7 @@ class TrackingEngine {
     _log('RESET', '🔥 HARD RESET GPS iniciado. Razón: $reason. Intento #${_resetCount + 1} (recientes: $_recentResetCount/3)');
     _lastResetTime = DateTime.now();
     _resetCount++;
+    _kalman = null; // Reiniciar filtro para que no arrastre error previo
 
     try {
       await _sendNoFixHeartbeat(reason: reason);
@@ -1269,8 +1274,8 @@ class TrackingEngine {
             break;
           case TrackingState.DRIVING:
           default:
-            intervalSec = 5;
-            distanceFilter = 10; 
+            intervalSec = 4; // Reducido de 5 a 4 para mejor reporte en curvas
+            distanceFilter = 8; // Reducido de 10 a 8
             accuracy = LocationAccuracy.high; // "Outdoor" mode
             break;
         }
@@ -1430,34 +1435,34 @@ class TrackingEngine {
             '| state=${_currentState.name}');
       }
 
-      // --- SUAVIZADO MATEMÁTICO — FIX S1: Single-step accuracy-weighted average ---
-      // ANTERIOR (roto): doble paso → punto nuevo tenía solo ~23% de influencia real.
-      // NUEVO: un solo paso ponderado por (1/accuracy). Alta precisión (5m) → más peso.
-      double smoothedLat = pos.latitude;
-      double smoothedLng = pos.longitude;
-
-      if (_lastValidPoint != null && isGoodForHistory) {
-        // Peso del nuevo punto: inversamente proporcional al error de precisión
-        // acc=5m → weight=0.20 | acc=15m → weight=0.067 | acc=30m → weight=0.033
-        final double newWeight = 1.0 / pos.accuracy.clamp(1.0, 100.0);
-        const double oldWeight = 1.0; // peso fijo del punto anterior como ancla
-
-        smoothedLat = (pos.latitude * newWeight + _lastValidPoint!.lat * oldWeight) / (newWeight + oldWeight);
-        smoothedLng = (pos.longitude * newWeight + _lastValidPoint!.lng * oldWeight) / (newWeight + oldWeight);
-
-        // 🔍 LOG TEMPORAL S1 — validar EWMA en campo (eliminar tras verificación)
-        final double rawDistM = Geolocator.distanceBetween(
-          _lastValidPoint!.lat, _lastValidPoint!.lng, pos.latitude, pos.longitude);
-        final double smoothDistM = Geolocator.distanceBetween(
-          _lastValidPoint!.lat, _lastValidPoint!.lng, smoothedLat, smoothedLng);
-        _log('EWMA', 'acc=${pos.accuracy.toStringAsFixed(1)}m '
-            'newW=${newWeight.toStringAsFixed(3)} '
-            'raw_dist=${rawDistM.toStringAsFixed(1)}m '
-            'smooth_dist=${smoothDistM.toStringAsFixed(1)}m '
-            '(reduction=${((1-smoothDistM/rawDistM.clamp(0.01,9999))*100).toStringAsFixed(0)}%)');
+      // --- SUAVIZADO MATEMÁTICO (Kalman) — FIX S1 ---
+      // NUEVO: Usamos LocationKalmanFilter para reducción de ruido 2D profesional.
+      if (_kalman == null) {
+        _kalman = LocationKalmanFilter(
+          initialLat: pos.latitude,
+          initialLng: pos.longitude,
+          gpsAccuracy: pos.accuracy,
+        );
       }
+      
+      final kResult = _kalman!.update(
+        pos.latitude, 
+        pos.longitude, 
+        gpsAccuracy: pos.accuracy,
+        speedKmh: speedKmh,
+      );
+      
+      double smoothedLat = kResult['lat']!;
+      double smoothedLng = kResult['lng']!;
 
-      // FILTRO 2: Descartar saltos imposibles y picos de ruido
+      // ── POSITION FREEZE (Anti-Drift) ───────────────────────────────────────
+      // Si el equipo está realmente quieto (acelerómetro), forzamos la posición 
+      // al último estimado de Kalman y NO dejamos que se mueva.
+      if (_motionDetector.isStationary && _lastValidPoint != null) {
+        _log('ZUPT', 'Freeze activo: manteniendo posición para evitar saltos (acc: ${pos.accuracy.toStringAsFixed(1)}m)');
+        smoothedLat = _lastValidPoint!.lat;
+        smoothedLng = _lastValidPoint!.lng;
+      }
       if (_lastValidPoint != null) {
         final dist = Geolocator.distanceBetween(
           _lastValidPoint!.lat, _lastValidPoint!.lng,
