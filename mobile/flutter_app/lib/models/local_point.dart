@@ -10,6 +10,7 @@ class LocalPoint {
   final double lng;
   final double speed;
   final double accuracy;
+  final double heading; // 📍 NUEVO: Rumbo/Dirección en grados (0-360)
   final int timestamp;
   final String state;
   final bool synced;
@@ -26,6 +27,7 @@ class LocalPoint {
     required this.lng,
     required this.speed,
     required this.accuracy,
+    this.heading = 0.0,
     required this.timestamp,
     this.state = 'SIN_MOVIMIENTO',
     this.synced = false,
@@ -44,6 +46,7 @@ class LocalPoint {
       'lng': lng,
       'speed': speed,
       'accuracy': accuracy,
+      'heading': heading,
       'timestamp': timestamp,
       'state': state,
       'synced': synced ? 1 : 0,
@@ -63,6 +66,7 @@ class LocalPoint {
       lng: (map['lng'] as num).toDouble(),
       speed: (map['speed'] as num).toDouble(),
       accuracy: (map['accuracy'] as num).toDouble(),
+      heading: (map['heading'] as num? ?? 0.0).toDouble(),
       timestamp: map['timestamp'] as int,
       state: map['state'] as String? ?? 'SIN_MOVIMIENTO',
       synced: map['synced'] != null ? (map['synced'] as int) == 1 : false,
@@ -81,6 +85,7 @@ class LocalPoint {
       'lng': lng,
       'speed': speed,
       'accuracy': accuracy,
+      'heading': heading,
       'timestamp': timestamp,
       'state': state,
       'employeeId': employeeId,
@@ -93,5 +98,5 @@ class LocalPoint {
 
   @override
   String toString() => 'LocalPoint(clientId: $clientId, lat: $lat, lng: $lng, '
-      'speed: $speed, accuracy: $accuracy, timestamp: $timestamp)';
+      'speed: $speed, accuracy: $accuracy, heading: $heading, timestamp: $timestamp)';
 }

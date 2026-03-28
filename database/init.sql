@@ -1,8 +1,8 @@
 -- =============================================================================
--- GPS Tracking System — Schema Completo (v9)
--- Generado consolidando init + migrations v5→v9
+-- GPS Tracking System — Schema Completo (v10)
+-- Generado consolidando init + migrations v5→v10
 -- Para instalar desde cero: este es el único archivo necesario.
--- Para DB existente: usar migration_v9_client_id.sql (el único pendiente).
+-- Para DB existente: usar migration_v10_heading.sql.
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS locations (
     accuracy     FLOAT,
     state        VARCHAR(30)  DEFAULT 'SIN_MOVIMIENTO',
     is_matched   BOOLEAN      DEFAULT FALSE,
+    heading      REAL         DEFAULT 0.0,
     timestamp    BIGINT  NOT NULL,
     created_at   TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 
@@ -103,6 +104,7 @@ CREATE INDEX IF NOT EXISTS idx_locations_trip_id   ON locations (trip_id);
 CREATE INDEX IF NOT EXISTS idx_locations_is_matched ON locations (is_matched) WHERE is_matched = FALSE;
 
 COMMENT ON COLUMN locations.client_id    IS 'UUID generado por APK por punto. Deduplicación end-to-end.';
+COMMENT ON COLUMN locations.heading      IS 'Rumbo o dirección de movimiento en grados (0-360).';
 COMMENT ON COLUMN locations.reset_reason IS 'Razón del reset GPS (gps_off, no_fix, app_restart, etc.).';
 
 -- ---------------------------------------------------------------------------

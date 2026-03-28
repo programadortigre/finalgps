@@ -348,8 +348,7 @@ class TrackingEngine {
     _motionDetector.stop();
     _currentState = TrackingState.PAUSED;
     
-    // Guardar buffer antes de pausar
-    _flushBufferToStorage();
+    // _flushBufferToStorage eliminado — ya manejado por persistencia inmediata
 
     _serviceInstance?.invoke('trackingState', {
       'is_active': true,
@@ -1417,22 +1416,28 @@ class TrackingEngine {
         source: source,
       );
 
-      // --- FILTRO DE CALIDAD DINÁMICO (Por Velocidad) — FIX S2 ---
-      // ANTERIOR: umbrales de 12/15/20m — demasiado agresivos para ciudad (GPS urbano ~15–40m típico)
-      // NUEVO: umbrales realistas que dejan pasar la ciudad. El EKF del backend limpia el ruido fino.
+      // --- ADAPTIVE ACCURACY — FIDELITY FIX ---
+      // Si no hemos tenido un punto bueno en mucho tiempo (>30s), somos más tolerantes
+      // para evitar huecos (gaps) en el mapa de historial.
+      final timeSinceLastGood = _lastValidPoint != null 
+          ? now.difference(DateTime.fromMillisecondsSinceEpoch(_lastValidPoint!.timestamp)).inSeconds 
+          : 60;
+      
       bool isGoodForHistory = true;
       double historyAccLimit;
-      if (speed < 1.5) historyAccLimit = 35.0;       // Quieto / caminando (ciudad exige más paciencia)
-      else if (speed < 10.0) historyAccLimit = 50.0; // Bici / lento
-      else historyAccLimit = 65.0;                   // Auto / moto (velocidad alta → aceptamos más error)
+      if (speed < 1.5) historyAccLimit = 35.0;
+      else if (speed < 10.0) historyAccLimit = 50.0;
+      else historyAccLimit = 65.0;
+
+      // Adaptación: si llevamos >30s sin puntos, subir el límite un 50%
+      if (timeSinceLastGood > 30) {
+        historyAccLimit *= 1.5;
+        _log('FIDELITY', 'Incrementando tolerancia de precisión a ${historyAccLimit.toStringAsFixed(0)}m (Gap: ${timeSinceLastGood}s)');
+      }
 
       if (pos.accuracy > historyAccLimit) {
         isGoodForHistory = false;
-        // 🔍 LOG TEMPORAL S2 — validar descarte en campo (eliminar tras verificación)
-        _log('HIST-FILTER', 'Punto EXCLUIDO: acc=${pos.accuracy.toStringAsFixed(1)}m '
-            '> límite=${historyAccLimit.toStringAsFixed(0)}m '
-            '| speed=${speedKmh.toStringAsFixed(1)}km/h '
-            '| state=${_currentState.name}');
+        _log('HIST-FILTER', 'Punto EXCLUIDO: acc=${pos.accuracy.toStringAsFixed(1)}m > límite=${historyAccLimit.toStringAsFixed(0)}m');
       }
 
       // --- SUAVIZADO MATEMÁTICO (Kalman) — FIX S1 ---
@@ -1500,6 +1505,19 @@ class TrackingEngine {
         if (dist < 3 && speed < 0.5 && _currentState == TrackingState.STOPPED) {
           _isProcessingPosition = false;
           return;
+        }
+
+        // --- TURN TRIGGER — FIDELITY FIX ---
+        // Si el rumbo (heading) cambia más de 20 grados, forzamos que este punto
+        // sea "bueno para el historial" para no recortar la curva.
+        if (pos.heading != 0 && _lastValidPoint!.heading != 0 && speedKmh > 10) {
+          double deltaHeading = (pos.heading - _lastValidPoint!.heading).abs();
+          if (deltaHeading > 180) deltaHeading = 360 - deltaHeading;
+          
+          if (deltaHeading > 20 && pos.accuracy < 40) {
+            _log('FIDELITY', 'Giro detectado: ΔHeading=${deltaHeading.toStringAsFixed(1)}° → Forzando captura para curva');
+            isGoodForHistory = true; 
+          }
         }
       }
 
@@ -1570,6 +1588,7 @@ class TrackingEngine {
         lng: smoothedLng,
         speed: speedKmh,
         accuracy: pos.accuracy,
+        heading: pos.heading, // 📍 Capturar rumbo real
         state: _currentState.name,
         timestamp: pointTime.millisecondsSinceEpoch, // ✅ FIX: Tiempo del sensor, no de la CPU
         employeeId: _cachedEmployeeId,
@@ -1657,17 +1676,6 @@ class TrackingEngine {
   // ---------------------------------------------------------------------------
   // Persistencia y Sincronización
   // ---------------------------------------------------------------------------
-  Future<void> _flushBufferToStorage() async {
-    if (_pointBuffer.isEmpty) return;
-    _log('STORAGE', 'Guardando ${_pointBuffer.length} puntos en SQLite...');
-    try {
-      final pointsToSave = List<LocalPoint>.from(_pointBuffer);
-      _pointBuffer.clear();
-      await _storage.insertPoints(pointsToSave);
-    } catch (e) {
-      _log('STORAGE', 'Error guardando buffer: $e');
-    }
-  }
 
   // Backoff exponencial con jitter: evita que todos los dispositivos reintenten al mismo tiempo
   // Secuencia: 15s, 30s, 60s, 120s, 300s (máx 5 min)
@@ -1794,6 +1802,7 @@ class TrackingEngine {
         pointType: point['point_type']?.toString() ?? 'normal',
         batteryLevel: (point['battery'] as num?)?.toInt(),
         isCharging: point['is_charging'] as bool?,
+        heading: (point['heading'] as num?)?.toDouble() ?? 0,
       );
       await _storage.insertPoints([lp]);
     } catch (e) {

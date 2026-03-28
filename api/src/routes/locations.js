@@ -594,6 +594,7 @@ router.post('/batch', auth, async (req, res) => {
                     battery: p.battery || null,
                     is_charging: p.is_charging || false,
                     client_id: p.client_id || null,
+                    heading: p.heading || 0.0,
                 }))
             }, { ...defaultJobOptions, priority: jobPriority });
         }

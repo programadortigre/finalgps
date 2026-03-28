@@ -22,7 +22,7 @@ class LocalStorage {
     final path = join(dbPath, _dbName);
     return openDatabase(
       path,
-      version: 7, // v7: client_id UUID para deduplicación en backend
+      version: 8, // v8: Agregado campo 'heading' para fidelidad de giro
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -47,6 +47,7 @@ class LocalStorage {
         lng           REAL    NOT NULL,
         speed         REAL    NOT NULL,
         accuracy      REAL    NOT NULL,
+        heading       REAL    DEFAULT 0,
         state         TEXT    DEFAULT "SIN_MOVIMIENTO",
         source        TEXT,
         timestamp     INTEGER NOT NULL,
@@ -100,6 +101,10 @@ class LocalStorage {
       try { await db.execute('ALTER TABLE $_tableName ADD COLUMN client_id TEXT'); } catch (_) {}
       try { await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_client_id ON $_tableName(client_id)'); } catch (_) {}
     }
+    if (oldVersion < 8) {
+      print('[STORAGE] Migración v8: Agregando columna heading');
+      try { await db.execute('ALTER TABLE $_tableName ADD COLUMN heading REAL DEFAULT 0'); } catch (_) {}
+    }
   }
 
   // ── Escritura ───────────────────────────────────────────────────────────────
@@ -129,6 +134,7 @@ class LocalStorage {
             'lng': point.lng,
             'speed': point.speed,
             'accuracy': point.accuracy,
+            'heading': point.heading,
             'state': point.state,
             'source': point.source,
             'timestamp': point.timestamp,
@@ -157,6 +163,7 @@ class LocalStorage {
         'lng': point.lng,
         'speed': point.speed,
         'accuracy': point.accuracy,
+        'heading': point.heading,
         'state': point.state,
         'source': point.source,
         'timestamp': point.timestamp,

@@ -25,7 +25,6 @@ const stopIcon = L.divIcon({
 
 // ── Iconos diferenciados por fuente y calidad ────────────────────────────────
 function getPointIcon(source = 'gps', quality = 'high') {
-    // Colores estándar por fuente
     const sourceColors = {
         gps:    '#2563eb', // azul
         wifi:   '#22c55e', // verde
@@ -33,7 +32,6 @@ function getPointIcon(source = 'gps', quality = 'high') {
         fallback: '#64748b', // gris
         unknown: '#a1a1aa', // gris claro
     };
-    // Bordes por calidad
     const qualityBorders = {
         high:   '3px solid #22d3ee', // cyan
         medium: '3px solid #fbbf24', // amber
@@ -47,6 +45,22 @@ function getPointIcon(source = 'gps', quality = 'high') {
         html: `<div style="width:16px;height:16px;border-radius:50%;background:${bg};border:${border};opacity:${opacity};box-shadow:0 0 6px rgba(0,0,0,0.18);"></div>`,
         iconSize: [16, 16],
         iconAnchor: [8, 8],
+    });
+}
+
+/**
+ * NUEVO: Icono de flecha para dirección (Heading) en historial
+ */
+function getArrowIcon(heading = 0, color = '#3b82f6') {
+    return L.divIcon({
+        className: 'arrow-icon',
+        html: `<div style="transform: rotate(${heading}deg); color: ${color}; width: 14px; height: 14px; display: flex; align-items: center; justify-content: center;">
+                 <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                   <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/>
+                 </svg>
+               </div>`,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7]
     });
 }
 
@@ -81,9 +95,9 @@ function getAvatarColor(employeeId) {
     return AVATAR_COLORS[((employeeId || 1) - 1) % AVATAR_COLORS.length];
 }
 
-function getLiveIcon(state, isStale, isGpsOff, hbStatus, name, employeeId) {
+function getLiveIcon(state, isStale, isGpsOff, hbStatus, name, employeeId, heading = 0) {
     const initial = (name || '?').charAt(0).toUpperCase();
-    const key = `${state}-${isStale}-${isGpsOff}-${hbStatus}-${initial}-${employeeId}`;
+    const key = `${state}-${isStale}-${isGpsOff}-${hbStatus}-${initial}-${employeeId}-${heading}`;
     if (iconCache[key]) return iconCache[key];
 
     const isDead    = hbStatus === 'dead';
@@ -137,7 +151,7 @@ function getLiveIcon(state, isStale, isGpsOff, hbStatus, name, employeeId) {
           <div style="
             position:absolute; top:0; left:2px;
             width:40px; height:40px; border-radius:50% 50% 50% 0;
-            transform:rotate(-45deg);
+            transform: rotate(${heading - 45}deg);
             background:${pinBg};
             border:2.5px solid ${pinBorder};
             box-shadow:0 3px 10px rgba(0,0,0,0.35);
@@ -178,12 +192,12 @@ const LiveMarker = memo(({ loc, addr, hbStatus = 'unknown', hbReason = null }) =
         }
     }, [loc.lat, loc.lng]);
 
-    const icon = getLiveIcon(loc.state, isStale, isGpsOff, hbStatus, loc.name, loc.employeeId);
+    const icon = getLiveIcon(loc.state, isStale, isGpsOff, hbStatus, loc.name, loc.employeeId, loc.heading);
 
     // Actualizar icono cuando cambia nombre/estado (invalida cache key)
     useEffect(() => {
         if (markerRef.current) {
-            markerRef.current.setIcon(getLiveIcon(loc.state, isStale, isGpsOff, hbStatus, loc.name, loc.employeeId));
+            markerRef.current.setIcon(getLiveIcon(loc.state, isStale, isGpsOff, hbStatus, loc.name, loc.employeeId, loc.heading));
         }
     }, [loc.name, loc.state, hbStatus, isStale, isGpsOff, loc.employeeId]);
 
@@ -1116,6 +1130,17 @@ const MapView = ({
                                         <React.Fragment key={`multi-trip-${idx}`}>
                                             {pts.length > 1 && <Polyline positions={pts.map(p => [p.lat, p.lng])} color="#6C63FF" weight={12} opacity={0.25} />}
                                             {pts.length > 1 && <Polyline positions={pts.map(p => [p.lat, p.lng])} color="#6C63FF" weight={4} opacity={1} />}
+                                            {/* NUEVO: Flechas de dirección cada 5 puntos */}
+                                            {pts.filter((_, idx) => idx % 5 === 0).map((p, idx) => (
+                                                p.heading ? (
+                                                    <Marker 
+                                                        key={`multi-arrow-${idx}`}
+                                                        position={[p.lat, p.lng]}
+                                                        icon={getArrowIcon(p.heading, '#6C63FF')}
+                                                        interactive={false}
+                                                    />
+                                                ) : null
+                                            ))}
                                             {pts[0] && (
                                                 <Marker position={[pts[0].lat, pts[0].lng]}>
                                                     <Popup>
@@ -1177,6 +1202,17 @@ const MapView = ({
                                                 </Popup>
                                             </Polyline>
                                         )}
+                                        {/* NUEVO: Flechas de dirección cada 5 puntos */}
+                                        {seg.points.filter((_, idx) => idx % 5 === 0).map((p, idx) => (
+                                            p.heading ? (
+                                                <Marker 
+                                                    key={`arrow-${i}-${idx}`}
+                                                    position={[p.lat, p.lng]}
+                                                    icon={getArrowIcon(p.heading, seg.type === 'normal' ? '#6C63FF' : '#94a3b8')}
+                                                    interactive={false}
+                                                />
+                                            ) : null
+                                        ))}
                                     </React.Fragment>
                                 ))}
                                 {/* Siempre mostrar marcador de inicio */}

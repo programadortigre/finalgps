@@ -112,10 +112,10 @@ async function insertPoints(client, tripId, employeeId, points) {
                 `INSERT INTO locations
                    (trip_id, employee_id, latitude, longitude, speed, accuracy,
                     state, timestamp, geom, source, quality, confidence,
-                    point_type, battery, is_charging, client_id)
+                    point_type, battery, is_charging, client_id, heading)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
                          ST_SetSRID(ST_MakePoint($4,$3),4326),
-                         $9,$10,$11,$12,$13,$14,$15)
+                         $9,$10,$11,$12,$13,$14,$15,$16)
                  ON CONFLICT (employee_id, client_id) WHERE client_id IS NOT NULL DO NOTHING`,
                 [
                     tripId, employeeId,
@@ -131,6 +131,7 @@ async function insertPoints(client, tripId, employeeId, points) {
                     p.battery    ?? null,
                     p.is_charging ?? false,
                     p.client_id,
+                    p.heading    || 0.0,
                 ]
             );
             inserted += res.rowCount ?? 0;
@@ -140,10 +141,10 @@ async function insertPoints(client, tripId, employeeId, points) {
                 `INSERT INTO locations
                    (trip_id, employee_id, latitude, longitude, speed, accuracy,
                     state, timestamp, geom, source, quality, confidence,
-                    point_type, battery, is_charging)
+                    point_type, battery, is_charging, heading)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
                          ST_SetSRID(ST_MakePoint($4,$3),4326),
-                         $9,$10,$11,$12,$13,$14)
+                         $9,$10,$11,$12,$13,$14,$15)
                  ON CONFLICT (employee_id, timestamp) DO NOTHING`,
                 [
                     tripId, employeeId,
@@ -158,6 +159,7 @@ async function insertPoints(client, tripId, employeeId, points) {
                     p.point_type || 'normal',
                     p.battery    ?? null,
                     p.is_charging ?? false,
+                    p.heading    || 0.0,
                 ]
             );
             inserted += res.rowCount ?? 0;
