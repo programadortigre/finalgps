@@ -488,12 +488,8 @@ class TrackingEngine {
     String src;
     if (source != null) {
       src = source;
-    } else if (pos.accuracy <= 25 && pos.provider != null && pos.provider!.toLowerCase().contains('gps')) {
+    } else if (pos.accuracy <= 25) {
       src = 'gps';
-    } else if (pos.provider != null && pos.provider!.toLowerCase().contains('wifi')) {
-      src = 'wifi';
-    } else if (pos.provider != null && pos.provider!.toLowerCase().contains('cell')) {
-      src = 'cell';
     } else if (pos.accuracy > 50) {
       src = 'fallback';
     } else {
@@ -1327,7 +1323,7 @@ class TrackingEngine {
         ),
       ).listen(
         (Position pos) async {
-          _log('GPS-RAW', 'Recibido: lat=${pos.latitude}, lng=${pos.longitude}, acc=${pos.accuracy.toStringAsFixed(1)}m, speed=${pos.speed.toStringAsFixed(1)}m/s, provider=${pos.provider}');
+          _log('GPS-RAW', 'Recibido: lat=${pos.latitude}, lng=${pos.longitude}, acc=${pos.accuracy.toStringAsFixed(1)}m, speed=${pos.speed.toStringAsFixed(1)}m/s');
           _lastRawTime = DateTime.now();
           // Fallback: Si accuracy es mala (>80m) y GPS está encendido, intentar obtener posición por red
           if (pos.accuracy > 80) {
@@ -1485,11 +1481,10 @@ class TrackingEngine {
           
           // 1. Salto brutal general (> 160 km/h) — pero con RECOVERY si es extremo (> 1000 km/h)
           if (transitSpeedKmh > 160) {
-            // ✅ HARD RESET para autocuración: Si el salto es absurdo (> 1000 km/h) 
-            // probablemente el _lastValidPoint es basura o de otra sesión lejana.
-            // Aceptamos este punto como el nuevo "Origen" (Snap).
-            if (transitSpeedKmh > 1000) {
-              _log('GPS', 'RECOVERY: Salto extremo (${transitSpeedKmh.toStringAsFixed(0)} km/h). Reseteando origen a este punto.');
+            // SNAP TOLERANTE: Si acaba de haber transición de estado (ej. WALKING→DRIVING), aceptar el salto como nuevo origen
+            final recentlyChangedState = DateTime.now().difference(_lastStateChangeTime).inSeconds < 10;
+            if (transitSpeedKmh > 1000 || recentlyChangedState) {
+              _log('GPS', 'RECOVERY/SNAP: Salto alto (${transitSpeedKmh.toStringAsFixed(0)} km/h) tras transición de estado. Reseteando origen a este punto.');
               // Al no hacer return, el flujo continuará y este punto se convertirá en _lastValidPoint abajo.
             } else {
               _log('GPS', 'Salto bloqueado: $dist m en $seconds s (${transitSpeedKmh.toStringAsFixed(1)} km/h)');

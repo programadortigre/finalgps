@@ -389,10 +389,13 @@ router.get('/events/history/:employeeId', auth, async (req, res) => {
 });
 
 // Get details of a single trip (route + stops)
-// NUEVO: Soporta ?simplify=true para obtener ruta compilada en lugar de todos los puntos
+// Get details of a single trip (route + stops)
+// NUEVO: Soporta ?simplify=true para obtener ruta compilada
+// ✅ PRO FIX: Soporta ?date=YYYY-MM-DD para filtrar puntos estrictamente por ese día (evitar mezclas de rutas)
 router.get('/:id', auth, async (req, res) => {
     const tripId = req.params.id;
-    const simplify = req.query.simplify === 'true';  // Nuevo parámetro
+    const { simplify = 'false', date, tzOffset = '-00:00' } = req.query; 
+    const isSimplify = simplify === 'true';
 
     try {
         // 1. Get trip info
@@ -401,11 +404,11 @@ router.get('/:id', auth, async (req, res) => {
             return res.status(404).json({ error: 'Trip not found' });
         }
 
-        // 2. Get route points (Soporta simplificación)
+        // 2. Get route points (Soporta simplificación y filtrado por fecha)
         let points = [];
-        if (simplify) {
+        if (isSimplify) {
             console.log(`[API] Trip ${tripId}: Fetching Pro dual-path (Raw + Matched) from trip_routes...`);
-            // ✅ PRO ARCHITECTURE: Devolvemos ambas opciones y dejamos que el sistema decida la mejor
+            
             const routesResult = await db.query(`
                 SELECT 
                     ST_AsGeoJSON(geom_raw) as raw_json,
@@ -420,67 +423,59 @@ router.get('/:id', auth, async (req, res) => {
                 const rawGeojson = row.raw_json ? JSON.parse(row.raw_json) : null;
                 const matchedGeojson = row.matched_json ? JSON.parse(row.matched_json) : null;
                 
-                // Decisión "Pro": Si la confianza es alta (> 0.6), usamos matcheado. 
-                // Si es baja (parques, zonas rurales), usamos raw suavizado.
-                if (row.confidence > 0.6 && matchedGeojson) {
-                    points = matchedGeojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-                    console.log(`[API] Trip ${tripId}: High confidence (${(row.confidence*100).toFixed(0)}%). Using SNAPPED path.`);
-                } else if (rawGeojson) {
-                    points = rawGeojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-                    console.log(`[API] Trip ${tripId}: Low confidence (${(row.confidence*100).toFixed(0)}%). Using RAW (Kalman) path.`);
+                let selectedGeojson = (row.confidence > 0.6 && matchedGeojson) ? matchedGeojson : rawGeojson;
+                
+                if (selectedGeojson) {
+                    points = selectedGeojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
+                    
+                    // ✅ APLICAR FILTRO DE FECHA POST-FETCH
+                    // Si se pide fecha, forzamos el fallback de locations que SÍ tiene precisión temporal precisa por punto
+                    if (date) {
+                        points = []; 
+                        console.log(`[API] Trip ${tripId}: Date filter requested (${date}), bypassing pre-compiled route to use temporal fallback.`);
+                    }
                 }
-            } else {
-                console.log(`[API] Trip ${tripId}: No pre-compiled Pro routes found`);
             }
         }
 
-        // Si no se usó simplificación o falló el fallback
+        // Fallback or explicit date filtering from locations table
         if (points.length === 0) {
-            console.log(`[API] Trip ${tripId}: Fetching filtered and smoothed fallback...`);
-            // ✅ MEJORA: Usar PostGIS para filtrar basura y simplificar al vuelo en el fallback
-            const fallbackResult = await db.query(`
-                WITH trip_points AS (
-                    SELECT geom::geometry, timestamp
-                    FROM locations 
-                    WHERE trip_id = $1 
-                    AND quality != 'no_fix' AND quality != 'low' 
-                    AND accuracy < 50 -- Filtro MUY agresivo anti-jitter (Bajado de 100)
-                    ORDER BY timestamp ASC
-                ),
-                smoothed_line AS (
-                    SELECT ST_SimplifyPreserveTopology(ST_MakeLine(geom ORDER BY timestamp), 0.0001) as geom_line
-                    FROM trip_points
-                )
-                SELECT ST_AsGeoJSON(geom_line) as simplified_json
-                FROM smoothed_line
-                WHERE geom_line IS NOT NULL
-            `, [tripId]);
+            console.log(`[API] Trip ${tripId}: Fetching filtered points from locations (Filter Date: ${date || 'No'})...`);
+            
+            let query = `
+                SELECT latitude as lat, longitude as lng, timestamp
+                FROM locations 
+                WHERE trip_id = $1 
+                AND quality != 'no_fix'
+            `;
+            let params = [tripId];
 
-            if (fallbackResult.rows.length > 0 && fallbackResult.rows[0].simplified_json) {
-                const geojson = JSON.parse(fallbackResult.rows[0].simplified_json);
-                points = geojson.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-                console.log(`[API] Trip ${tripId}: Generated ${points.length} points via On-The-Fly Simplification fallback`);
-            } else {
-                // Fallback de ultra-emergencia: Puntos crudos pero filtrados
-                const emergencyResult = await db.query(`
-                    SELECT latitude as lat, longitude as lng, timestamp
-                    FROM locations 
-                    WHERE trip_id = $1 
-                    AND quality = 'high' AND accuracy < 50
-                    ORDER BY timestamp ASC LIMIT 500
-                `, [tripId]);
-                points = emergencyResult.rows;
-                console.log(`[API] Trip ${tripId}: Emergency fallback using ${points.length} raw high-quality points`);
+            if (date) {
+                query += ` AND DATE(TO_TIMESTAMP(timestamp / 1000) AT TIME ZONE 'UTC' AT TIME ZONE $2) = $3`;
+                params.push(tzOffset, date);
             }
+
+            query += ` ORDER BY timestamp ASC`;
+            
+            const result = await db.query(query, params);
+            points = result.rows.map(r => ({ lat: parseFloat(r.lat), lng: parseFloat(r.lng), timestamp: r.timestamp }));
         }
 
-        // 3. Get stops
-        const stopsResult = await db.query(`
+        // 3. Get stops (también filtradas por fecha si aplica)
+        let stopsQuery = `
             SELECT latitude as lat, longitude as lng, start_time, end_time, duration_seconds
             FROM stops 
             WHERE trip_id = $1 
-            ORDER BY start_time ASC
-        `, [tripId]);
+        `;
+        let stopsParams = [tripId];
+        
+        if (date) {
+            stopsQuery += ` AND DATE(start_time AT TIME ZONE 'UTC' AT TIME ZONE $2) = $3`;
+            stopsParams.push(tzOffset, date);
+        }
+        
+        stopsQuery += ` ORDER BY start_time ASC`;
+        const stopsResult = await db.query(stopsQuery, stopsParams);
 
         res.json({
             trip: tripResult.rows[0],
@@ -489,7 +484,7 @@ router.get('/:id', auth, async (req, res) => {
             metadata: {
                 point_count: points.length,
                 stop_count: stopsResult.rows.length,
-                is_simplified: simplify && points.length > 0
+                date_filter: date || null
             }
         });
     } catch (err) {
@@ -497,6 +492,7 @@ router.get('/:id', auth, async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+
 
 // ✅ ENDPOINT: Cerrar viaje manualmente (cuando usuario detiene tracking)
 // PATCH /api/trips/:id/close

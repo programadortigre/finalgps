@@ -92,6 +92,8 @@ const History = ({ user }) => {
     const [error, setError] = useState('');
     const [selectedTrip, setSelectedTrip] = useState(null);
     const [tripDetails, setTripDetails] = useState(null);
+    const [isAllDay, setIsAllDay] = useState(false);
+    const [viewDayTrips, setViewDayTrips] = useState([]); // NUEVO: Trips del día seleccionado para el mapa
     const [loadingDetails, setLoadingDetails] = useState(false);
 
     const [tripsPage, setTripsPage] = useState(1);
@@ -196,10 +198,12 @@ const History = ({ user }) => {
     }, [selectedEmployee, startDate, endDate, eventsPage, loading]);
 
     /* ── trip detail ── */
-    const fetchTripDetails = useCallback(async (tripId) => {
+    const fetchTripDetails = useCallback(async (tripId, date) => {
         setLoadingDetails(true);
         try {
-            const { data } = await api.get(`/api/trips/${tripId}?simplify=true`);
+            const tzOffset = dayjs().format('Z');
+            // ✅ PRO FIX: Pasar fecha para que el backend filtre puntos estrictamente a ese día
+            const { data } = await api.get(`/api/trips/${tripId}?simplify=true&date=${date}&tzOffset=${tzOffset}`);
             setTripDetails(data);
         } catch { setError('Error al cargar detalles del viaje'); }
         setLoadingDetails(false);
@@ -207,13 +211,15 @@ const History = ({ user }) => {
 
     const handleTripClick = useCallback((trip) => {
         setSelectedTrip(trip);
-        fetchTripDetails(trip.id);
+        fetchTripDetails(trip.id, trip.trip_date);
         setDrawerState('half');
     }, [fetchTripDetails]);
 
     const handleBack = useCallback(() => {
         setSelectedTrip(null);
         setTripDetails(null);
+        setIsAllDay(false);
+        setViewDayTrips([]);
     }, []);
 
     /* ── derived ── */
@@ -224,6 +230,16 @@ const History = ({ user }) => {
         const q = searchQuery.toLowerCase();
         return employees.filter(e => e.name.toLowerCase().includes(q));
     }, [employees, searchQuery]);
+
+    const groupedTrips = useMemo(() => {
+        const groups = {};
+        trips.forEach(trip => {
+            const date = trip.trip_date;
+            if (!groups[date]) groups[date] = [];
+            groups[date].push(trip);
+        });
+        return Object.entries(groups).sort((a,b) => b[0].localeCompare(a[0]));
+    }, [trips]);
 
     const selectEmployee = (emp) => {
         setSelectedEmployee(emp.id);
@@ -244,10 +260,25 @@ const History = ({ user }) => {
                     loadingDetails ? (
                         <div className="hx-map-loader"><Loader size={36} className="spin" /><p>Cargando ruta…</p></div>
                     ) : (
-                        <MapView view="history" selectedEmployee={employees.find(e => e.id === selectedEmployee) || null} selectedTrip={selectedTrip} tripDetails={tripDetails} />
+                        <MapView 
+                            view="history" 
+                            selectedDate={selectedTrip?.trip_date}
+                            selectedEmployee={employees.find(e => e.id === selectedEmployee) || null} 
+                            selectedTrip={selectedTrip} 
+                            tripDetails={tripDetails}
+                            showSidePanel={false} 
+                        />
                     )
                 ) : (
-                    <MapView view="history" selectedEmployee={employees.find(e => e.id === selectedEmployee) || null} trips={trips} stops={stops} />
+                    <MapView 
+                        view="history" 
+                        selectedDate={startDate}
+                        selectedEmployee={employees.find(e => e.id === selectedEmployee) || null} 
+                        trips={isAllDay ? viewDayTrips : trips} 
+                        stops={stops}
+                        showSidePanel={false} 
+                        forceAllDay={isAllDay}
+                    />
                 )}
             </div>
 
@@ -318,7 +349,6 @@ const History = ({ user }) => {
 
             {/* ─── BOTTOM DRAWER ─── */}
             <div className={`hx-drawer hx-drawer--${drawerState}`}>
-                {/* Handle */}
                 <button className="hx-drawer-handle" onClick={toggleDrawer}>
                     <div className="hx-handle-pill" />
                     {drawerState === 'collapsed' && (
@@ -329,10 +359,8 @@ const History = ({ user }) => {
                     )}
                 </button>
 
-                {/* Drawer body */}
                 <div className="hx-drawer-body">
                     {selectedTrip ? (
-                        /* ─── DETAIL VIEW ─── */
                         <div className="hx-detail">
                             <div className="hx-detail-head">
                                 <button className="hx-back-btn" onClick={handleBack}><ArrowLeft size={18} /></button>
@@ -368,9 +396,7 @@ const History = ({ user }) => {
                             )}
                         </div>
                     ) : (
-                        /* ─── LIST VIEW ─── */
                         <>
-                            {/* Tabs */}
                             <div className="hx-tabs">
                                 <button className={`hx-tab ${activeTab === 'trips' ? 'active' : ''}`} onClick={() => setActiveTab('trips')}>
                                     <TrendingUp size={14} /> Recorridos <span className="hx-tab-count">{paginationInfo.trips.total}</span>
@@ -383,15 +409,38 @@ const History = ({ user }) => {
                                 </button>
                             </div>
 
-                            {/* Content */}
                             <div className="hx-list-content">
                                 {loading && <div className="hx-loading"><Loader size={28} className="spin" /><span>Cargando…</span></div>}
 
                                 {!loading && activeTab === 'trips' && (
                                     <>
                                         {trips.length === 0 ? <div className="hx-empty-msg">📍 Sin recorridos en este rango</div> : (
-                                            <div className="hx-trips-grid">
-                                                {trips.map(trip => <TripCard key={trip.id} trip={trip} onClick={() => handleTripClick(trip)} />)}
+                                            <div className="hx-trips-list">
+                                                {groupedTrips.map(([date, dayTrips]) => (
+                                                    <div key={date} className="hx-day-group">
+                                                        <div className="hx-day-header">
+                                                            <div className="hx-day-name">👤 {employeeName}</div>
+                                                            <div className="hx-day-date">
+                                                                {date}
+                                                                <button 
+                                                                    className="hx-day-btn" 
+                                                                    title="Ver todo el día en el mapa"
+                                                                    onClick={() => {
+                                                                        setSelectedTrip(null);
+                                                                        setTripDetails(null);
+                                                                        setIsAllDay(true);
+                                                                        setViewDayTrips(dayTrips);
+                                                                    }}
+                                                                >
+                                                                    🚩 Ver día
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        <div className="hx-trips-grid">
+                                                            {dayTrips.map(trip => <TripCard key={trip.id} trip={trip} onClick={() => handleTripClick(trip)} />)}
+                                                        </div>
+                                                    </div>
+                                                ))}
                                             </div>
                                         )}
                                         {paginationInfo.trips.hasMore && <button className="hx-load-more" onClick={loadMoreTrips}>Cargar más ({trips.length}/{paginationInfo.trips.total})</button>}
@@ -421,591 +470,120 @@ const History = ({ user }) => {
                 </div>
             </div>
 
-            {/* ═══════════════════════ STYLES ═══════════════════════ */}
             <style>{`
-                /* ─── ROOT ─── */
-                .hx-root {
-                    position: relative;
-                    width: 100%;
-                    height: 100%;
-                    overflow: hidden;
-                    font-family: 'Inter', system-ui, -apple-system, sans-serif;
-                    background: #0f172a;
-                }
-
-                /* ─── MAP ─── */
-                .hx-map {
-                    position: absolute;
-                    inset: 0;
-                    z-index: 0;
-                }
-                .hx-map-loader {
-                    position: absolute;
-                    inset: 0;
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 12px;
-                    background: #0f172a;
-                    color: #94a3b8;
-                }
-
-                /* ─── FLOATING SEARCH ─── */
-                .hx-search-wrap {
-                    position: absolute;
-                    top: 16px;
-                    left: 16px;
-                    z-index: 100;
-                    width: 320px;
-                    max-width: calc(100vw - 200px);
-                }
-                .hx-search-bar {
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    padding: 10px 16px;
-                    background: rgba(15, 23, 42, 0.82);
-                    backdrop-filter: blur(24px) saturate(180%);
-                    -webkit-backdrop-filter: blur(24px) saturate(180%);
-                    border: 1px solid rgba(255,255,255,0.1);
-                    border-radius: 16px;
-                    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-                    transition: border-color 0.2s;
-                }
+                .hx-root { position: relative; width: 100%; height: 100%; overflow: hidden; font-family: 'Inter', system-ui, -apple-system, sans-serif; background: #0f172a; }
+                .hx-map { position: absolute; inset: 0; z-index: 0; }
+                .hx-day-group { margin-bottom: 30px; }
+                .hx-day-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; background: rgba(255, 255, 255, 0.04); border-radius: 14px; margin-bottom: 16px; border: 1px solid rgba(255, 255, 255, 0.08); position: sticky; top: 0; z-index: 10; backdrop-filter: blur(8px); }
+                .hx-day-name { font-size: 13px; font-weight: 700; color: #94a3b8; display: flex; align-items: center; gap: 8px; }
+                .hx-day-date { font-size: 12px; font-weight: 800; color: #818cf8; background: rgba(99, 102, 241, 0.15); padding: 5px 12px; border-radius: 10px; box-shadow: 0 2px 10px rgba(99, 102, 241, 0.1); display: flex; align-items: center; gap: 10px; }
+                .hx-day-btn { background: #6366f1; border: none; color: #fff; font-size: 9px; font-weight: 900; padding: 4px 8px; border-radius: 6px; cursor: pointer; text-transform: uppercase; transition: all 0.2s; }
+                .hx-day-btn:hover { background: #4f46e5; transform: scale(1.05); }
+                .hx-trips-list { display: flex; flex-direction: column; }
+                .hx-map-loader { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #0f172a; color: #94a3b8; }
+                .hx-search-wrap { position: absolute; top: 16px; left: 16px; z-index: 100; width: 320px; max-width: calc(100vw - 200px); }
+                .hx-search-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: rgba(15, 23, 42, 0.82); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); transition: border-color 0.2s; }
                 .hx-search-bar:focus-within { border-color: #3b82f6; }
                 .hx-search-icon { color: #64748b; flex-shrink: 0; }
-                .hx-search-input {
-                    flex: 1;
-                    background: none;
-                    border: none;
-                    outline: none;
-                    color: #f1f5f9;
-                    font-size: 14px;
-                    font-family: inherit;
-                }
+                .hx-search-input { flex: 1; background: none; border: none; outline: none; color: #f1f5f9; font-size: 14px; font-family: inherit; }
                 .hx-search-input::placeholder { color: #475569; }
-
-                /* vendor chip */
-                .hx-vendor-chip {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    padding: 6px 12px;
-                    background: rgba(59,130,246,0.2);
-                    border: 1px solid rgba(59,130,246,0.35);
-                    border-radius: 999px;
-                    color: #93c5fd;
-                    font-size: 13px;
-                    font-weight: 600;
-                    cursor: pointer;
-                    font-family: inherit;
-                    white-space: nowrap;
-                    transition: all 0.15s;
-                }
+                .hx-vendor-chip { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: rgba(59,130,246,0.2); border: 1px solid rgba(59,130,246,0.35); border-radius: 999px; color: #93c5fd; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; white-space: nowrap; transition: all 0.15s; }
                 .hx-vendor-chip:hover { background: rgba(59,130,246,0.3); }
-                .hx-chip-x {
-                    opacity: 0.6;
-                    transition: opacity 0.15s;
-                }
+                .hx-chip-x { opacity: 0.6; transition: opacity 0.15s; }
                 .hx-chip-x:hover { opacity: 1; }
-
-                /* dropdown */
-                .hx-search-dropdown {
-                    margin-top: 6px;
-                    background: rgba(15, 23, 42, 0.92);
-                    backdrop-filter: blur(24px) saturate(180%);
-                    -webkit-backdrop-filter: blur(24px) saturate(180%);
-                    border: 1px solid rgba(255,255,255,0.1);
-                    border-radius: 16px;
-                    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
-                    max-height: 280px;
-                    overflow-y: auto;
-                    padding: 6px;
-                    animation: hxFadeIn 0.15s ease;
-                }
-                .hx-search-empty {
-                    padding: 20px;
-                    text-align: center;
-                    color: #475569;
-                    font-size: 13px;
-                }
-                .hx-search-item {
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
-                    width: 100%;
-                    padding: 10px 14px;
-                    background: transparent;
-                    border: none;
-                    border-radius: 12px;
-                    color: #e2e8f0;
-                    font-size: 14px;
-                    cursor: pointer;
-                    font-family: inherit;
-                    text-align: left;
-                    transition: background 0.12s;
-                }
+                .hx-search-dropdown { margin-top: 6px; background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; box-shadow: 0 12px 40px rgba(0,0,0,0.5); max-height: 280px; overflow-y: auto; padding: 6px; animation: hxFadeIn 0.15s ease; }
+                .hx-search-empty { padding: 20px; text-align: center; color: #475569; font-size: 13px; }
+                .hx-search-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; background: transparent; border: none; border-radius: 12px; color: #e2e8f0; font-size: 14px; cursor: pointer; font-family: inherit; text-align: left; transition: background 0.12s; }
                 .hx-search-item:hover { background: rgba(255,255,255,0.06); }
                 .hx-search-item.active { background: rgba(59,130,246,0.15); color: #93c5fd; }
-                .hx-search-avatar {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    width: 32px;
-                    height: 32px;
-                    border-radius: 50%;
-                    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-                    color: white;
-                    font-size: 14px;
-                    font-weight: 700;
-                    flex-shrink: 0;
-                }
-
-                /* ─── FLOATING DATE ─── */
-                .hx-date-float {
-                    position: absolute;
-                    top: 16px;
-                    right: 16px;
-                    z-index: 100;
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    padding: 8px 14px;
-                    background: rgba(15, 23, 42, 0.82);
-                    backdrop-filter: blur(24px) saturate(180%);
-                    -webkit-backdrop-filter: blur(24px) saturate(180%);
-                    border: 1px solid rgba(255,255,255,0.1);
-                    border-radius: 14px;
-                    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-                }
-                .hx-date-field {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    color: #94a3b8;
-                }
-                .hx-date-field input[type="date"] {
-                    background: rgba(255,255,255,0.05);
-                    border: 1px solid rgba(255,255,255,0.08);
-                    color: #e2e8f0;
-                    padding: 6px 10px;
-                    border-radius: 8px;
-                    font-size: 12px;
-                    font-family: inherit;
-                    outline: none;
-                    transition: border-color 0.2s;
-                }
+                .hx-search-avatar { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; font-size: 14px; font-weight: 700; flex-shrink: 0; }
+                .hx-date-float { position: absolute; top: 16px; right: 16px; z-index: 100; display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: rgba(15, 23, 42, 0.82); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+                .hx-date-field { display: flex; align-items: center; gap: 6px; color: #94a3b8; }
+                .hx-date-field input[type="date"] { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: #e2e8f0; padding: 6px 10px; border-radius: 8px; font-size: 12px; font-family: inherit; outline: none; transition: border-color 0.2s; }
                 .hx-date-field input[type="date"]:focus { border-color: #3b82f6; }
                 .hx-date-field input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
                 .hx-date-sep { color: #475569; font-size: 14px; font-weight: 600; }
-
-                /* ─── ERROR TOAST ─── */
-                .hx-toast-error {
-                    position: absolute;
-                    top: 72px;
-                    left: 50%;
-                    transform: translateX(-50%);
-                    z-index: 200;
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    padding: 10px 18px;
-                    background: rgba(220, 38, 38, 0.85);
-                    backdrop-filter: blur(12px);
-                    border-radius: 12px;
-                    color: white;
-                    font-size: 13px;
-                    font-weight: 500;
-                    box-shadow: 0 8px 24px rgba(220,38,38,0.3);
-                    animation: hxSlideDown 0.25s ease;
-                }
-                .hx-toast-error button {
-                    background: none;
-                    border: none;
-                    color: rgba(255,255,255,0.7);
-                    cursor: pointer;
-                    padding: 2px;
-                }
-
-                /* ─── DRAWER ─── */
-                .hx-drawer {
-                    position: absolute;
-                    bottom: 0;
-                    left: 0;
-                    right: 0;
-                    z-index: 80;
-                    background: rgba(15, 23, 42, 0.88);
-                    backdrop-filter: blur(28px) saturate(180%);
-                    -webkit-backdrop-filter: blur(28px) saturate(180%);
-                    border-top: 1px solid rgba(255,255,255,0.08);
-                    border-radius: 24px 24px 0 0;
-                    box-shadow: 0 -12px 48px rgba(0,0,0,0.45);
-                    display: flex;
-                    flex-direction: column;
-                    transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-                    will-change: height;
-                }
+                .hx-toast-error { position: absolute; top: 72px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; align-items: center; gap: 10px; padding: 10px 18px; background: rgba(220, 38, 38, 0.85); backdrop-filter: blur(12px); border-radius: 12px; color: white; font-size: 13px; font-weight: 500; box-shadow: 0 8px 24px rgba(220,38,38,0.3); animation: hxSlideDown 0.25s ease; }
+                .hx-toast-error button { background: none; border: none; color: rgba(255,255,255,0.7); cursor: pointer; padding: 2px; }
+                .hx-drawer { position: absolute; bottom: 0; left: 0; right: 0; z-index: 80; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(28px) saturate(180%); -webkit-backdrop-filter: blur(28px) saturate(180%); border-top: 1px solid rgba(255,255,255,0.08); border-radius: 24px 24px 0 0; box-shadow: 0 -12px 48px rgba(0,0,0,0.45); display: flex; flex-direction: column; transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1); will-change: height; }
                 .hx-drawer--collapsed { height: 56px; }
                 .hx-drawer--half { height: 45%; }
                 .hx-drawer--full { height: 85%; }
-
-                .hx-drawer-handle {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 6px;
-                    padding: 12px 24px;
-                    background: transparent;
-                    border: none;
-                    color: #94a3b8;
-                    cursor: pointer;
-                    min-height: 44px;
-                    width: 100%;
-                    font-family: inherit;
-                }
-                .hx-handle-pill {
-                    width: 36px;
-                    height: 4px;
-                    background: rgba(255,255,255,0.2);
-                    border-radius: 2px;
-                }
-                .hx-handle-hint {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-size: 12px;
-                    font-weight: 600;
-                    color: #64748b;
-                }
-
-                .hx-drawer-body {
-                    flex: 1;
-                    overflow-y: auto;
-                    padding: 0 24px 24px;
-                }
+                .hx-drawer-handle { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 12px 24px; background: transparent; border: none; color: #94a3b8; cursor: pointer; min-height: 44px; width: 100%; font-family: inherit; }
+                .hx-handle-pill { width: 36px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; }
+                .hx-handle-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #64748b; }
+                .hx-drawer-body { flex: 1; overflow-y: auto; padding: 0 24px 24px; }
                 .hx-drawer--collapsed .hx-drawer-body { display: none; }
-
-                /* scrollbar */
                 .hx-drawer-body::-webkit-scrollbar { width: 4px; }
                 .hx-drawer-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
-
-                /* ─── TABS ─── */
-                .hx-tabs {
-                    display: flex;
-                    gap: 4px;
-                    padding: 4px;
-                    background: rgba(255,255,255,0.04);
-                    border-radius: 12px;
-                    margin-bottom: 16px;
-                    width: fit-content;
-                }
-                .hx-tab {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    padding: 8px 16px;
-                    background: transparent;
-                    border: none;
-                    border-radius: 9px;
-                    color: #64748b;
-                    cursor: pointer;
-                    font-size: 13px;
-                    font-weight: 600;
-                    font-family: inherit;
-                    transition: all 0.15s;
-                    white-space: nowrap;
-                }
+                .hx-tabs { display: flex; gap: 4px; padding: 4px; background: rgba(255,255,255,0.04); border-radius: 12px; margin-bottom: 16px; width: fit-content; }
+                .hx-tab { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: transparent; border: none; border-radius: 9px; color: #64748b; cursor: pointer; font-size: 13px; font-weight: 600; font-family: inherit; transition: all 0.15s; white-space: nowrap; }
                 .hx-tab:hover { color: #e2e8f0; background: rgba(255,255,255,0.04); }
-                .hx-tab.active {
-                    background: linear-gradient(135deg, #2563eb, #3b82f6);
-                    color: white;
-                    box-shadow: 0 2px 8px rgba(37,99,235,0.35);
-                }
-                .hx-tab-count {
-                    padding: 1px 7px;
-                    background: rgba(255,255,255,0.12);
-                    border-radius: 999px;
-                    font-size: 11px;
-                }
+                .hx-tab.active { background: linear-gradient(135deg, #2563eb, #3b82f6); color: white; box-shadow: 0 2px 8px rgba(37,99,235,0.35); }
+                .hx-tab-count { padding: 1px 7px; background: rgba(255,255,255,0.12); border-radius: 999px; font-size: 11px; }
                 .hx-tab.active .hx-tab-count { background: rgba(255,255,255,0.2); }
-
-                /* ─── LOADING / EMPTY ─── */
-                .hx-loading {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 12px;
-                    padding: 40px;
-                    color: #64748b;
-                    font-size: 14px;
-                }
-                .hx-empty-msg {
-                    text-align: center;
-                    color: #475569;
-                    font-size: 14px;
-                    padding: 40px 16px;
-                }
-
-                /* ─── TRIPS GRID ─── */
-                .hx-trips-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-                    gap: 10px;
-                }
-                .hx-trip-card {
-                    background: rgba(255,255,255,0.04);
-                    border: 1px solid rgba(255,255,255,0.07);
-                    border-radius: 14px;
-                    padding: 14px 16px;
-                    cursor: pointer;
-                    text-align: left;
-                    font-family: inherit;
-                    transition: all 0.18s ease;
-                    width: 100%;
-                }
-                .hx-trip-card:hover {
-                    background: rgba(59,130,246,0.08);
-                    border-color: rgba(59,130,246,0.3);
-                    transform: translateY(-2px);
-                    box-shadow: 0 6px 20px rgba(59,130,246,0.15);
-                }
-                .hx-trip-top {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 12px;
-                    padding-bottom: 10px;
-                    border-bottom: 1px solid rgba(255,255,255,0.06);
-                }
+                .hx-loading { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 40px; color: #64748b; font-size: 14px; }
+                .hx-empty-msg { text-align: center; color: #475569; font-size: 14px; padding: 40px 16px; }
+                .hx-trips-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+                .hx-trip-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px; padding: 14px 16px; cursor: pointer; text-align: left; font-family: inherit; transition: all 0.18s ease; width: 100%; }
+                .hx-trip-card:hover { background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.3); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(59,130,246,0.15); }
+                .hx-trip-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.06); }
                 .hx-trip-date { font-size: 14px; font-weight: 700; color: #f1f5f9; }
-                .hx-trip-time {
-                    display: flex;
-                    align-items: center;
-                    gap: 5px;
-                    font-size: 11px;
-                    color: #64748b;
-                }
-                .hx-trip-stats {
-                    display: grid;
-                    grid-template-columns: repeat(3, 1fr);
-                    gap: 8px;
-                    margin-bottom: 12px;
-                }
+                .hx-trip-time { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #64748b; }
+                .hx-trip-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
                 .hx-stat { display: flex; flex-direction: column; gap: 2px; }
                 .hx-stat-val { font-size: 16px; font-weight: 800; color: #e2e8f0; }
                 .hx-stat-lbl { font-size: 10px; color: #475569; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
-                .hx-trip-cta {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 4px;
-                    font-size: 12px;
-                    color: #60a5fa;
-                    font-weight: 700;
-                    padding-top: 10px;
-                    border-top: 1px solid rgba(255,255,255,0.06);
-                }
-
-                /* ─── STOPS (list tab) ─── */
+                .hx-trip-cta { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 12px; color: #60a5fa; font-weight: 700; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.06); }
                 .hx-stops-list { display: flex; flex-direction: column; gap: 6px; }
-                .hx-stop-row {
-                    display: flex;
-                    align-items: center;
-                    gap: 14px;
-                    padding: 10px 14px;
-                    background: rgba(255,255,255,0.03);
-                    border-radius: 10px;
-                    transition: background 0.12s;
-                }
+                .hx-stop-row { display: flex; align-items: center; gap: 14px; padding: 10px 14px; background: rgba(255,255,255,0.03); border-radius: 10px; transition: background 0.12s; }
                 .hx-stop-row:hover { background: rgba(255,255,255,0.06); }
                 .hx-stop-time-col { display: flex; flex-direction: column; gap: 2px; min-width: 80px; }
                 .hx-stop-date-tag { font-size: 11px; color: #64748b; font-weight: 600; }
                 .hx-stop-time-tag { font-size: 13px; color: #e2e8f0; font-weight: 700; }
-                .hx-stop-dur {
-                    padding: 3px 10px;
-                    background: rgba(245,158,11,0.15);
-                    color: #fcd34d;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    font-weight: 600;
-                    white-space: nowrap;
-                }
-                .hx-stop-loc {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    color: #64748b;
-                    font-size: 12px;
-                }
-                .hx-stop-loc code {
-                    background: rgba(59,130,246,0.12);
-                    color: #93c5fd;
-                    padding: 2px 8px;
-                    border-radius: 6px;
-                    font-size: 11px;
-                }
-
-                /* ─── EVENTS ─── */
+                .hx-stop-dur { padding: 3px 10px; background: rgba(245,158,11,0.15); color: #fcd34d; border-radius: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+                .hx-stop-loc { display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 12px; }
+                .hx-stop-loc code { background: rgba(59,130,246,0.12); color: #93c5fd; padding: 2px 8px; border-radius: 6px; font-size: 11px; }
                 .hx-events-list { display: flex; flex-direction: column; gap: 6px; }
-                .hx-event-row {
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
-                    padding: 10px 14px;
-                    background: rgba(255,255,255,0.03);
-                    border-radius: 10px;
-                    font-size: 13px;
-                    transition: background 0.12s;
-                }
+                .hx-event-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: rgba(255,255,255,0.03); border-radius: 10px; font-size: 13px; transition: background 0.12s; }
                 .hx-event-row:hover { background: rgba(255,255,255,0.06); }
                 .hx-ev-date { color: #94a3b8; font-weight: 600; min-width: 80px; font-size: 12px; }
                 .hx-ev-time { color: #e2e8f0; font-weight: 700; min-width: 55px; }
-                .hx-ev-badge {
-                    padding: 3px 10px;
-                    border-radius: 6px;
-                    font-size: 11px;
-                    font-weight: 700;
-                    white-space: nowrap;
-                }
+                .hx-ev-badge { padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; white-space: nowrap; }
                 .hx-ev-badge.off { background: rgba(239,68,68,0.15); color: #fca5a5; }
                 .hx-ev-badge.on { background: rgba(34,197,94,0.15); color: #86efac; }
                 .hx-ev-reason { color: #94a3b8; font-size: 12px; flex: 1; }
                 .hx-ev-dur { color: #fcd34d; font-size: 12px; font-weight: 600; }
-
-                /* ─── LOAD MORE ─── */
-                .hx-load-more {
-                    display: block;
-                    margin: 16px auto 0;
-                    padding: 10px 24px;
-                    background: rgba(59,130,246,0.15);
-                    color: #60a5fa;
-                    border: 1px solid rgba(59,130,246,0.25);
-                    border-radius: 10px;
-                    cursor: pointer;
-                    font-size: 13px;
-                    font-weight: 600;
-                    font-family: inherit;
-                    transition: all 0.15s;
-                }
-                .hx-load-more:hover {
-                    background: rgba(59,130,246,0.25);
-                    border-color: rgba(59,130,246,0.45);
-                    transform: translateY(-1px);
-                }
-
-                /* ─── DETAIL VIEW ─── */
-                .hx-detail-head {
-                    display: flex;
-                    align-items: center;
-                    gap: 14px;
-                    margin-bottom: 16px;
-                }
-                .hx-back-btn {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    width: 38px;
-                    height: 38px;
-                    background: rgba(255,255,255,0.06);
-                    border: 1px solid rgba(255,255,255,0.08);
-                    border-radius: 12px;
-                    color: #e2e8f0;
-                    cursor: pointer;
-                    transition: all 0.15s;
-                    flex-shrink: 0;
-                }
+                .hx-load-more { display: block; margin: 16px auto 0; padding: 10px 24px; background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); border-radius: 10px; cursor: pointer; font-size: 13px; font-weight: 600; font-family: inherit; transition: all 0.15s; }
+                .hx-load-more:hover { background: rgba(59,130,246,0.25); border-color: rgba(59,130,246,0.45); transform: translateY(-1px); }
+                .hx-detail-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+                .hx-back-btn { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; color: #e2e8f0; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
                 .hx-back-btn:hover { background: rgba(255,255,255,0.1); border-color: #3b82f6; }
                 .hx-detail-name { font-size: 16px; font-weight: 700; color: #f1f5f9; margin: 0; }
                 .hx-detail-sub { font-size: 12px; color: #64748b; margin: 2px 0 0; }
-
-                .hx-detail-metrics {
-                    display: grid;
-                    grid-template-columns: repeat(3, 1fr);
-                    gap: 10px;
-                    margin-bottom: 20px;
-                }
-                .hx-metric-pill {
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    padding: 12px 14px;
-                    background: rgba(255,255,255,0.04);
-                    border: 1px solid rgba(255,255,255,0.06);
-                    border-radius: 12px;
-                }
+                .hx-detail-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
+                .hx-metric-pill { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; }
                 .hx-m-icon { font-size: 20px; }
                 .hx-m-val { font-size: 16px; font-weight: 800; color: #f1f5f9; }
                 .hx-m-lbl { font-size: 10px; color: #475569; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
-
-                .hx-section-title {
-                    font-size: 13px;
-                    font-weight: 700;
-                    color: #94a3b8;
-                    text-transform: uppercase;
-                    letter-spacing: 0.06em;
-                    margin-bottom: 12px;
-                }
-
+                .hx-section-title { font-size: 13px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px; }
                 .hx-stops-detail-list { display: flex; flex-direction: column; gap: 8px; }
-                .hx-stop-detail-item {
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
-                    padding: 10px 14px;
-                    background: rgba(255,255,255,0.03);
-                    border-radius: 10px;
-                    transition: background 0.12s;
-                }
+                .hx-stop-detail-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: rgba(255,255,255,0.03); border-radius: 10px; transition: background 0.12s; }
                 .hx-stop-detail-item:hover { background: rgba(255,255,255,0.06); }
-                .hx-stop-num {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    width: 28px;
-                    height: 28px;
-                    background: rgba(59,130,246,0.2);
-                    color: #93c5fd;
-                    border-radius: 50%;
-                    font-size: 12px;
-                    font-weight: 700;
-                    flex-shrink: 0;
-                }
+                .hx-stop-num { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: rgba(59,130,246,0.2); color: #93c5fd; border-radius: 50%; font-size: 12px; font-weight: 700; flex-shrink: 0; }
                 .hx-stop-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
                 .hx-stop-times { font-size: 13px; color: #e2e8f0; font-weight: 600; }
-                .hx-stop-dur-tag {
-                    font-size: 11px;
-                    color: #fcd34d;
-                    font-weight: 600;
-                }
+                .hx-stop-dur-tag { font-size: 11px; color: #fcd34d; font-weight: 600; }
                 .hx-stop-coords { font-size: 11px; color: #64748b; font-family: 'Monaco', 'Courier New', monospace; }
-                .hx-maps-link {
-                    font-size: 18px;
-                    text-decoration: none;
-                    opacity: 0.6;
-                    transition: opacity 0.15s;
-                    flex-shrink: 0;
-                }
+                .hx-maps-link { font-size: 18px; text-decoration: none; opacity: 0.6; transition: opacity 0.15s; flex-shrink: 0; }
                 .hx-maps-link:hover { opacity: 1; }
-
-                /* ─── ANIMATIONS ─── */
                 @keyframes hxFadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
                 @keyframes hxSlideDown { from { opacity: 0; transform: translate(-50%, -8px); } to { opacity: 1; transform: translate(-50%, 0); } }
                 .spin { animation: spin 1s linear infinite; }
                 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-                /* ─── MOBILE ─── */
                 @media (max-width: 640px) {
                     .hx-search-wrap { width: calc(100vw - 32px); max-width: none; }
-                    .hx-date-float { 
-                        top: auto;
-                        bottom: calc(45% + 8px);
-                        right: 12px;
-                        padding: 6px 10px;
-                        flex-direction: column;
-                        gap: 4px;
-                    }
+                    .hx-date-float { top: auto; bottom: calc(45% + 8px); right: 12px; padding: 6px 10px; flex-direction: column; gap: 4px; }
                     .hx-date-sep { display: none; }
                     .hx-drawer--half { height: 50%; }
                     .hx-drawer--full { height: 90%; }

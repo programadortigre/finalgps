@@ -508,6 +508,8 @@ const MapView = ({
     heartbeatStatus = {},
     liveTrails = {},
     liveStops = [],        // paradas activas en tiempo real [{ employeeId, lat, lng, durationS }]
+    trips: propTrips,      // NUEVO: Recibe viajes desde componente padre
+    showSidePanel = true,  // NUEVO: Permite ocultar el panel lateral
 }) => {
     const [trips, setTrips] = useState([]);
     const [selectedTrip, setTrip] = useState(propSelectedTrip || null);
@@ -525,6 +527,10 @@ const MapView = ({
                 pointsCount: propTripDetails.points?.length,
                 stopsCount: propTripDetails.stops?.length
             });
+            // Limpieza estricta antes de cargar nuevo
+            setRouteData(null); 
+            setTrip(null);
+            
             setTrip(propSelectedTrip);
             setRouteData({ isMulti: false, ...propTripDetails });
             
@@ -552,16 +558,26 @@ const MapView = ({
         }
     }, [propTripDetails, propSelectedTrip]);
 
-    // Fetch trips when employee/date changes
+    // Fetch trips when employee/date changes (o sincronizar si vienen por prop)
     useEffect(() => {
-        if (view === 'history' && selectedEmployee && !propTripDetails) {
-            setRouteData(null); setTrip(null); setPlayback(false);
-            const tzOffset = dayjs().format('Z');
-            api.get(`/api/trips?employeeId=${selectedEmployee.id}&date=${date}&tzOffset=${tzOffset}`)
-                .then(r => setTrips(r.data))
-                .catch(console.error);
+        if (view === 'history' && selectedEmployee) {
+            // Limpiar recorrido actual al cambiar de fecha o empleado
+            setRouteData(null); 
+            setTrip(null); 
+            setPlayback(false);
+            
+            if (propTrips) {
+                // Usar fuente de verdad externa
+                setTrips(propTrips);
+            } else if (!propTripDetails) {
+                // Fetch interno solo si no hay data externa
+                const tzOffset = dayjs().format('Z');
+                api.get(`/api/trips?employeeId=${selectedEmployee.id}&date=${date}&tzOffset=${tzOffset}`)
+                    .then(r => setTrips(r.data))
+                    .catch(console.error);
+            }
         }
-    }, [selectedEmployee, date, view, propTripDetails]);
+    }, [selectedEmployee, date, view, propTripDetails, propTrips]);
 
     // Cargar direcciones para ubicaciones en vivo
     useEffect(() => {
@@ -580,14 +596,17 @@ const MapView = ({
     }, [view, activeLocations]);
 
     // Cargar todo el historial del día seleccionado
+    // Cargar todo el historial del día seleccionado
     const fetchAllTripsForDay = async () => {
         setPlayback(false);
         try {
             const allTripsData = [];
             const newAddresses = {};
+            const tzOffset = dayjs().format('Z');
 
             for (const trip of trips) {
-                const { data } = await api.get(`/api/trips/${trip.id}?simplify=true`);
+                // ✅ PRO FIX: Pasar la fecha actual para que el backend clampee los puntos al día solicitado
+                const { data } = await api.get(`/api/trips/${trip.id}?simplify=true&date=${date}&tzOffset=${tzOffset}`);
                 allTripsData.push({ ...trip, ...data });
 
                 if (data.points && data.points.length > 0) {
@@ -596,8 +615,9 @@ const MapView = ({
                     const endPoint = data.points.at(-1);
                     newAddresses[`end-${trip.id}`] = await getAddress(endPoint.lat, endPoint.lng);
 
-                    for (let i = 0; i < (data.stops || []).length; i++) {
-                        const stop = data.stops[i];
+                    const stps = data.stops || [];
+                    for (let i = 0; i < stps.length; i++) {
+                        const stop = stps[i];
                         newAddresses[`stop-${trip.id}-${i}`] = await getAddress(stop.lat, stop.lng);
                     }
                 }
@@ -607,7 +627,7 @@ const MapView = ({
             setTrip({ id: 'all_day', distance_meters: trips.reduce((acc, t) => acc + (t.distance_meters || 0), 0) });
             setAddresses(prev => ({ ...prev, ...newAddresses }));
         } catch (e) {
-            console.error(e);
+            console.error('[MapView] Error loading all day trips:', e);
         }
     };
 
@@ -708,7 +728,7 @@ const MapView = ({
                 </div>
             )}
             {/* ── HISTORY CONTROLS (Side Panel) ── */}
-            {view === 'history' && selectedEmployee && !propTripDetails && (
+            {view === 'history' && selectedEmployee && !propTripDetails && showSidePanel && (
                 <div className="history-sidepanel">
                     <h3 className="hs-title">Historial de Ruta</h3>
                     <div className="hs-employee">👤 {selectedEmployee.name}</div>
@@ -1180,33 +1200,19 @@ const MapView = ({
                                     </React.Fragment>
                                 ))}
                                 {/* Siempre mostrar marcador de inicio */}
-                                {points.map((p, idx) => (
+                                {points.length > 0 && (
                                     <Marker 
-                                        key={`pt-${idx}`}
-                                        position={[p.lat, p.lng]}
-                                        icon={getPointIcon(p.source, p.quality)}
+                                        position={[points[0].lat, points[0].lng]}
+                                        icon={getPointIcon(points[0].source || 'gps', 'high')}
                                     >
                                         <Popup>
-                                            <div style={{ fontSize: '12px', minWidth: '220px' }}>
-                                                <strong>📍 Punto #{idx + 1}</strong><br />
-                                                Fuente: <b>{p.source || 'gps'}</b><br />
-                                                Calidad: <b>{p.quality || 'high'}</b><br />
-                                                Precisión: {p.accuracy ? `${p.accuracy} m` : 'N/A'}<br />
-                                                {p.timestamp && (
-                                                    <>🕒 {dayjs(Number(p.timestamp)).format('HH:mm:ss')}<br /></>
-                                                )}
-                                                <a
-                                                    href={`https://www.google.com/maps?q=${p.lat},${p.lng}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 'bold', display: 'inline-block', marginTop: '6px' }}
-                                                >
-                                                    🗺️ Ver en Google Maps
-                                                </a>
+                                            <div style={{ fontSize: '12px' }}>
+                                                <strong>🚀 Inicio Trayecto</strong><br />
+                                                {dayjs(points[0].timestamp ? Number(points[0].timestamp) : selectedTrip.start_time).format('hh:mm A')}
                                             </div>
                                         </Popup>
                                     </Marker>
-                                ))}
+                                )}
                                 {/* Fin solo si hay más de 1 punto */}
                                 {points.length > 1 && (
                                     <Marker position={[points.at(-1).lat, points.at(-1).lng]} icon={endIcon}>
