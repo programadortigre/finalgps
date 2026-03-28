@@ -69,7 +69,6 @@ class TrackingEngine {
   double _totalDistanceKm = 0.0;
 
   // PRO: Buffering & Caching
-  final List<LocalPoint> _pointBuffer = [];
   String? _cachedToken;
   int? _cachedEmployeeId;
 
@@ -81,9 +80,7 @@ class TrackingEngine {
   // Socket status cache
   bool _isSocketConnectedByAdmin = true;
   String? _lastSentGpsState;
-  // ── CANAL ÚNICO: HTTP batch (el socket solo recibe comandos) ──────────────
   // _offlineBuffer eliminado — todo va por SQLite → _syncLoop
-  static const int _maxBufferSize = 500;
   static const int _gapThresholdMs = 20 * 60 * 1000; // 20 min unificado
 
   // ── Conectividad: event-driven, sin polling ───────────────────────────────
@@ -257,7 +254,6 @@ class TrackingEngine {
       // FIX 1: Reinicio limpio de distancia al iniciar
       _totalDistanceKm = 0;
       _lastValidPoint = null;
-      _pointBuffer.clear();
 
       // Hydratación diferida para no bloquear el inicio
       _deferredInitialization();
@@ -329,12 +325,8 @@ class TrackingEngine {
     _localNotif.cancel(9001);
     _motionDetector.stop();
 
-    // PRO: Guardar puntos pendientes antes de morir
-    _flushBufferToStorage();
-
     _totalDistanceKm = 0;
     _lastValidPoint = null;
-    _pointBuffer.clear();
 
     _serviceInstance?.invoke('trackingState', {
       'is_active': false,
@@ -558,7 +550,7 @@ class TrackingEngine {
       };
       final icon = icons[_currentState] ?? '📍';
       title = '$icon Rastreo activo · ${_currentState.name}';
-      content = 'Cola: ${_pointBuffer.length} pts pendientes';
+      content = 'Sincronizando ubicación...';
     }
 
     svc.setForegroundNotificationInfo(title: title, content: content);
@@ -746,9 +738,6 @@ class TrackingEngine {
     try {
       // 1. Throttling por Batería
       await _updateBatteryAndThrottling();
-
-      // 2. Flush de Buffer a SQLite
-      await _flushBufferToStorage();
 
       // 3. Flush de SQLite a API (Solo si bat > 10%)
       final level = await _battery.batteryLevel;
@@ -1592,24 +1581,9 @@ class TrackingEngine {
       final isStationaryState = _currentState == TrackingState.STOPPED ||
                                  _currentState == TrackingState.DEEP_SLEEP;
       if (_motionDetector.isStationary && speed < 0.5 && isStationaryState && _lastValidPoint != null) {
-        // Calcular distancia acumulada de los últimos puntos del buffer
-        double accumulatedDist = 0.0;
-        if (_pointBuffer.length >= 2) {
-          for (int i = 1; i < _pointBuffer.length && i <= 10; i++) {
-            accumulatedDist += Geolocator.distanceBetween(
-              _pointBuffer[i - 1].lat, _pointBuffer[i - 1].lng,
-              _pointBuffer[i].lat, _pointBuffer[i].lng,
-            );
-          }
-        }
-        // Si en los últimos puntos se movió >15m, el ZUPT es un falso positivo
-        if (accumulatedDist > 15.0) {
-          _log('ZUPT', 'ZUPT ignorado: movimiento acumulado real ${accumulatedDist.toStringAsFixed(1)}m (tráfico lento / bici)');
-        } else {
-          _log('ZUPT', 'Punto descartado: acelerómetro confirma quietud (drift GPS)');
-          _isProcessingPosition = false;
-          return;
-        }
+        _log('ZUPT', 'Punto descartado: acelerómetro confirma quietud (drift GPS)');
+        _isProcessingPosition = false;
+        return;
       }
       await _addToBufferAndFlush(point.toJson());
 
@@ -1625,11 +1599,6 @@ class TrackingEngine {
       //        El buffer de historial (ruta) sigue tomando solo puntos de calidad.
 
       if (isGoodForHistory) {
-        _pointBuffer.add(point);
-
-        if (_pointBuffer.length >= 5) {
-          _flushBufferToStorage().then((_) => _syncLoop(reason: 'Buffer Full'));
-        }
 
         // Distancia solo con puntos buenos (sin ruido)
         if (_lastValidPoint != null) {
