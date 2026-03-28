@@ -597,7 +597,8 @@ const MapView = ({
 
     // Cargar todo el historial del día seleccionado
     // Cargar todo el historial del día seleccionado
-    const fetchAllTripsForDay = async () => {
+    const fetchAllTripsForDay = async (targetDate) => {
+        if (!targetDate) return;
         setPlayback(false);
         try {
             const allTripsData = [];
@@ -606,7 +607,7 @@ const MapView = ({
 
             for (const trip of trips) {
                 // ✅ PRO FIX: Pasar la fecha actual para que el backend clampee los puntos al día solicitado
-                const { data } = await api.get(`/api/trips/${trip.id}?simplify=true&date=${date}&tzOffset=${tzOffset}`);
+                const { data } = await api.get(`/api/trips/${trip.id}?simplify=true&date=${targetDate}&tzOffset=${tzOffset}`);
                 allTripsData.push({ ...trip, ...data });
 
                 if (data.points && data.points.length > 0) {

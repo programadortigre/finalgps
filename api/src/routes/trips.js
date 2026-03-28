@@ -233,20 +233,24 @@ router.get('/history/:employeeId', auth, async (req, res) => {
         // Total count
         const countResult = await db.query(`
             SELECT COUNT(*) as total FROM trips t
+            CROSS JOIN LATERAL generate_series(
+                DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $4),
+                DATE(COALESCE(t.end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE $4),
+                '1 day'::interval
+            ) as days(day)
             WHERE t.employee_id = $1
-            AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $4) <= $3
-            AND DATE(COALESCE(t.end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE $4) >= $2
-
+            AND DATE(days.day) <= $3
+            AND DATE(days.day) >= $2
         `, [employeeId, startDate, endDate, tzOffset]);
 
         // Paginated results with pre-formatted data
         const result = await db.query(`
             SELECT 
                 t.id,
-                TO_CHAR(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6, 'YYYY-MM-DD') as trip_date,
+                TO_CHAR(days.day, 'YYYY-MM-DD') as trip_date,
                 TO_CHAR(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6, 'HH24:MI') as start_time_formatted,
                 TO_CHAR(t.end_time AT TIME ZONE 'UTC' AT TIME ZONE $6, 'HH24:MI') as end_time_formatted,
-                EXTRACT(EPOCH FROM (t.end_time - t.start_time))::int as duration_seconds,
+                EXTRACT(EPOCH FROM (COALESCE(t.end_time, CURRENT_TIMESTAMP) - t.start_time))::int as duration_seconds,
                 ROUND((t.distance_meters::numeric / 1000)::numeric, 2) as distance_km,
                 t.is_active,
                 (SELECT COUNT(*) FROM stops WHERE trip_id = t.id) as stop_count,
@@ -255,10 +259,15 @@ router.get('/history/:employeeId', auth, async (req, res) => {
                 t.end_time,
                 t.distance_meters
             FROM trips t
+            CROSS JOIN LATERAL generate_series(
+                DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6),
+                DATE(COALESCE(t.end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE $6),
+                '1 day'::interval
+            ) as days(day)
             WHERE t.employee_id = $1
-            AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6) <= $3
-            AND DATE(COALESCE(t.end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE $6) >= $2
-            ORDER BY t.start_time DESC
+            AND DATE(days.day) <= $3
+            AND DATE(days.day) >= $2
+            ORDER BY days.day DESC, t.start_time DESC
 
             LIMIT $4 OFFSET $5
         `, [employeeId, startDate, endDate, limitNum, offset, tzOffset]);

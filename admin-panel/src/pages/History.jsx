@@ -93,7 +93,8 @@ const History = ({ user }) => {
     const [selectedTrip, setSelectedTrip] = useState(null);
     const [tripDetails, setTripDetails] = useState(null);
     const [isAllDay, setIsAllDay] = useState(false);
-    const [viewDayTrips, setViewDayTrips] = useState([]); // NUEVO: Trips del día seleccionado para el mapa
+    const [viewDayTrips, setViewDayTrips] = useState([]);
+    const [viewDate, setViewDate] = useState(null); // NUEVO: La fecha que se está visualizando en el mapa
     const [loadingDetails, setLoadingDetails] = useState(false);
 
     const [tripsPage, setTripsPage] = useState(1);
@@ -220,6 +221,7 @@ const History = ({ user }) => {
         setTripDetails(null);
         setIsAllDay(false);
         setViewDayTrips([]);
+        setViewDate(null);
     }, []);
 
     /* ── derived ── */
@@ -272,7 +274,7 @@ const History = ({ user }) => {
                 ) : (
                     <MapView 
                         view="history" 
-                        selectedDate={startDate}
+                        selectedDate={isAllDay ? viewDate : startDate}
                         selectedEmployee={employees.find(e => e.id === selectedEmployee) || null} 
                         trips={isAllDay ? viewDayTrips : trips} 
                         stops={stops}
@@ -430,6 +432,7 @@ const History = ({ user }) => {
                                                                         setTripDetails(null);
                                                                         setIsAllDay(true);
                                                                         setViewDayTrips(dayTrips);
+                                                                        setViewDate(date);
                                                                     }}
                                                                 >
                                                                     🚩 Ver día
@@ -437,7 +440,7 @@ const History = ({ user }) => {
                                                             </div>
                                                         </div>
                                                         <div className="hx-trips-grid">
-                                                            {dayTrips.map(trip => <TripCard key={trip.id} trip={trip} onClick={() => handleTripClick(trip)} />)}
+                                                            {dayTrips.map(trip => <TripCard key={`${trip.id}-${trip.trip_date}`} trip={trip} onClick={() => handleTripClick(trip)} />)}
                                                         </div>
                                                     </div>
                                                 ))}
