@@ -1,8 +1,6 @@
 # GPS Tracking System - Step-by-Step Implementation
 
 - [x] 1. Database Schema
-- [x] 2. Backend API
-- [x] 3. Worker
-- [x] 4. Admin Panel
-- [x] 5. Flutter Mobile App (Dependencies installed)
-- [x] 6. Docker Setup & Final Polish
+- [x] Modify `GET /` endpoint in `api/src/routes/trips.js` to use exact start-date matching.
+- [x] Modify `GET /history/:employeeId` endpoint in `api/src/routes/trips.js` to use start-date range matching.
+- [x] Verify changes by reviewing the SQL logic and potential impacts.

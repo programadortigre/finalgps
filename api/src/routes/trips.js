@@ -103,7 +103,6 @@ router.get('/', auth, async (req, res) => {
 
     try {
         // ✅ PRO FIX: Filtrar usando la zona horaria del cliente para evitar saltos de día UTC
-        // ✅ BUGFIX: Mostrar SOLO viajes que comienzan en la fecha seleccionada
         const result = await db.query(`
             SELECT 
                 id, 
@@ -234,8 +233,8 @@ router.get('/history/:employeeId', auth, async (req, res) => {
         const countResult = await db.query(`
             SELECT COUNT(*) as total FROM trips t
             WHERE t.employee_id = $1
+            AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $4) >= $2
             AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $4) <= $3
-            AND DATE(COALESCE(t.end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE $4) >= $2
 
         `, [employeeId, startDate, endDate, tzOffset]);
 
@@ -256,8 +255,8 @@ router.get('/history/:employeeId', auth, async (req, res) => {
                 t.distance_meters
             FROM trips t
             WHERE t.employee_id = $1
+            AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6) >= $2
             AND DATE(t.start_time AT TIME ZONE 'UTC' AT TIME ZONE $6) <= $3
-            AND DATE(COALESCE(t.end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE $6) >= $2
             ORDER BY t.start_time DESC
 
             LIMIT $4 OFFSET $5
