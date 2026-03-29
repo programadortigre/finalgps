@@ -113,60 +113,151 @@ const ProductModal = ({ product, onClose, onSave }) => {
     );
 };
 
-// ─── Modal de Importación ─────────────────────────────────────────────────────
+// ─── Modal de Importación (CSV WooCommerce + JSON) ────────────────────────────
 const ImportModal = ({ onClose, onImport }) => {
-    const [text, setText] = useState('');
+    const [file, setFile] = useState(null);
+    const [dragging, setDragging] = useState(false);
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState(null);
     const [error, setError] = useState('');
+    const inputRef = React.useRef();
+
+    const handleFile = (f) => {
+        setFile(f); setError(''); setResult(null);
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault(); setDragging(false);
+        const f = e.dataTransfer.files[0];
+        if (f) handleFile(f);
+    };
 
     const handleImport = async () => {
+        if (!file) return;
         setLoading(true); setError(''); setResult(null);
+
         try {
-            const parsed = JSON.parse(text);
-            const { data } = await api.post('/api/products/import', parsed);
+            const isCsv = file.name.endsWith('.csv');
+            const text = await file.text();
+
+            const { data } = isCsv
+                ? await api.post('/api/products/import', text, {
+                    headers: { 'Content-Type': 'text/csv' }
+                  })
+                : await api.post('/api/products/import', JSON.parse(text));
+
             setResult(data);
             onImport();
         } catch (err) {
-            setError(err.response?.data?.error || err.message || 'JSON inválido');
+            setError(err.response?.data?.detail || err.response?.data?.error || err.message || 'Error al importar');
         }
         setLoading(false);
     };
 
+    const fileIcon  = file ? (file.name.endsWith('.csv') ? '📄' : '📋') : '📁';
+    const fileColor = file?.name.endsWith('.csv') ? '#10b981' : '#6366f1';
+
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-card" style={{ maxWidth: 680 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-card" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
                 <header className="modal-header">
-                    <h3>📥 Importar Productos (JSON/WooCommerce)</h3>
+                    <h3>📥 Importar Catálogo</h3>
                     <button onClick={onClose}><X size={20} /></button>
                 </header>
                 <div className="modal-body">
-                    <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 12 }}>
-                        Pega el JSON exportado desde WooCommerce o tu sistema. Admite campos: <code>name/titulo, regular_price/precio_con_igv, stock_quantity, categories, tags, images</code>.
-                        <br />El sistema hará <strong>upsert por external_id</strong> — actualizará si ya existe.
-                    </p>
-                    <textarea
-                        value={text}
-                        onChange={e => setText(e.target.value)}
-                        placeholder='[{"id": 1, "name": "Producto X", "regular_price": "10.00", "stock_quantity": 50, ...}]'
+
+                    {/* Zona drag & drop */}
+                    <div
+                        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                        onDragLeave={() => setDragging(false)}
+                        onDrop={handleDrop}
+                        onClick={() => inputRef.current?.click()}
                         style={{
-                            width: '100%', minHeight: 220, background: 'rgba(0,0,0,0.3)',
-                            border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
-                            color: '#e2e8f0', padding: '12px 14px', fontSize: 12,
-                            fontFamily: 'monospace', resize: 'vertical', outline: 'none'
+                            border: `2px dashed ${dragging ? fileColor : 'rgba(255,255,255,0.15)'}`,
+                            borderRadius: 14, padding: '28px 20px', textAlign: 'center', cursor: 'pointer',
+                            background: dragging ? `${fileColor}10` : 'rgba(255,255,255,0.02)',
+                            transition: 'all 0.2s',
                         }}
-                    />
-                    {error && <div className="form-error" style={{ marginTop: 8 }}>{error}</div>}
+                    >
+                        <input ref={inputRef} type="file" accept=".csv,.json"
+                            style={{ display: 'none' }} onChange={e => handleFile(e.target.files[0])} />
+
+                        {file ? (
+                            <>
+                                <div style={{ fontSize: 32, marginBottom: 6 }}>{fileIcon}</div>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: fileColor }}>{file.name}</div>
+                                <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                                    {(file.size / 1024).toFixed(1)} KB · Clic para cambiar
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <div style={{ fontSize: 36, marginBottom: 8 }}>🗂️</div>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>
+                                    Arrastra tu archivo aquí
+                                </div>
+                                <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                                    o haz clic para seleccionar
+                                </div>
+                            </>
+                        )}
+                    </div>
+
+                    {/* Leyenda de formatos */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div style={{ padding: '10px 14px', background: 'rgba(16,185,129,0.07)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 10 }}>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: '#34d399', marginBottom: 4 }}>📄 CSV WooCommerce</div>
+                            <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.5 }}>
+                                Exporta directamente desde <strong>WooCommerce → Productos → Exportar</strong>.<br />
+                                Se mapean: Nombre, Precio normal, Inventario, Categorías, Etiquetas, Imágenes.
+                            </div>
+                        </div>
+                        <div style={{ padding: '10px 14px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 10 }}>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: '#818cf8', marginBottom: 4 }}>📋 JSON Propio</div>
+                            <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.5 }}>
+                                Array de objetos con campos: <code>titulo, precio_con_igv, stock_general, categoria, tags, imagen_url</code>.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style={{ fontSize: 11, color: '#475569', background: 'rgba(255,255,255,0.02)', padding: '8px 12px', borderRadius: 8 }}>
+                        💡 <strong>UPSERT por ID:</strong> Si un producto ya existe (mismo ID de WooCommerce), se <em>actualizará</em>. No se crearán duplicados.
+                    </div>
+
+                    {error && <div className="form-error">{error}</div>}
+
                     {result && (
-                        <div style={{ marginTop: 8, padding: '10px 14px', background: 'rgba(16,185,129,0.1)', borderRadius: 10, border: '1px solid rgba(16,185,129,0.2)', fontSize: 13, color: '#34d399' }}>
-                            ✅ <strong>{result.inserted}</strong> insertados · <strong>{result.updated}</strong> actualizados
-                            {result.errors?.length > 0 && ` · ⚠️ ${result.errors.length} errores`}
+                        <div style={{ padding: '12px 16px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 10, fontSize: 13 }}>
+                            <div style={{ color: '#34d399', fontWeight: 800, marginBottom: 6 }}>✅ Importación completada</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                                <div style={{ textAlign: 'center' }}>
+                                    <div style={{ fontSize: 22, fontWeight: 800, color: '#34d399' }}>{result.inserted || 0}</div>
+                                    <div style={{ fontSize: 11, color: '#64748b' }}>Nuevos</div>
+                                </div>
+                                <div style={{ textAlign: 'center' }}>
+                                    <div style={{ fontSize: 22, fontWeight: 800, color: '#6366f1' }}>{result.updated || 0}</div>
+                                    <div style={{ fontSize: 11, color: '#64748b' }}>Actualizados</div>
+                                </div>
+                                <div style={{ textAlign: 'center' }}>
+                                    <div style={{ fontSize: 22, fontWeight: 800, color: result.errors?.length > 0 ? '#f59e0b' : '#64748b' }}>
+                                        {result.skipped || 0}
+                                    </div>
+                                    <div style={{ fontSize: 11, color: '#64748b' }}>Omitidos</div>
+                                </div>
+                            </div>
+                            {result.errors?.length > 0 && (
+                                <div style={{ marginTop: 8, fontSize: 11, color: '#f59e0b' }}>
+                                    ⚠️ {result.errors.length} error(es): {result.errors.slice(0, 3).map(e => e.titulo || e.external_id || '?').join(', ')}
+                                    {result.errors.length > 3 && '...'}
+                                </div>
+                            )}
                         </div>
                     )}
+
                     <div className="modal-footer">
                         <button className="btn-secondary" onClick={onClose}>Cerrar</button>
-                        <button className="btn-primary" onClick={handleImport} disabled={loading || !text.trim()}>
-                            {loading ? 'Importando...' : <><Upload size={16} /> Importar</>}
+                        <button className="btn-primary" onClick={handleImport} disabled={loading || !file}>
+                            {loading ? 'Importando...' : <><Upload size={16} /> Importar {file?.name || ''}</>}
                         </button>
                     </div>
                 </div>
