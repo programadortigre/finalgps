@@ -1,7 +1,8 @@
 -- =============================================================================
--- GPS Tracking System — Schema Completo (v11)
--- Generado consolidando init + migrations v5→v11
--- Para instalar desde cero: este es el ÚNICO archivo necesario.
+-- GPS Tracking System — Schema Completo (v10)
+-- Generado consolidando init + migrations v5→v10
+-- Para instalar desde cero: este es el único archivo necesario.
+-- Para DB existente: usar migration_v10_heading.sql.
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -23,15 +24,14 @@ GRANT ALL PRIVILEGES ON DATABASE tracking TO gpsuser;
 CREATE EXTENSION IF NOT EXISTS postgis;
 
 -- ---------------------------------------------------------------------------
--- employees  (v11: roles admin | employee | almacen)
+-- employees
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS employees (
     id                  SERIAL PRIMARY KEY,
     name                VARCHAR(255) NOT NULL,
     email               VARCHAR(255) UNIQUE NOT NULL,
     password_hash       VARCHAR(255) NOT NULL,
-    role                VARCHAR(20)  DEFAULT 'employee'
-                        CHECK (role IN ('admin', 'employee', 'almacen')),
+    role                VARCHAR(20)  DEFAULT 'employee' CHECK (role IN ('admin', 'employee')),
     is_tracking_enabled BOOLEAN      DEFAULT TRUE,
     created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -79,25 +79,28 @@ CREATE TABLE IF NOT EXISTS locations (
     reset_reason VARCHAR(50),
 
     -- Deduplicación end-to-end (v9)
+    -- client_id: UUID generado por la APK por punto
     client_id    VARCHAR(64),
 
     -- Dedup primario por timestamp (legacy)
     UNIQUE(employee_id, timestamp)
 );
 
+-- Índices para sub_trip_id y segment_id
 CREATE INDEX IF NOT EXISTS idx_locations_sub_trip_id ON locations (sub_trip_id);
-CREATE INDEX IF NOT EXISTS idx_locations_segment_id  ON locations (segment_id);
+CREATE INDEX IF NOT EXISTS idx_locations_segment_id ON locations (segment_id);
 
 COMMENT ON COLUMN locations.sub_trip_id IS 'ID lógico de sub-viaje (corte por gap largo, continuidad).';
-COMMENT ON COLUMN locations.segment_id  IS 'ID visual de segmento (corte por gap corto, accuracy, etc).';
+COMMENT ON COLUMN locations.segment_id IS 'ID visual de segmento (corte por gap corto, accuracy, etc).';
 
+-- Índice dedup por client_id (parcial — solo cuando no es NULL)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_locations_emp_client_id
     ON locations (employee_id, client_id)
     WHERE client_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_locations_geom       ON locations USING GIST (geom);
-CREATE INDEX IF NOT EXISTS idx_locations_emp_time   ON locations (employee_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_locations_trip_id    ON locations (trip_id);
+CREATE INDEX IF NOT EXISTS idx_locations_geom      ON locations USING GIST (geom);
+CREATE INDEX IF NOT EXISTS idx_locations_emp_time  ON locations (employee_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_locations_trip_id   ON locations (trip_id);
 CREATE INDEX IF NOT EXISTS idx_locations_is_matched ON locations (is_matched) WHERE is_matched = FALSE;
 
 COMMENT ON COLUMN locations.client_id    IS 'UUID generado por APK por punto. Deduplicación end-to-end.';
@@ -154,9 +157,9 @@ CREATE TABLE IF NOT EXISTS trip_routes (
     id                     SERIAL PRIMARY KEY,
     trip_id                INTEGER REFERENCES trips(id) ON DELETE CASCADE UNIQUE,
     geom_full              GEOGRAPHY(LineString, 4326),
-    geom_simplified        GEOGRAPHY(LineString, 4326),
-    geom_raw               GEOGRAPHY(LineString, 4326),
-    geom_matched           GEOGRAPHY(LineString, 4326),
+    geom_simplified        GEOGRAPHY(LineString, 4326),  -- Douglas-Peucker
+    geom_raw               GEOGRAPHY(LineString, 4326),  -- Kalman smoothed
+    geom_matched           GEOGRAPHY(LineString, 4326),  -- OSRM matched
     point_count            INTEGER DEFAULT 0,
     point_count_simplified INTEGER DEFAULT 0,
     point_count_matched    INTEGER DEFAULT 0,
@@ -169,7 +172,6 @@ CREATE INDEX IF NOT EXISTS idx_trip_routes_trip_id ON trip_routes (trip_id);
 
 -- ---------------------------------------------------------------------------
 -- customers  (clientes / puntos de venta)
--- v11: columna 'active' para soft-delete y filtrado en APK
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS customers (
     id                SERIAL PRIMARY KEY,
@@ -177,21 +179,18 @@ CREATE TABLE IF NOT EXISTS customers (
     address           TEXT,
     phone             TEXT,
     geom              GEOGRAPHY(Point, 4326) NOT NULL,
-    geofence          GEOGRAPHY(Polygon, 4326),
-    min_visit_minutes INTEGER DEFAULT 5,
-    metadata          JSONB   DEFAULT '{}',
-    active            BOOLEAN DEFAULT TRUE,                -- v11
+    geofence          GEOGRAPHY(Polygon, 4326),          -- Perímetro opcional (v8)
+    min_visit_minutes INTEGER DEFAULT 5,                 -- Duración mínima visita válida (v8)
+    metadata          JSONB   DEFAULT '{}',              -- Datos extra (v7)
     created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_customers_geom     ON customers USING GIST (geom);
 CREATE INDEX IF NOT EXISTS idx_customers_geofence ON customers USING GIST (geofence);
 CREATE INDEX IF NOT EXISTS idx_customers_metadata ON customers USING GIN  (metadata);
-CREATE INDEX IF NOT EXISTS idx_customers_active   ON customers (active) WHERE active = TRUE;
 
 COMMENT ON COLUMN customers.geofence          IS 'Perímetro opcional. Si NULL, usa radio alrededor de geom.';
 COMMENT ON COLUMN customers.min_visit_minutes IS 'Duración mínima para contar como visita válida.';
-COMMENT ON COLUMN customers.active            IS 'FALSE = cliente dado de baja (soft-delete).';
 
 -- ---------------------------------------------------------------------------
 -- routes  (plantillas de ruta)
@@ -242,8 +241,8 @@ CREATE TABLE IF NOT EXISTS visits (
     duration_seconds INTEGER,
     status           VARCHAR(20) DEFAULT 'ongoing' CHECK (status IN ('ongoing', 'completed', 'auto_closed')),
     auto_detected    BOOLEAN DEFAULT TRUE,
-    visit_score      INTEGER CHECK (visit_score >= 0 AND visit_score <= 100),
-    visit_metadata   JSONB   DEFAULT '{}',
+    visit_score      INTEGER CHECK (visit_score >= 0 AND visit_score <= 100),  -- Calidad visita (v8)
+    visit_metadata   JSONB   DEFAULT '{}',                                     -- Detalles detector (v8)
     created_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT unique_visit_per_day UNIQUE(employee_id, customer_id, date)
 );
@@ -254,140 +253,6 @@ CREATE INDEX IF NOT EXISTS idx_visits_metadata      ON visits USING GIN (visit_m
 
 COMMENT ON COLUMN visits.visit_score    IS 'Score de calidad de visita (0-100).';
 COMMENT ON COLUMN visits.visit_metadata IS 'Detalles del detector (desplazamiento interno, puntos, etc.).';
-
--- ===========================================================================
--- v11: MÓDULO DE PEDIDOS Y CATÁLOGO DINÁMICO
--- ===========================================================================
-
--- ---------------------------------------------------------------------------
--- system_settings  (configuraciones globales: IGV, stock, imágenes, etc.)
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS system_settings (
-    key         VARCHAR(100) PRIMARY KEY,
-    value       TEXT         NOT NULL,
-    type        VARCHAR(20)  DEFAULT 'string'
-                CHECK (type IN ('string','boolean','number','json')),
-    description TEXT,
-    updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-INSERT INTO system_settings (key, value, type, description) VALUES
-    ('PEDIDOS_CALCULAR_IGV',         'true',  'boolean', 'Activar cálculo de IGV en pedidos'),
-    ('PEDIDOS_PORCENTAJE_IGV',       '18',    'number',  'Porcentaje de IGV a aplicar'),
-    ('CATALOGO_MOSTRAR_IMAGENES',    'true',  'boolean', 'Mostrar imágenes en la APK'),
-    ('PEDIDOS_PERMITIR_DESCUENTOS',  'false', 'boolean', 'Permitir descuentos manuales por vendedor'),
-    ('PEDIDOS_VER_HISTORIAL_CLIENTE','true',  'boolean', 'Vendedor puede ver pedidos previos del cliente'),
-    ('GEOCERCA_RADIO_METROS',        '100',   'number',  'Radio en metros para autorelleno de cliente'),
-    ('STOCK_MINIMO_ALERTA',          '5',     'number',  'Stock mínimo para alerta en la APK')
-ON CONFLICT (key) DO NOTHING;
-
--- ---------------------------------------------------------------------------
--- products  (catálogo de productos, sincronizable con WooCommerce / ERP)
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS products (
-    id                  SERIAL PRIMARY KEY,
-    external_id         VARCHAR(100) UNIQUE,
-    titulo              VARCHAR(500) NOT NULL,
-    descripcion         TEXT,
-    descripcion_corta   VARCHAR(500),
-    precio_con_igv      NUMERIC(12,2) NOT NULL DEFAULT 0,
-    precio_sin_igv      NUMERIC(12,2) NOT NULL DEFAULT 0,
-    stock_general       INTEGER       NOT NULL DEFAULT 0,
-    categoria           VARCHAR(200),
-    tipo_producto       VARCHAR(100),
-    tags                TEXT[],
-    imagen_url          TEXT,
-    is_active           BOOLEAN       DEFAULT TRUE,
-    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    last_updated        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_products_external_id  ON products (external_id);
-CREATE INDEX IF NOT EXISTS idx_products_categoria    ON products (categoria);
-CREATE INDEX IF NOT EXISTS idx_products_tipo         ON products (tipo_producto);
-CREATE INDEX IF NOT EXISTS idx_products_last_updated ON products (last_updated DESC);
-CREATE INDEX IF NOT EXISTS idx_products_tags         ON products USING GIN (tags);
-CREATE INDEX IF NOT EXISTS idx_products_active       ON products (is_active) WHERE is_active = TRUE;
-
-COMMENT ON COLUMN products.external_id  IS 'ID del sistema externo (WooCommerce, ERP); inmutable.';
-COMMENT ON COLUMN products.imagen_url   IS 'URL de imagen externa; nunca se almacena el binario.';
-COMMENT ON COLUMN products.last_updated IS 'Para delta-sync en APK (?since=timestamp).';
-
--- Trigger: actualiza last_updated automáticamente en cada UPDATE
-CREATE OR REPLACE FUNCTION update_product_timestamp()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.last_updated = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_products_update ON products;
-CREATE TRIGGER trg_products_update
-    BEFORE UPDATE ON products
-    FOR EACH ROW EXECUTE FUNCTION update_product_timestamp();
-
--- ---------------------------------------------------------------------------
--- orders  (cabecera de pedidos — offline-first desde la APK)
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS orders (
-    id          SERIAL PRIMARY KEY,
-    client_id   VARCHAR(64) UNIQUE,
-    employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
-    customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
-    trip_id     INTEGER REFERENCES trips(id)     ON DELETE SET NULL,
-    status      VARCHAR(20) NOT NULL DEFAULT 'pendiente'
-                CHECK (status IN ('pendiente','en_proceso','listo','entregado','cancelado')),
-    subtotal    NUMERIC(12,2) DEFAULT 0,
-    igv_monto   NUMERIC(12,2) DEFAULT 0,
-    total       NUMERIC(12,2) DEFAULT 0,
-    notas       TEXT,
-    synced      BOOLEAN DEFAULT TRUE,
-    created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_orders_employee_id ON orders (employee_id);
-CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders (customer_id);
-CREATE INDEX IF NOT EXISTS idx_orders_trip_id     ON orders (trip_id);
-CREATE INDEX IF NOT EXISTS idx_orders_status      ON orders (status);
-CREATE INDEX IF NOT EXISTS idx_orders_created_at  ON orders (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_orders_client_id   ON orders (client_id) WHERE client_id IS NOT NULL;
-
-COMMENT ON COLUMN orders.client_id IS 'UUID generado por APK. Deduplicación offline-first.';
-COMMENT ON COLUMN orders.synced    IS 'FALSE = pedido pendiente de sync (generado offline).';
-
--- ---------------------------------------------------------------------------
--- order_items  (detalle de productos por pedido, con precio histórico)
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS order_items (
-    id          SERIAL PRIMARY KEY,
-    order_id    INTEGER REFERENCES orders(id)   ON DELETE CASCADE,
-    product_id  INTEGER REFERENCES products(id) ON DELETE RESTRICT,
-    quantity    INTEGER       NOT NULL CHECK (quantity > 0),
-    precio_unit NUMERIC(12,2) NOT NULL,
-    subtotal    NUMERIC(12,2) GENERATED ALWAYS AS (quantity * precio_unit) STORED
-);
-
-CREATE INDEX IF NOT EXISTS idx_order_items_order_id   ON order_items (order_id);
-CREATE INDEX IF NOT EXISTS idx_order_items_product_id ON order_items (product_id);
-
--- ---------------------------------------------------------------------------
--- audit_logs  (registro inmutable de cambios críticos)
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS audit_logs (
-    id           SERIAL PRIMARY KEY,
-    entity_type  VARCHAR(50) NOT NULL,
-    entity_id    INTEGER,
-    action       VARCHAR(50) NOT NULL,
-    old_value    JSONB,
-    new_value    JSONB,
-    performed_by INTEGER REFERENCES employees(id) ON DELETE SET NULL,
-    created_at   TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs (entity_type, entity_id);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_ts     ON audit_logs (created_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- Permisos finales

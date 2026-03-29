@@ -20,7 +20,6 @@
     "pg": "^8.11.3",
     "pino": "^8.16.1",
     "pino-pretty": "^10.2.3",
-    "csv-parse": "^5.5.3",
     "socket.io": "^4.7.2"
   },
   "devDependencies": {

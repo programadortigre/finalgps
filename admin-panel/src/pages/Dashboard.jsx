@@ -1,12 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Menu, X, Activity, History, Users, Map as MapIcon, Search, ChevronDown, Power, PowerOff, Radar, RefreshCw, Battery, Zap, Package, ShoppingCart, Settings as SettingsIcon } from 'lucide-react';
+import { LogOut, Menu, X, Activity, History, Users, Map as MapIcon, Search, ChevronDown, Power, PowerOff, Radar, RefreshCw, Battery, Zap } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
 import HistoryView from './History';
 import RoutesView from './RoutesView';
-import Catalog from './Catalog';
-import Orders from './Orders';
-import AppSettings from './Settings';
 import CustomerModal from '../components/CustomerModal';
 import ImportJSON from '../components/ImportJSON';
 import api from '../services/api';
@@ -341,24 +338,6 @@ const Dashboard = ({ user, onLogout }) => {
                             label="Rutas"
                             isActive={view === 'routes'}
                             onClick={() => setView('routes')}
-                        />
-                        <NavLink
-                            icon={Package}
-                            label="Catálogo"
-                            isActive={view === 'catalog'}
-                            onClick={() => setView('catalog')}
-                        />
-                        <NavLink
-                            icon={ShoppingCart}
-                            label="Pedidos"
-                            isActive={view === 'orders'}
-                            onClick={() => setView('orders')}
-                        />
-                        <NavLink
-                            icon={SettingsIcon}
-                            label="Ajustes"
-                            isActive={view === 'settings'}
-                            onClick={() => setView('settings')}
                         />
                     </nav>
                 </div>
@@ -723,12 +702,6 @@ const Dashboard = ({ user, onLogout }) => {
                         <HistoryView user={user} />
                     ) : view === 'routes' ? (
                         <RoutesView />
-                    ) : view === 'catalog' ? (
-                        <Catalog />
-                    ) : view === 'orders' ? (
-                        <Orders />
-                    ) : view === 'settings' ? (
-                        <AppSettings />
                     ) : (
                         <MapView
                             view={view}
