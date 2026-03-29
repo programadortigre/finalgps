@@ -145,7 +145,159 @@ async function syncSchema() {
                 await pool.query('CREATE INDEX IF NOT EXISTS idx_visits_metadata ON visits USING GIN (visit_metadata);');
             }
 
+            // ================================================================
+            // MÓDULO DE PEDIDOS v11 — Auto-migración idempotente
+            // Sin necesidad de scripts manuales ni rebuilds
+            // ================================================================
+
+            // --- Rol almacen ---
+            // Ampliar el CHECK constraint en employees para aceptar 'almacen'
+            // Usamos ALTER TABLE ... DROP CONSTRAINT / ADD CONSTRAINT de forma segura
+            await pool.query(`
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.table_constraints
+                        WHERE table_name = 'employees'
+                        AND constraint_name = 'employees_role_check'
+                    ) THEN
+                        ALTER TABLE employees DROP CONSTRAINT employees_role_check;
+                    END IF;
+                    ALTER TABLE employees ADD CONSTRAINT employees_role_check
+                        CHECK (role IN ('admin', 'employee', 'almacen'));
+                END
+                $$;
+            `);
+
+            // --- customers: columna active ---
+            const checkCustActive = await pool.query(`
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='customers' AND column_name='active';
+            `);
+            if (checkCustActive.rowCount === 0) {
+                await pool.query(`ALTER TABLE customers ADD COLUMN active BOOLEAN DEFAULT TRUE;`);
+            }
+
+            // --- system_settings ---
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS system_settings (
+                    key         VARCHAR(100) PRIMARY KEY,
+                    value       TEXT         NOT NULL,
+                    type        VARCHAR(20)  NOT NULL DEFAULT 'string'
+                               CHECK (type IN ('string', 'boolean', 'number')),
+                    description TEXT,
+                    updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            // Seed de configuración por defecto (ON CONFLICT para idempotencia)
+            await pool.query(`
+                INSERT INTO system_settings (key, value, type, description) VALUES
+                    ('IGV_ENABLED',              'true',  'boolean', 'Habilitar cálculo de IGV en pedidos'),
+                    ('IGV_PERCENT',              '18',    'number',  'Porcentaje de IGV aplicado'),
+                    ('MOSTRAR_IMAGENES_APK',     'true',  'boolean', 'Cargar imágenes URL externas en la APK'),
+                    ('PERMITIR_HISTORIAL_CLIENTE','false', 'boolean', 'Mostrar pedidos previos del cliente en APK'),
+                    ('PERMITIR_DESCUENTOS',      'false', 'boolean', 'Permitir descuentos manuales por vendedor'),
+                    ('STOCK_MINIMO_ALERTA',      '5',     'number',  'Alerta de stock mínimo en APK'),
+                    ('GEOCERCA_RADIO_METROS',    '100',   'number',  'Radio de geocerca para autorelleno en APK')
+                ON CONFLICT (key) DO NOTHING;
+            `);
+
+            // --- products ---
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS products (
+                    id                  SERIAL PRIMARY KEY,
+                    external_id         VARCHAR(255) UNIQUE,
+                    titulo              VARCHAR(500) NOT NULL,
+                    descripcion         TEXT,
+                    descripcion_corta   TEXT,
+                    precio_con_igv      NUMERIC(12,2) DEFAULT 0,
+                    precio_sin_igv      NUMERIC(12,2) DEFAULT 0,
+                    stock_general       INTEGER DEFAULT 0,
+                    categoria           VARCHAR(255),
+                    categorias          TEXT[],
+                    tipo_producto       VARCHAR(100),
+                    tags                TEXT[],
+                    imagen_url          TEXT,
+                    active              BOOLEAN DEFAULT TRUE,
+                    last_updated        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            // Migración idempotente para tablas ya existentes
+            const checkCategorias = await pool.query(`
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='products' AND column_name='categorias';
+            `);
+            if (checkCategorias.rowCount === 0) {
+                await pool.query(`ALTER TABLE products ADD COLUMN categorias TEXT[];`);
+            }
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_external_id ON products (external_id);`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_categoria   ON products (categoria);`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_active      ON products (active) WHERE active = TRUE;`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_tags        ON products USING GIN (tags);`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_categorias  ON products USING GIN (categorias);`);
+
+            // --- orders ---
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS orders (
+                    id              SERIAL PRIMARY KEY,
+                    client_id       VARCHAR(64) UNIQUE,
+                    employee_id     INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+                    customer_id     INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+                    trip_id         INTEGER REFERENCES trips(id) ON DELETE SET NULL,
+                    status          VARCHAR(20) NOT NULL DEFAULT 'pendiente'
+                                    CHECK (status IN ('pendiente','en_proceso','listo','entregado','cancelado')),
+                    total_sin_igv   NUMERIC(12,2) DEFAULT 0,
+                    total_con_igv   NUMERIC(12,2) DEFAULT 0,
+                    descuento       NUMERIC(12,2) DEFAULT 0,
+                    notas           TEXT,
+                    synced          BOOLEAN DEFAULT FALSE,
+                    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_employee  ON orders (employee_id);`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_customer  ON orders (customer_id);`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_status    ON orders (status);`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_trip      ON orders (trip_id);`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_created   ON orders (created_at DESC);`);
+
+            // --- order_items ---
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS order_items (
+                    id          SERIAL PRIMARY KEY,
+                    order_id    INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+                    product_id  INTEGER REFERENCES products(id) ON DELETE SET NULL,
+                    titulo      VARCHAR(500) NOT NULL,
+                    quantity    INTEGER NOT NULL CHECK (quantity > 0),
+                    price_unit  NUMERIC(12,2) NOT NULL,
+                    price_total NUMERIC(12,2) GENERATED ALWAYS AS (quantity * price_unit) STORED,
+                    created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_order_items_order   ON order_items (order_id);`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items (product_id);`);
+
+            // --- audit_logs ---
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id          SERIAL PRIMARY KEY,
+                    entity      VARCHAR(50)  NOT NULL,
+                    entity_id   INTEGER,
+                    action      VARCHAR(50)  NOT NULL,
+                    old_value   JSONB,
+                    new_value   JSONB,
+                    actor_id    INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+                    actor_role  VARCHAR(20),
+                    created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_entity    ON audit_logs (entity, entity_id);`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_actor     ON audit_logs (actor_id);`);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_created   ON audit_logs (created_at DESC);`);
+
             logger.info('✅ Database schema synchronized successfully.');
+
             return;
         } catch (err) {
             retries++;

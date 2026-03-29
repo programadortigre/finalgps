@@ -449,4 +449,124 @@ class ApiService {
     await _storage.delete(key: 'user_role');
     await _storage.delete(key: 'user_email');
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MÓDULO DE PEDIDOS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// Delta sync del catálogo. Si [since] es null descarga todo.
+  Future<List<Map<String, dynamic>>?> fetchProducts({String? since}) async {
+    final token = await getToken();
+    if (token == null) return null;
+    try {
+      final dio = await getDio();
+      final query = since != null
+          ? '/api/products?since=${Uri.encodeComponent(since)}&limit=500'
+          : '/api/products?limit=500';
+      final res = await dio.get(
+        query,
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(res.data['products'] ?? []);
+      }
+    } catch (e) {
+      print('[ApiService] fetchProducts error: $e');
+    }
+    return null;
+  }
+
+  /// Configuración global del sistema (IGV, imágenes, geocerca, etc.)
+  Future<Map<String, dynamic>?> fetchSettings() async {
+    final token = await getToken();
+    if (token == null) return null;
+    try {
+      final dio = await getDio();
+      final res = await dio.get(
+        '/api/settings',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        // Convierte la lista [{key, value, type}] en un mapa plano {KEY: typedValue}
+        final items = res.data as List? ?? [];
+        final map = <String, dynamic>{};
+        for (final item in items) {
+          final key = item['key'] as String;
+          final type = item['type'] as String;
+          final raw = item['value'];
+          if (type == 'boolean') map[key] = raw == 'true' || raw == true;
+          else if (type == 'number') map[key] = num.tryParse(raw.toString()) ?? raw;
+          else map[key] = raw;
+        }
+        return map;
+      }
+    } catch (e) {
+      print('[ApiService] fetchSettings error: $e');
+    }
+    return null;
+  }
+
+  /// Clientes cercanos a [lat, lng] usando geocercas del servidor.
+  Future<List<Map<String, dynamic>>?> fetchNearbyCustomers(double lat, double lng) async {
+    final token = await getToken();
+    if (token == null) return null;
+    try {
+      final dio = await getDio();
+      final res = await dio.get(
+        '/api/customers/nearby?lat=$lat&lng=$lng',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(res.data['customers'] ?? res.data ?? []);
+      }
+    } catch (e) {
+      print('[ApiService] fetchNearbyCustomers error: $e');
+    }
+    return null;
+  }
+
+  /// Envía un pedido offline-safe. Usa client_id UUID para deduplicación.
+  /// Devuelve true si se guardó correctamente en el servidor.
+  Future<bool> submitOrder(Map<String, dynamic> orderPayload) async {
+    final token = await getToken();
+    if (token == null) return false;
+    try {
+      final dio = await getDio();
+      final res = await dio.post(
+        '/api/orders',
+        data: orderPayload,
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      return res.statusCode == 201 || res.statusCode == 200;
+    } on DioException catch (e) {
+      // 409 Conflict = ya existía (client_id duplicado) → se considera OK
+      if (e.response?.statusCode == 409) return true;
+      print('[ApiService] submitOrder error (${e.response?.statusCode}): ${e.message}');
+      return false;
+    } catch (e) {
+      print('[ApiService] submitOrder fatal: $e');
+      return false;
+    }
+  }
+
+  /// Pedidos del vendedor autenticado — últimos N días.
+  Future<List<Map<String, dynamic>>?> fetchMyOrders({int daysBack = 90}) async {
+    final token = await getToken();
+    if (token == null) return null;
+    try {
+      final dio = await getDio();
+      final from = DateTime.now().subtract(Duration(days: daysBack));
+      final fromStr = from.toIso8601String().substring(0, 10);
+      final res = await dio.get(
+        '/api/orders?date_from=$fromStr&limit=200',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (res.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(res.data['orders'] ?? []);
+      }
+    } catch (e) {
+      print('[ApiService] fetchMyOrders error: $e');
+    }
+    return null;
+  }
 }

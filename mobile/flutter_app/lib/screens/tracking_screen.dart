@@ -9,9 +9,12 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/api_service.dart';
+import '../services/orders_local_db.dart';
+import '../services/orders_sync_service.dart';
 import 'auth_wrapper.dart';
 import 'admin_monitoring_screen.dart';
 import 'route_screen.dart';
+import 'orders/orders_list_screen.dart';
 
 class TrackingScreen extends StatefulWidget {
   const TrackingScreen({super.key});
@@ -22,6 +25,8 @@ class TrackingScreen extends StatefulWidget {
 class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStateMixin {
   final MapController _mapCtrl = MapController();
   final _api = ApiService();
+  late final OrdersSyncService _ordersSync;
+  int _pendingOrders = 0;
 
   // ─ Location state ─
   LatLng? _position;
@@ -76,6 +81,18 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
 
     _loadUserInfo();
     _loadTodayRoute();
+    // Módulo de pedidos: inicializar sync y lanzar en background
+    _ordersSync = OrdersSyncService(localDb: OrdersLocalDb(), api: _api);
+    _initOrdersModule();
+  }
+
+  Future<void> _initOrdersModule() async {
+    final result = await _ordersSync.fullSync();
+    if (result.hasActivity) {
+      debugPrint('[Orders] Sync: $result');
+    }
+    final pending = await _ordersSync.getPendingOrderCount();
+    if (mounted) setState(() => _pendingOrders = pending);
   }
 
   void _setupServiceListeners() {
@@ -851,6 +868,47 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                       ]),
                     ),
                   ),
+              // ── Botón de Pedidos (vendedores y admin) ──────────────────
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () async {
+                  final pos = _position;
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => OrdersListScreen()),
+                  );
+                  // Refrescar contador al volver
+                  final p = await _ordersSync.getPendingOrderCount();
+                  if (mounted) setState(() => _pendingOrders = p);
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6366F1).withOpacity(.12),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFF6366F1).withOpacity(.3)),
+                  ),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    const Icon(Icons.shopping_cart_outlined, color: Color(0xFF818CF8), size: 20),
+                    const SizedBox(width: 10),
+                    const Text('Pedidos', style: TextStyle(
+                      color: Color(0xFF818CF8), fontWeight: FontWeight.w700, fontSize: 15)),
+                    if (_pendingOrders > 0) ...[
+                      const SizedBox(width: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF6366F1),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text('$_pendingOrders', style: const TextStyle(
+                          color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ]),
+                ),
+              ),
               ]),
             ),
           ),

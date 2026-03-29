@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Menu, X, Activity, History, Users, Map as MapIcon, Search, ChevronDown, Power, PowerOff, Radar, RefreshCw, Battery, Zap } from 'lucide-react';
+import { LogOut, Menu, X, Activity, History, Users, Map as MapIcon, Search, ChevronDown, Power, PowerOff, Radar, RefreshCw, Battery, Zap, Package, ShoppingCart, Settings as SettingsIcon } from 'lucide-react';
 import MapView from '../components/MapView';
 import Vendors from './Vendors';
 import HistoryView from './History';
 import RoutesView from './RoutesView';
+import CatalogView from './Catalog';
+import OrdersView from './Orders';
+import SettingsView from './Settings';
 import CustomerModal from '../components/CustomerModal';
 import ImportJSON from '../components/ImportJSON';
 import api from '../services/api';
@@ -313,32 +316,14 @@ const Dashboard = ({ user, onLogout }) => {
                     <div className="hidden md:block w-px h-8 bg-white/10"></div>
 
                     {/* Navigation Links */}
-                    <nav className="hidden md:flex items-center gap-2">
-                        <NavLink
-                            icon={Activity}
-                            label="En Vivo"
-                            isActive={view === 'live'}
-                            onClick={() => setView('live')}
-                            badge={activeCount}
-                        />
-                        <NavLink
-                            icon={History}
-                            label="Historial"
-                            isActive={view === 'history'}
-                            onClick={() => setView('history')}
-                        />
-                        <NavLink
-                            icon={Users}
-                            label="Vendedores"
-                            isActive={view === 'vendors'}
-                            onClick={() => setView('vendors')}
-                        />
-                        <NavLink
-                            icon={MapIcon}
-                            label="Rutas"
-                            isActive={view === 'routes'}
-                            onClick={() => setView('routes')}
-                        />
+                    <nav className="hidden md:flex items-center gap-1">
+                        <NavLink icon={Activity}    label="En Vivo"   isActive={view === 'live'}    onClick={() => setView('live')}    badge={activeCount} />
+                        <NavLink icon={History}     label="Historial" isActive={view === 'history'} onClick={() => setView('history')} />
+                        <NavLink icon={Users}       label="Vendedores" isActive={view === 'vendors'} onClick={() => setView('vendors')} />
+                        <NavLink icon={MapIcon}     label="Rutas"     isActive={view === 'routes'}  onClick={() => setView('routes')}  />
+                        <NavLink icon={Package}     label="Catálogo"  isActive={view === 'catalog'} onClick={() => setView('catalog')} />
+                        <NavLink icon={ShoppingCart} label="Pedidos"  isActive={view === 'orders'}  onClick={() => setView('orders')}  />
+                        <NavLink icon={SettingsIcon} label="Ajustes"  isActive={view === 'settings'} onClick={() => setView('settings')} />
                     </nav>
                 </div>
 
@@ -696,13 +681,13 @@ const Dashboard = ({ user, onLogout }) => {
 
                 {/* Main Content - Map / Views */}
                 <main className="flex-1 overflow-hidden relative">
-                    {view === 'vendors' ? (
-                        <Vendors />
-                    ) : view === 'history' ? (
-                        <HistoryView user={user} />
-                    ) : view === 'routes' ? (
-                        <RoutesView />
-                    ) : (
+                    {view === 'vendors'  ? <Vendors /> 
+                    : view === 'history'  ? <HistoryView user={user} />
+                    : view === 'routes'   ? <RoutesView />
+                    : view === 'catalog'  ? <CatalogView />
+                    : view === 'orders'   ? <OrdersView user={user} />
+                    : view === 'settings' ? <SettingsView />
+                    : (
                         <MapView
                             view={view}
                             selectedEmployee={selectedEmployee}

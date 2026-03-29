@@ -1,7 +1,81 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../db/postgres');
+const db = require('../db/postgres');
 const authenticateToken = require('../middleware/auth');
+
+/**
+ * GET /api/customers/nearby
+ * Encuentra clientes dentro del radio configurado (GEOCERCA_RADIO_METROS).
+ * Usado por la APK para autorelleno de cliente al crear pedido.
+ * ?lat=X&lng=Y&radius=100 (radius en metros, fallback a Settings)
+ */
+router.get('/nearby', authenticateToken, async (req, res) => {
+    const { lat, lng, radius } = req.query;
+    if (!lat || !lng) return res.status(400).json({ error: 'lat y lng son requeridos.' });
+
+    try {
+        // Leer radio desde settings si no viene en query
+        let searchRadius = parseInt(radius) || 100;
+        if (!radius) {
+            const radiusSetting = await db.query(
+                `SELECT value FROM system_settings WHERE key = 'GEOCERCA_RADIO_METROS'`
+            );
+            if (radiusSetting.rows[0]) searchRadius = parseInt(radiusSetting.rows[0].value);
+        }
+
+        // Leer si se permite historial del cliente
+        const histSetting = await db.query(
+            `SELECT value FROM system_settings WHERE key = 'PERMITIR_HISTORIAL_CLIENTE'`
+        );
+        const showHistory = histSetting.rows[0]?.value === 'true';
+
+        const result = await pool.query(`
+            SELECT
+                c.id, c.name, c.address, c.phone,
+                ST_Y(c.geom::geometry) AS lat,
+                ST_X(c.geom::geometry) AS lng,
+                ST_AsGeoJSON(c.geofence)::json AS geofence,
+                ST_Distance(c.geom::geography, ST_SetSRID(ST_MakePoint($2,$1),4326)::geography) AS distance_m
+            FROM customers c
+            WHERE c.active = TRUE
+            AND ST_DWithin(
+                c.geom::geography,
+                ST_SetSRID(ST_MakePoint($2,$1),4326)::geography,
+                $3
+            )
+            ORDER BY distance_m ASC
+            LIMIT 10
+        `, [parseFloat(lat), parseFloat(lng), searchRadius]);
+
+        const customers = result.rows;
+
+        // Si está habilitado, añadir últimos 5 pedidos de cada cliente
+        if (showHistory && customers.length > 0) {
+            const ids = customers.map(c => c.id);
+            const histResult = await db.query(`
+                SELECT o.customer_id, o.id, o.status, o.total_con_igv, o.created_at
+                FROM orders o
+                WHERE o.customer_id = ANY($1::int[])
+                ORDER BY o.created_at DESC
+            `, [ids]);
+
+            const histMap = {};
+            for (const row of histResult.rows) {
+                if (!histMap[row.customer_id]) histMap[row.customer_id] = [];
+                if (histMap[row.customer_id].length < 5) histMap[row.customer_id].push(row);
+            }
+            for (const c of customers) {
+                c.pedidos_recientes = histMap[c.id] || [];
+            }
+        }
+
+        res.json({ customers, radius: searchRadius });
+    } catch (err) {
+        console.error('[Customers/nearby] Error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 /**
  * GET /api/customers

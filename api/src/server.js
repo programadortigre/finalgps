@@ -36,6 +36,11 @@ const employeeRoutes = require('./routes/employees');
 const geocodingRoutes = require('./routes/geocoding');
 const routeAssignmentRoutes = require('./routes/routes');
 const customerRoutes = require('./routes/customers');
+// ── Módulo de Pedidos v11 ──────────────────────────────────────────
+const productRoutes  = require('./routes/products');
+const orderRoutes    = require('./routes/orders');
+const settingsRoutes = require('./routes/settings');
+// ──────────────────────────────────────────────────────────────────
 const { initSocket } = require('./socket/socket');
 const db = require('./db/postgres');
 
@@ -95,6 +100,11 @@ app.use('/api/employees', employeeRoutes);
 app.use('/api/geocoding', geocodingRoutes);
 app.use('/api/routes', routeAssignmentRoutes);
 app.use('/api/customers', customerRoutes);
+// ── Módulo de Pedidos v11 ──────────────────────────────────────────
+app.use('/api/products',  productRoutes);
+app.use('/api/orders',    orderRoutes);
+app.use('/api/settings',  settingsRoutes);
+
 
 // Health check completo — cada servicio falla de forma independiente
 // 🔴 1: Redis caído NO arrastra a DB ni a API — status granular por servicio

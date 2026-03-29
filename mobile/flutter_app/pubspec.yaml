@@ -33,6 +33,7 @@ dependencies:
   connectivity_plus: ^7.0.0
   uuid: ^4.4.0
   flutter_local_notifications: ^18.0.0
+  cached_network_image: ^3.4.1
 
 dev_dependencies:
   flutter_test:
