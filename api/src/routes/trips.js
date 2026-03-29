@@ -103,6 +103,7 @@ router.get('/', auth, async (req, res) => {
 
     try {
         // ✅ PRO FIX: Filtrar usando la zona horaria del cliente para evitar saltos de día UTC
+        // ✅ BUGFIX: Mostrar SOLO viajes que comienzan en la fecha seleccionada
         const result = await db.query(`
             SELECT 
                 id, 
@@ -115,8 +116,7 @@ router.get('/', auth, async (req, res) => {
                 ROUND((distance_meters::numeric / 1000)::numeric, 2) as distance_km
             FROM trips 
             WHERE employee_id = $1 
-            AND DATE(start_time AT TIME ZONE 'UTC' AT TIME ZONE $3) <= $2
-            AND DATE(COALESCE(end_time, CURRENT_TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE $3) >= $2
+            AND DATE(start_time AT TIME ZONE 'UTC' AT TIME ZONE $3) = $2
             ORDER BY start_time DESC
         `, [userId, date, tzOffset]);
 
