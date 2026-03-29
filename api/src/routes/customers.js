@@ -31,6 +31,53 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 /**
+ * GET /api/customers/nearby
+ * Busca clientes dentro de un radio configurable (GEOCERCA_RADIO_METROS en system_settings).
+ * Para autorelleno de pedido en la APK.
+ * Query params: lat, lng, radius (opcional, en metros — sobrescribe el setting)
+ */
+router.get('/nearby', authenticateToken, async (req, res) => {
+    const { lat, lng, radius } = req.query;
+    if (!lat || !lng) return res.status(400).json({ error: 'lat y lng son requeridos' });
+
+    try {
+        // Obtener radio desde settings si no se provee en query
+        let radiusMeters = parseInt(radius) || 100;
+        if (!radius) {
+            const settingRes = await pool.query(
+                "SELECT value FROM system_settings WHERE key = 'GEOCERCA_RADIO_METROS'"
+            );
+            if (settingRes.rows.length > 0) {
+                radiusMeters = parseInt(settingRes.rows[0].value) || 100;
+            }
+        }
+
+        const result = await pool.query(`
+            SELECT 
+                c.id, c.name, c.address, c.phone, c.metadata,
+                ST_Y(c.geom::geometry) as lat,
+                ST_X(c.geom::geometry) as lng,
+                ST_AsGeoJSON(c.geofence)::json as geofence,
+                ROUND(ST_Distance(c.geom, ST_MakePoint($2, $1)::geography)::numeric, 1) as distance_m
+            FROM customers c
+            WHERE c.active = TRUE
+              AND ST_DWithin(
+                c.geom::geography,
+                ST_MakePoint($2, $1)::geography,
+                $3
+              )
+            ORDER BY distance_m ASC
+            LIMIT 5
+        `, [parseFloat(lat), parseFloat(lng), radiusMeters]);
+
+        res.json({ radius_m: radiusMeters, count: result.rows.length, customers: result.rows });
+    } catch (err) {
+        console.error('[CUSTOMERS] /nearby error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
  * POST /api/customers
  * Create a single customer
  */
