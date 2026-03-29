@@ -129,6 +129,17 @@ router.patch('/:id/tracking', auth, async (req, res) => {
             [enabled, id]
         );
 
+        // ✅ NUEVO: Si se desactiva el rastreo (ej. desde el Panel Admin), 
+        // cerrar automáticamente cualquier viaje que esté abierto para este empleado.
+        if (enabled === false) {
+            console.log(`[API] Remote stop tracking for emp ${id}. Closing active trips...`);
+            await db.query(
+                `UPDATE trips SET is_active = FALSE, end_time = NOW() 
+                 WHERE employee_id = $1 AND is_active = TRUE`,
+                [id]
+            );
+        }
+
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Employee not found' });
         }
