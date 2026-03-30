@@ -15,6 +15,7 @@ import 'auth_wrapper.dart';
 import 'admin_monitoring_screen.dart';
 import 'route_screen.dart';
 import 'orders/orders_list_screen.dart';
+import 'orders/create_order_screen.dart';
 
 class TrackingScreen extends StatefulWidget {
   const TrackingScreen({super.key});
@@ -702,6 +703,16 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                   _glassBtn(Icons.dashboard_customize_rounded, () {
                     Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminMonitoringScreen()));
                   }, color: const Color(0xFF6C63FF)),
+                ] else ...[
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onLongPress: _showLogsDialog,
+                    child: _glassBtn(
+                      _isOnline ? Icons.gps_fixed : Icons.gps_off, 
+                      _toggleOnline, 
+                      color: _isOnline ? const Color(0xFF22C55E) : Colors.redAccent,
+                    ),
+                  ),
                 ],
                 const SizedBox(width: 8),
                 _glassBtn(Icons.logout_rounded, _logout),
@@ -735,38 +746,38 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                 ),
                 const SizedBox(height: 20),
 
-                // ── Stats Cards Row ──
+                // ── Stats Cards Row (Compact) ──
                 Row(children: [
                   _statCard('⚡', _speed.toStringAsFixed(0), 'km/h', const Color(0xFF6C63FF)),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                   _statCard('🎭', _state.replaceAll('_', ' '), 'estado', const Color(0xFFF59E0B)),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                   _statCard('🛣️', _distanceToday.toStringAsFixed(2), 'km hoy', const Color(0xFF22C55E)),
                 ]),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
 
                 // ── Elapsed time (only when online) ──
                 AnimatedCrossFade(
                   firstChild: const SizedBox.shrink(),
                   secondChild: Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
                     decoration: BoxDecoration(
                       color: const Color(0xFF242740),
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: const Color(0xFF6C63FF).withOpacity(.2)),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.timer_outlined, color: Color(0xFF6C63FF), size: 18),
-                        const SizedBox(width: 10),
+                        const Icon(Icons.timer_outlined, color: Color(0xFF6C63FF), size: 16),
+                        const SizedBox(width: 8),
                         Text(
                           'Tiempo activo:  $_elapsed',
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 15,
+                            fontSize: 13,
                             fontWeight: FontWeight.w600,
                             fontFeatures: [FontFeature.tabularFigures()],
                           ),
@@ -778,17 +789,17 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                   duration: const Duration(milliseconds: 300),
                 ),
 
-                SizedBox(height: _isOnline ? 16 : 0),
+                SizedBox(height: _isOnline ? 12 : 0),
 
-                // ── Toggle Tracking Button (admin only) / Status pill (employee) ──
-                if (_isAdmin)
+                // ── Toggle Tracking Button (único para admin) ──
+                if (_isAdmin) ...[
                   GestureDetector(
                     onTap: _toggleOnline,
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 400),
                       curve: Curves.easeInOut,
                       width: double.infinity,
-                      height: 62,
+                      height: 54,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.topLeft,
@@ -797,118 +808,121 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                             ? [const Color(0xFFEF4444), const Color(0xFFDC2626)]
                             : [const Color(0xFF6C63FF), const Color(0xFF3F8CFF)],
                         ),
-                        borderRadius: BorderRadius.circular(18),
+                        borderRadius: BorderRadius.circular(14),
                         boxShadow: [
                           BoxShadow(
                             color: (_isOnline ? const Color(0xFFEF4444) : const Color(0xFF6C63FF)).withOpacity(.4),
-                            blurRadius: 20, offset: const Offset(0, 8),
+                            blurRadius: 15, offset: const Offset(0, 6),
                           ),
                         ],
                       ),
                       child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 300),
-                          child: Icon(
-                            _isOnline ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                            key: ValueKey(_isOnline),
-                            color: Colors.white, size: 30,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 300),
-                          child: Text(
-                            _isOnline ? 'DETENER RASTREO' : 'INICIAR RASTREO',
-                            key: ValueKey(_isOnline),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 16,
-                              letterSpacing: .8,
-                            ),
-                          ),
-                        ),
-                      ]),
-                    ),
-                  )
-                else
-                  // Indicador de solo lectura para vendedores — el admin controla el rastreo remotamente
-                  GestureDetector(
-                    onLongPress: _showLogsDialog,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 400),
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 18),
-                      decoration: BoxDecoration(
-                        color: _isOnline
-                          ? const Color(0xFF22C55E).withOpacity(.1)
-                          : const Color(0xFF64748B).withOpacity(.1),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: _isOnline
-                            ? const Color(0xFF22C55E).withOpacity(.3)
-                            : const Color(0xFF64748B).withOpacity(.3),
-                        ),
-                      ),
-                      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                         Icon(
-                          _isOnline ? Icons.gps_fixed : Icons.gps_off,
-                          color: _isOnline ? const Color(0xFF22C55E) : const Color(0xFF64748B),
-                          size: 22,
+                          _isOnline ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                          color: Colors.white, size: 26,
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          _isOnline ? 'Rastreo activo' : 'Rastreo pausado por administrador',
-                          style: TextStyle(
-                            color: _isOnline ? const Color(0xFF22C55E) : const Color(0xFF64748B),
-                            fontWeight: FontWeight.w600,
+                          _isOnline ? 'DETENER RASTREO' : 'INICIAR RASTREO',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
                             fontSize: 15,
+                            letterSpacing: .5,
                           ),
                         ),
                       ]),
                     ),
                   ),
-              // ── Botón de Pedidos (vendedores y admin) ──────────────────
-              const SizedBox(height: 12),
-              GestureDetector(
-                onTap: () async {
-                  final pos = _position;
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => OrdersListScreen()),
-                  );
-                  // Refrescar contador al volver
-                  final p = await _ordersSync.getPendingOrderCount();
-                  if (mounted) setState(() => _pendingOrders = p);
-                },
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF6366F1).withOpacity(.12),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: const Color(0xFF6366F1).withOpacity(.3)),
-                  ),
-                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    const Icon(Icons.shopping_cart_outlined, color: Color(0xFF818CF8), size: 20),
-                    const SizedBox(width: 10),
-                    const Text('Pedidos', style: TextStyle(
-                      color: Color(0xFF818CF8), fontWeight: FontWeight.w700, fontSize: 15)),
-                    if (_pendingOrders > 0) ...[
-                      const SizedBox(width: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF6366F1),
-                          borderRadius: BorderRadius.circular(20),
+                  const SizedBox(height: 12),
+                ],
+
+                // ── Botones de Flujo de Ventas (Pedidos) ──
+                Row(
+                  children: [
+                    // Botón Principal: Nuevo Pedido / Catálogo
+                    Expanded(
+                      flex: 3,
+                      child: GestureDetector(
+                        onTap: () async {
+                          final pos = _position;
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => CreateOrderScreen(
+                              currentLat: pos?.latitude,
+                              currentLng: pos?.longitude,
+                            )),
+                          );
+                          // Refrescar contador
+                          final p = await _ordersSync.getPendingOrderCount();
+                          if (mounted) setState(() => _pendingOrders = p);
+                        },
+                        child: Container(
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6366F1),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(color: const Color(0xFF6366F1).withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 4)),
+                            ],
+                          ),
+                          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
+                            Icon(Icons.add_shopping_cart, color: Colors.white, size: 18),
+                            SizedBox(width: 8),
+                            Text('Nuevo Pedido', style: TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+                          ]),
                         ),
-                        child: Text('$_pendingOrders', style: const TextStyle(
-                          color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
                       ),
-                    ],
-                  ]),
+                    ),
+                    const SizedBox(width: 10),
+                    // Botón Secundario: Mis Pedidos
+                    Expanded(
+                      flex: 2,
+                      child: GestureDetector(
+                        onTap: () async {
+                          final pos = _position;
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => OrdersListScreen(
+                              currentLat: pos?.latitude,
+                              currentLng: pos?.longitude,
+                            )),
+                          );
+                          // Refrescar contador al volver
+                          final p = await _ordersSync.getPendingOrderCount();
+                          if (mounted) setState(() => _pendingOrders = p);
+                        },
+                        child: Container(
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6366F1).withOpacity(.12),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFF6366F1).withOpacity(.3)),
+                          ),
+                          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                            const Icon(Icons.receipt_long, color: Color(0xFF818CF8), size: 18),
+                            const SizedBox(width: 8),
+                            const Text('Historial', style: TextStyle(
+                              color: Color(0xFF818CF8), fontWeight: FontWeight.w700, fontSize: 13)),
+                            if (_pendingOrders > 0) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFEF4444), // Rojo para alertas de pending
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text('$_pendingOrders', style: const TextStyle(
+                                  color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                              ),
+                            ],
+                          ]),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
               ]),
             ),
           ),
@@ -935,26 +949,36 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   // ── Stat card with colored accent ──
   Widget _statCard(String emoji, String value, String label, Color accent) => Expanded(
     child: Container(
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
       decoration: BoxDecoration(
         color: const Color(0xFF242740),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: accent.withOpacity(.2), width: 1),
       ),
       child: Column(children: [
-        Text(emoji, style: const TextStyle(fontSize: 20)),
-        const SizedBox(height: 6),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Text(emoji, style: const TextStyle(fontSize: 14)),
+          const SizedBox(width: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ]),
+        const SizedBox(height: 2),
         Text(
-          value,
-          style: const TextStyle(
-            fontSize: 22,
+          label.toUpperCase(),
+          style: TextStyle(
+            color: Colors.white.withOpacity(.5),
+            fontSize: 9,
             fontWeight: FontWeight.w800,
-            color: Colors.white,
-            fontFeatures: [FontFeature.tabularFigures()],
+            letterSpacing: 0.5,
           ),
         ),
-        const SizedBox(height: 2),
-        Text(label, style: TextStyle(fontSize: 10, color: accent.withOpacity(.8), fontWeight: FontWeight.w500)),
       ]),
     ),
   );

@@ -9,7 +9,14 @@ import 'create_order_screen.dart';
 /// Lista de pedidos del vendedor — últimos 3 meses (SQLite local).
 /// Se sincroniza en segundo plano al abrir la pantalla.
 class OrdersListScreen extends StatefulWidget {
-  const OrdersListScreen({super.key});
+  final double? currentLat;
+  final double? currentLng;
+
+  const OrdersListScreen({
+    super.key,
+    this.currentLat,
+    this.currentLng,
+  });
 
   @override
   State<OrdersListScreen> createState() => _OrdersListScreenState();
@@ -146,7 +153,10 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
           final created = await Navigator.push<bool>(
-            context, MaterialPageRoute(builder: (_) => const CreateOrderScreen()));
+            context, MaterialPageRoute(builder: (_) => CreateOrderScreen(
+              currentLat: widget.currentLat,
+              currentLng: widget.currentLng,
+            )));
           if (created == true) _load();
         },
         backgroundColor: const Color(0xFF6366F1),

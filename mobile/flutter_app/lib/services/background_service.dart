@@ -1248,21 +1248,21 @@ class TrackingEngine {
             // Granularidad de thresholds de batería
             final level = await _battery.batteryLevel;
             if (level < 10) {
-              intervalSec = 240;
-              distanceFilter = 100;
-              accuracy = LocationAccuracy.low;
-            } else if (level < 20) {
-              intervalSec = 180;
-              distanceFilter = 70;
-              accuracy = LocationAccuracy.low;
-            } else if (level < 30) {
               intervalSec = 120;
-              distanceFilter = 50;
-              accuracy = LocationAccuracy.medium;
-            } else {
-              intervalSec = 90;
               distanceFilter = 30;
-              accuracy = LocationAccuracy.medium;
+              accuracy = LocationAccuracy.medium; // Antes .low, se paralizaba
+            } else if (level < 20) {
+              intervalSec = 45;
+              distanceFilter = 15;
+              accuracy = LocationAccuracy.high; // Antes .low, apagaba el chip GPS
+            } else if (level < 30) {
+              intervalSec = 30;
+              distanceFilter = 10;
+              accuracy = LocationAccuracy.high; // Antes .medium
+            } else {
+              intervalSec = 25;
+              distanceFilter = 10;
+              accuracy = LocationAccuracy.high;
             }
             _log('GPS', 'BATT_SAVER: Battery $level% | Interval=$intervalSec | Dist=$distanceFilter | Acc=${accuracy.name}');
             break;
@@ -1288,18 +1288,18 @@ class TrackingEngine {
           _log('GPS', '🚀 RECOVERY BOOST ACTIVE: 3s interval forced');
         } else if (level < 10) {
           intervalSec = 120;
-          accuracy = LocationAccuracy.low;
-          distanceFilter = 50;
+          accuracy = LocationAccuracy.medium;
+          distanceFilter = 30;
           _log('GPS', 'BATTERY OVERRIDE (<10%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
         } else if (level < 20) {
-          intervalSec = 60;
-          accuracy = LocationAccuracy.low;
-          distanceFilter = 30;
+          intervalSec = 45;
+          accuracy = LocationAccuracy.high;
+          distanceFilter = 15;
           _log('GPS', 'BATTERY OVERRIDE (<20%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
         } else if (level < 30) {
           intervalSec = 30;
-          accuracy = LocationAccuracy.medium;
-          distanceFilter = 20;
+          accuracy = LocationAccuracy.high;
+          distanceFilter = 10;
           _log('GPS', 'BATTERY OVERRIDE (<30%): Interval=${intervalSec}s Accuracy=${accuracy.name}');
         }
       }

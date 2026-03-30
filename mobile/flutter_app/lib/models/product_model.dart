@@ -34,19 +34,35 @@ class ProductModel {
         cats = decoded.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
       } catch (_) {}
     } else if (raw is List) {
-      cats = List<String>.from(raw);
+      cats = raw.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty).toList();
     }
+    // Postgres numeric type can be sent as String, safely parse it
+    double parseDouble(dynamic val) {
+      if (val == null) return 0.0;
+      if (val is num) return val.toDouble();
+      if (val is String) return double.tryParse(val) ?? 0.0;
+      return 0.0;
+    }
+
+    int parseInt(dynamic val) {
+      if (val == null) return 0;
+      if (val is int) return val;
+      if (val is num) return val.toInt();
+      if (val is String) return int.tryParse(val) ?? 0;
+      return 0;
+    }
+
     return ProductModel(
-      id: m['id'] as int?,
-      externalId: m['external_id'] as String?,
+      id: m['server_id'] != null ? parseInt(m['server_id']) : parseInt(m['id']),
+      externalId: m['external_id']?.toString(),
       titulo: (m['titulo'] ?? '') as String,
-      precioConIgv: (m['precio_con_igv'] ?? m['precioConIgv'] ?? 0).toDouble(),
-      precioSinIgv: (m['precio_sin_igv'] ?? m['precioSinIgv'] ?? 0).toDouble(),
-      stockGeneral: (m['stock_general'] ?? m['stockGeneral'] ?? 0) as int,
-      categoria: m['categoria'] as String?,
+      precioConIgv: parseDouble(m['precio_con_igv'] ?? m['precioConIgv']),
+      precioSinIgv: parseDouble(m['precio_sin_igv'] ?? m['precioSinIgv']),
+      stockGeneral: parseInt(m['stock_general'] ?? m['stockGeneral']),
+      categoria: m['categoria']?.toString(),
       categorias: cats,
-      imagenUrl: m['imagen_url'] as String?,
-      lastUpdated: m['last_updated'] as String?,
+      imagenUrl: m['imagen_url']?.toString(),
+      lastUpdated: m['last_updated']?.toString(),
     );
   }
 

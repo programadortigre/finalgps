@@ -3,6 +3,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../models/product_model.dart';
 import '../../models/app_settings_model.dart';
 import '../../services/orders_local_db.dart';
+import '../../services/orders_sync_service.dart';
+import '../../services/api_service.dart';
 
 /// Pantalla de catálogo de productos con búsqueda, filtros de categoría
 /// y soporte offline (lee desde SQLite local).
@@ -51,6 +53,47 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> {
     _settings = await AppSettings.load();
     await _loadCategories();
     await _loadProducts();
+    
+    // Si estaba vacío, intentamos llenar automáticamente sin bloquear la pantalla
+    if (_products.isEmpty) {
+      _manualSync(silent: true);
+    }
+  }
+
+  Future<void> _manualSync({bool silent = false}) async {
+    if (!silent) setState(() => _loading = true);
+    try {
+      final syncService = OrdersSyncService(localDb: _db, api: ApiService());
+      final count = await syncService.pullProducts();
+      await _loadCategories();
+      await _loadProducts();
+      
+      if (!silent && mounted) {
+        if (count > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Catálogo actualizado: $count productos'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+          ));
+        } else {
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Catálogo ya está al día'),
+            backgroundColor: Color(0xFF6366F1),
+            behavior: SnackBarBehavior.floating,
+          ));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error sinc: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ));
+        setState(() => _loading = false);
+      }
+    }
   }
 
   Future<void> _loadCategories() async {
@@ -80,6 +123,13 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> {
         backgroundColor: const Color(0xFF1E293B),
         title: const Text('Catálogo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.sync, color: Colors.white70),
+            tooltip: 'Sincronizar Catálogo',
+            onPressed: () => _manualSync(),
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(52),
           child: Padding(
@@ -200,53 +250,55 @@ class _ProductTile extends StatelessWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) => StatefulBuilder(
-        builder: (ctx, setS) => Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(product.titulo,
-                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text('S/ ${product.precioSegunIgv(settings.igvEnabled).toStringAsFixed(2)}',
-                style: const TextStyle(color: Color(0xFF818CF8), fontSize: 22, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _QtyBtn(Icons.remove, () { if (qty > 1) setS(() => qty--); }),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Text('$qty', style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                  ),
-                  _QtyBtn(Icons.add, () {
-                    if (product.stockGeneral <= 0 || qty < product.stockGeneral) {
-                      setS(() => qty++);
-                    }
-                  }),
-                ],
-              ),
-              const SizedBox(height: 4),
-              if (product.stockGeneral > 0)
-                Center(child: Text('Stock disponible: ${product.stockGeneral}',
-                  style: const TextStyle(color: Colors.white38, fontSize: 12))),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.shopping_cart_outlined, size: 18),
-                  label: const Text('Agregar al pedido'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF6366F1),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onPressed: () { Navigator.pop(ctx); onAdd?.call(product, qty); },
+        builder: (ctx, setS) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(24, 24, 24, 16 + MediaQuery.of(context).padding.bottom),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(product.titulo,
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text('S/ ${product.precioSegunIgv(settings.igvEnabled).toStringAsFixed(2)}',
+                  style: const TextStyle(color: Color(0xFF818CF8), fontSize: 22, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _QtyBtn(Icons.remove, () { if (qty > 1) setS(() => qty--); }),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text('$qty', style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                    ),
+                    _QtyBtn(Icons.add, () {
+                      if (product.stockGeneral <= 0 || qty < product.stockGeneral) {
+                        setS(() => qty++);
+                      }
+                    }),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 4),
+                if (product.stockGeneral > 0)
+                  Center(child: Text('Stock disponible: ${product.stockGeneral}',
+                    style: const TextStyle(color: Colors.white38, fontSize: 12))),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.shopping_cart_outlined, size: 18),
+                    label: const Text('Agregar al pedido', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6366F1),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    onPressed: () { Navigator.pop(ctx); onAdd?.call(product, qty); },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

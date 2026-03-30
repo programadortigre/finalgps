@@ -406,6 +406,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
   // ── Paso 2: Resumen ─────────────────────────────────────────────────────────
   Widget _buildSummaryStep() {
+    String clientName = '(Sin cliente)';
+    if (_selectedCustomer != null && _selectedCustomer!['name'] != null) {
+      clientName = _selectedCustomer!['name'].toString();
+    } else if (_customerController.text.trim().isNotEmpty) {
+      clientName = _customerController.text.trim();
+    }
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -414,9 +421,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           icon: Icons.person_outline,
           title: 'Cliente',
           child: Text(
-            _selectedCustomer?['name'] ?? _customerController.text.trim().isNotEmpty
-                ? (_selectedCustomer?['name'] ?? _customerController.text.trim())
-                : '(Sin cliente)',
+            clientName,
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
@@ -499,8 +504,8 @@ class _CustomerTile extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(child: Text(customer['name'] ?? '—',
           style: TextStyle(color: selected ? Colors.white : Colors.white70, fontWeight: FontWeight.w600))),
-        if (customer['distance'] != null)
-          Text('${(customer['distance'] as num).round()} m',
+        if (customer['distance_m'] != null)
+          Text('${(customer['distance_m'] as num).round()} m',
             style: const TextStyle(color: Colors.white38, fontSize: 11)),
       ]),
     ),
